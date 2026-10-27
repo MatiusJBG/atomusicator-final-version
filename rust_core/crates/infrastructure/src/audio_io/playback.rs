@@ -21,6 +21,8 @@ use cpal::{
 const TRACK_COUNT: usize = 5;
 
 struct Transport {
+    generation: AtomicU64,
+    source_failed: AtomicBool,
     playing: AtomicBool,
     position: AtomicU64,
     master: AtomicU32,
@@ -36,6 +38,8 @@ impl MixerControls {
         Self {
             tracks: std::array::from_fn(|_| TrackControl::new()),
             transport: Transport {
+                generation: AtomicU64::new(0),
+                source_failed: AtomicBool::new(false),
                 playing: AtomicBool::new(true),
                 position: AtomicU64::new(0),
                 master: AtomicU32::new(1.0f32.to_bits()),
@@ -131,6 +135,15 @@ impl CpalRealtimeMixer {
     }
 
     pub fn start(&self) -> Result<(), DomainError> {
+        if self.device_failed() || self.source_failed() {
+            let (reply, response) = mpsc::sync_channel(1);
+            self.commands
+                .send(MixerCommand::Stop(reply))
+                .map_err(|e| DomainError::DspFailure(e.to_string()))?;
+            response
+                .recv()
+                .map_err(|e| DomainError::DspFailure(e.to_string()))?;
+        }
         self.controls
             .transport
             .device_failed
@@ -190,6 +203,12 @@ impl CpalRealtimeMixer {
             .device_failed
             .load(Ordering::Acquire)
     }
+    pub fn source_failed(&self) -> bool {
+        self.controls
+            .transport
+            .source_failed
+            .load(Ordering::Acquire)
+    }
     pub fn set_master(&self, gain: f32) -> Result<(), DomainError> {
         if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
             return Err(DomainError::DspFailure("invalid master gain".into()));
@@ -208,20 +227,46 @@ impl CpalRealtimeMixer {
             .session
             .lock()
             .map_err(|_| DomainError::DspFailure("session poisoned".into()))?;
-        let Some(PreparedSession {
-            playback: PlaybackSession::Memory(stems),
-        }) = session.as_ref()
-        else {
-            return Err(DomainError::DspFailure(
-                "seek requires a memory-backed session".into(),
-            ));
+        let playback = &session
+            .as_ref()
+            .ok_or_else(|| DomainError::DspFailure("no session loaded".into()))?
+            .playback;
+        let (duration, streaming) = match playback {
+            PlaybackSession::Memory(stems) => (
+                stems[0].audio.frames() as f64 / f64::from(stems[0].audio.format().sample_rate_hz),
+                false,
+            ),
+            PlaybackSession::Streaming(paths) => {
+                let meta = super::wav_codec::wav_metadata(&paths[0].1)?;
+                (
+                    meta.frame_count as f64 / f64::from(meta.format.sample_rate_hz),
+                    true,
+                )
+            }
         };
-        let duration =
-            stems[0].audio.frames() as f64 / f64::from(stems[0].audio.format().sample_rate_hz);
+        let playing = self.is_playing();
+        if streaming {
+            self.pause();
+            let (reply, response) = mpsc::sync_channel(1);
+            self.commands
+                .send(MixerCommand::Stop(reply))
+                .map_err(|e| DomainError::DspFailure(e.to_string()))?;
+            response
+                .recv()
+                .map_err(|e| DomainError::DspFailure(e.to_string()))?;
+            self.controls
+                .transport
+                .generation
+                .fetch_add(1, Ordering::AcqRel);
+        }
         self.controls
             .transport
             .position
             .store(seconds.min(duration).to_bits(), Ordering::Release);
+        drop(session);
+        if streaming && playing {
+            self.start()?;
+        }
         Ok(())
     }
 
@@ -239,8 +284,7 @@ impl CpalRealtimeMixer {
         Ok(())
     }
 
-    /// Loads disk-backed stem paths. Each file is decoded on its own producer
-    /// thread and consumed through a bounded ring buffer by the output callback.
+    /// Loads aligned disk-backed paths; one producer owns their shared clock.
     pub fn load_streaming_session(
         &self,
         stems: Vec<(StemType, PathBuf)>,
@@ -260,6 +304,17 @@ impl CpalRealtimeMixer {
                 return Err(DomainError::MissingStem(kind));
             }
         }
+        let expected = super::wav_codec::wav_metadata(&sorted[0].1)?;
+        if expected.frame_count == 0 {
+            return Err(DomainError::AudioDecodeFailure(
+                "empty streamed stem".into(),
+            ));
+        }
+        for (kind, path) in &sorted {
+            if super::wav_codec::wav_metadata(path)? != expected {
+                return Err(DomainError::StemFormatMismatch(*kind));
+            }
+        }
         self.stop()?;
         *self
             .session
@@ -268,6 +323,10 @@ impl CpalRealtimeMixer {
             Some(PreparedSession {
                 playback: PlaybackSession::Streaming(Arc::from(sorted)),
             });
+        self.controls
+            .transport
+            .source_failed
+            .store(false, Ordering::Release);
         Ok(())
     }
 }
@@ -314,6 +373,10 @@ impl RealtimePlaybackPort for CpalRealtimeMixer {
             Some(PreparedSession {
                 playback: PlaybackSession::Memory(Arc::from(sorted)),
             });
+        self.controls
+            .transport
+            .source_failed
+            .store(false, Ordering::Release);
         Ok(())
     }
 
@@ -389,12 +452,19 @@ fn run_device_worker(receiver: mpsc::Receiver<MixerCommand>) {
 struct ActiveStream {
     stream: cpal::Stream,
     _producers: Vec<StreamProducerGuard>,
+    _aligned: Option<super::aligned::AlignedProducer>,
 }
 
 fn drop_active(active: Option<ActiveStream>) {
-    if let Some(ActiveStream { stream, _producers }) = active {
+    if let Some(ActiveStream {
+        stream,
+        _producers,
+        _aligned,
+    }) = active
+    {
         drop(stream);
         drop(_producers);
+        drop(_aligned);
     }
 }
 
@@ -554,6 +624,9 @@ fn build_stream(
     controls: Arc<MixerControls>,
     pitch_ratio: Arc<AtomicU32>,
 ) -> Result<ActiveStream, String> {
+    if let PlaybackSession::Streaming(paths) = &session {
+        return build_aligned_stream(paths, controls);
+    }
     let mut producers = Vec::new();
     let tracks = match session {
         PlaybackSession::Memory(stems) => {
@@ -648,7 +721,191 @@ fn build_stream(
     .map(|stream| ActiveStream {
         stream,
         _producers: producers,
+        _aligned: None,
     })
+}
+
+fn build_aligned_stream(
+    paths: &[(StemType, PathBuf)],
+    controls: Arc<MixerControls>,
+) -> Result<ActiveStream, String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or("no audio output device is available")?;
+    let supported = device.default_output_config().map_err(|e| e.to_string())?;
+    let channels = usize::from(supported.channels());
+    if !(1..=2).contains(&channels) {
+        return Err("mono/stereo output required".into());
+    }
+    let position = f64::from_bits(controls.transport.position.load(Ordering::Acquire));
+    let generation = controls.transport.generation.load(Ordering::Acquire);
+    let files = paths
+        .iter()
+        .map(|(_, path)| path.clone())
+        .collect::<Vec<_>>();
+    let prepared = super::aligned::AlignedStream::open(
+        &files,
+        position,
+        supported.sample_rate().0,
+        generation,
+        8192,
+    )
+    .map_err(|e| e.to_string())?;
+    let super::aligned::AlignedStream {
+        consumer, producer, ..
+    } = prepared;
+    controls
+        .transport
+        .source_failed
+        .store(false, Ordering::Release);
+    let failed = Arc::clone(&producer.failed);
+    let finished = Arc::clone(&producer.finished);
+    let stream = match supported.sample_format() {
+        CpalSampleFormat::F32 => aligned_typed_stream::<f32>(
+            &device,
+            &supported.config(),
+            channels,
+            consumer,
+            controls,
+            finished,
+            failed,
+        ),
+        CpalSampleFormat::I16 => aligned_typed_stream::<i16>(
+            &device,
+            &supported.config(),
+            channels,
+            consumer,
+            controls,
+            finished,
+            failed,
+        ),
+        CpalSampleFormat::U16 => aligned_typed_stream::<u16>(
+            &device,
+            &supported.config(),
+            channels,
+            consumer,
+            controls,
+            finished,
+            failed,
+        ),
+        format => Err(format!("unsupported output format {format:?}")),
+    }?;
+    Ok(ActiveStream {
+        stream,
+        _producers: Vec::new(),
+        _aligned: Some(producer),
+    })
+}
+fn aligned_typed_stream<T: SizedSample + FromSample<f32>>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    channels: usize,
+    mut consumer: rtrb::Consumer<super::aligned::AlignedFrame>,
+    controls: Arc<MixerControls>,
+    finished: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+) -> Result<cpal::Stream, String> {
+    let errors = Arc::clone(&controls);
+    let stream = device
+        .build_output_stream(
+            config,
+            move |output: &mut [T], _| {
+                aligned_mix(
+                    output,
+                    channels,
+                    &mut consumer,
+                    &controls,
+                    &finished,
+                    &failed,
+                );
+            },
+            move |_| errors.fail_device(),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    stream.play().map_err(|e| e.to_string())?;
+    Ok(stream)
+}
+fn aligned_mix<T: Sample + FromSample<f32>>(
+    output: &mut [T],
+    channels: usize,
+    consumer: &mut rtrb::Consumer<super::aligned::AlignedFrame>,
+    controls: &MixerControls,
+    finished: &AtomicBool,
+    failed: &AtomicBool,
+) {
+    output.fill(T::from_sample(0.0));
+    let mut peak = 0.0f32;
+    let mut peaks = [0.0f32; 5];
+    if failed.load(Ordering::Acquire) {
+        controls
+            .transport
+            .source_failed
+            .store(true, Ordering::Release);
+        controls.transport.playing.store(false, Ordering::Release);
+    }
+    if controls.transport.playing.load(Ordering::Acquire) {
+        let generation = controls.transport.generation.load(Ordering::Acquire);
+        let solo = controls.iter().any(|t| t.solo.load(Ordering::Relaxed));
+        for frame in output.chunks_exact_mut(channels) {
+            let Ok(source) = consumer.pop() else {
+                if finished.load(Ordering::Acquire) {
+                    controls.transport.playing.store(false, Ordering::Release);
+                } else if consumer.is_abandoned() {
+                    controls
+                        .transport
+                        .source_failed
+                        .store(true, Ordering::Release);
+                    controls.transport.playing.store(false, Ordering::Release);
+                }
+                break;
+            };
+            if source.generation != generation {
+                continue;
+            }
+            let mut mixed = [0.0f32; 2];
+            for (index, samples) in source.samples.iter().enumerate() {
+                let control = &controls[index];
+                if control.mute.load(Ordering::Relaxed)
+                    || (solo && !control.solo.load(Ordering::Relaxed))
+                {
+                    continue;
+                }
+                let gain = f32::from_bits(control.gain.load(Ordering::Relaxed));
+                let left =
+                    samples[0] * gain * f32::from_bits(control.pan_left.load(Ordering::Relaxed));
+                let right =
+                    samples[1] * gain * f32::from_bits(control.pan_right.load(Ordering::Relaxed));
+                peaks[index] = peaks[index].max(left.abs()).max(right.abs());
+                mixed[0] += left;
+                mixed[1] += right;
+            }
+            let master = f32::from_bits(controls.transport.master.load(Ordering::Relaxed));
+            mixed[0] *= master;
+            mixed[1] *= master;
+            peak = peak.max(mixed[0].abs()).max(mixed[1].abs());
+            if channels == 1 {
+                frame[0] = T::from_sample(
+                    ((mixed[0] + mixed[1]) * std::f32::consts::FRAC_1_SQRT_2).clamp(-1.0, 1.0),
+                );
+            } else {
+                frame[0] = T::from_sample(mixed[0].clamp(-1.0, 1.0));
+                frame[1] = T::from_sample(mixed[1].clamp(-1.0, 1.0));
+            }
+            controls
+                .transport
+                .position
+                .store(source.position_seconds.to_bits(), Ordering::Release);
+        }
+    }
+    controls
+        .transport
+        .peak
+        .store(peak.to_bits(), Ordering::Relaxed);
+    for (track, peak) in controls.tracks.iter().zip(peaks) {
+        track.peak.store(peak.to_bits(), Ordering::Relaxed);
+    }
 }
 
 fn build_typed_stream<T>(
@@ -815,6 +1072,75 @@ fn track_index(kind: StemType) -> Option<usize> {
 mod tests {
     use super::*;
     use atomusicator_domain::{AudioBufferF32, AudioFormat};
+
+    #[test]
+    fn aligned_callback_freezes_clock_on_underrun_and_rejects_stale_frames() {
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(4);
+        let controls = MixerControls::new();
+        controls.transport.generation.store(2, Ordering::Release);
+        let finished = AtomicBool::new(false);
+        let failed = AtomicBool::new(false);
+        let mut output = [1.0f32; 4];
+        aligned_mix(&mut output, 2, &mut consumer, &controls, &finished, &failed);
+        assert_eq!(output, [0.0; 4]);
+        assert_eq!(controls.transport.position.load(Ordering::Acquire), 0);
+        assert!(controls.transport.playing.load(Ordering::Acquire));
+        producer
+            .push(super::super::aligned::AlignedFrame {
+                generation: 1,
+                position_seconds: 99.0,
+                samples: [[0.9; 2]; 5],
+            })
+            .unwrap();
+        aligned_mix(&mut output, 2, &mut consumer, &controls, &finished, &failed);
+        assert_eq!(output, [0.0; 4]);
+        assert_eq!(controls.transport.position.load(Ordering::Acquire), 0);
+        producer
+            .push(super::super::aligned::AlignedFrame {
+                generation: 2,
+                position_seconds: 0.01,
+                samples: [[0.1; 2]; 5],
+            })
+            .unwrap();
+        aligned_mix(&mut output, 2, &mut consumer, &controls, &finished, &failed);
+        assert!(output[0] > 0.3);
+        assert_eq!(
+            f64::from_bits(controls.transport.position.load(Ordering::Acquire)),
+            0.01
+        );
+        assert_eq!(&output[2..], &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn abandoned_aligned_producer_is_a_source_failure_instead_of_an_endless_underrun() {
+        let (producer, mut consumer) = rtrb::RingBuffer::new(4);
+        drop(producer);
+        let controls = MixerControls::new();
+        let mut output = [1.0f32; 4];
+        aligned_mix(
+            &mut output,
+            2,
+            &mut consumer,
+            &controls,
+            &AtomicBool::new(false),
+            &AtomicBool::new(false),
+        );
+        assert!(controls.transport.source_failed.load(Ordering::Acquire));
+        assert!(!controls.transport.playing.load(Ordering::Acquire));
+        assert_eq!(output, [0.0; 4]);
+    }
+
+    #[test]
+    fn loading_a_valid_session_clears_a_previous_source_failure() {
+        let mixer = CpalRealtimeMixer::new().unwrap();
+        mixer
+            .controls
+            .transport
+            .source_failed
+            .store(true, Ordering::Release);
+        mixer.load_session(stems(0.1)).unwrap();
+        assert!(!mixer.source_failed());
+    }
 
     fn stems(value: f32) -> Vec<Stem> {
         let format = AudioFormat::new(48_000, 2).unwrap();
