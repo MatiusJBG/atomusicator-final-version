@@ -1,5 +1,5 @@
 use atomusicator_domain::{
-    AudioBufferF32, AudioFormat, DomainError, SeparationResult, Stem, StemType,
+    AudioBufferF32, AudioFormat, DomainError, PitchShiftSpec, SeparationResult, Stem, StemType,
 };
 
 fn buffer(samples: &[f32]) -> AudioBufferF32 {
@@ -21,6 +21,52 @@ fn buffer_rejects_non_finite_samples() {
     assert_eq!(
         AudioBufferF32::new(format, vec![f32::NAN]),
         Err(DomainError::NonFiniteSample)
+    );
+}
+
+#[test]
+fn audio_format_rejects_unsupported_sample_rates_and_channel_counts() {
+    assert_eq!(
+        AudioFormat::new(0, 1),
+        Err(DomainError::InvalidSampleRate(0))
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 3),
+        Err(DomainError::InvalidChannelCount(3))
+    );
+}
+
+#[test]
+fn pitch_shift_spec_accepts_inclusive_bounds_and_rejects_invalid_values() {
+    assert_eq!(
+        PitchShiftSpec::try_new(-12.0, false).unwrap().semitones(),
+        -12.0
+    );
+    assert_eq!(
+        PitchShiftSpec::try_new(12.0, true).unwrap().semitones(),
+        12.0
+    );
+    assert_eq!(
+        PitchShiftSpec::try_new(12.01, false),
+        Err(DomainError::PitchOutOfBounds(12.01))
+    );
+    assert!(PitchShiftSpec::try_new(f32::NAN, false).is_err());
+}
+
+#[test]
+fn deserialization_preserves_audio_and_pitch_invariants() {
+    assert!(
+        serde_json::from_str::<AudioFormat>(r#"{"sample_rate_hz":48000,"channels":3}"#).is_err()
+    );
+    assert!(
+        serde_json::from_str::<PitchShiftSpec>(r#"{"semitones":13.0,"preserve_formants":false}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<AudioBufferF32>(
+            r#"{"format":{"sample_rate_hz":48000,"channels":1},"samples":[NaN]}"#
+        )
+        .is_err()
     );
 }
 

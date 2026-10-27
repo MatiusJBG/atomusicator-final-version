@@ -19,8 +19,21 @@ fn application_depends_only_on_the_domain_crate() {
 }
 
 #[test]
-fn domain_has_no_third_party_dependencies() {
+fn domain_uses_only_serialization_and_typed_error_dependencies() {
     let manifest = fs::read_to_string(manifest_dir().join("../domain/Cargo.toml")).unwrap();
-    let dependencies = manifest.split("[dependencies]").nth(1).unwrap();
-    assert!(dependencies.trim().is_empty());
+    let dependencies = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .unwrap()
+        .split("[dev-dependencies]")
+        .next()
+        .unwrap();
+    let dependencies: Vec<_> = dependencies
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(dependencies.len(), 2);
+    assert!(dependencies.contains(&"serde.workspace = true"));
+    assert!(dependencies.contains(&"thiserror.workspace = true"));
 }

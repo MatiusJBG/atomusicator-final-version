@@ -1,64 +1,62 @@
-//! Pure audio and session domain types. This crate intentionally has no
-//! third-party dependencies so application policy cannot inherit I/O details.
+//! Pure audio and session domain types with serialization support.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fmt;
 use std::path::PathBuf;
+use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum DomainError {
+    #[error("invalid sample rate: {0} Hz; must be greater than zero")]
+    InvalidSampleRate(u32),
+    #[error("invalid channel count: {0}; only mono and stereo are supported")]
+    InvalidChannelCount(u16),
+    #[error("identifier must not be empty")]
     EmptyIdentifier,
-    InvalidAudioFormat,
+    #[error("sample count is not divisible by channel count {channels} ({samples} samples)")]
+    MisalignedChannelBuffer { samples: usize, channels: u16 },
+    #[error("sample count must contain complete interleaved frames")]
     IncompleteInterleavedFrame,
+    #[error(
+        "audio buffers do not match: expected {expected_frames} frames at {expected_sample_rate} Hz/{expected_channels} channels, got {actual_frames} frames at {actual_sample_rate} Hz/{actual_channels} channels"
+    )]
+    BufferFormatMismatch {
+        expected_frames: usize,
+        expected_sample_rate: u32,
+        expected_channels: u16,
+        actual_frames: usize,
+        actual_sample_rate: u32,
+        actual_channels: u16,
+    },
+    #[error("audio samples must be finite")]
     NonFiniteSample,
+    #[error("required stem is missing: {0:?}")]
     MissingStem(StemType),
+    #[error("stem was supplied more than once: {0:?}")]
     DuplicateStem(StemType),
+    #[error("expected five stems, received {0}")]
     UnexpectedStemCount(usize),
+    #[error("stem format does not match the original mix: {0:?}")]
     StemFormatMismatch(StemType),
+    #[error("stem reconstruction differs at sample {frame} by {deviation}")]
     ReconstructionMismatch { frame: usize, deviation: f32 },
+    #[error("separation was cancelled")]
     SeparationCancelled,
+    #[error("pitch shift of {0} semitones is outside the supported range [-12, +12]")]
+    PitchOutOfBounds(f32),
+    #[error("audio buffers must have matching formats and frame counts")]
     AudioAlignmentMismatch,
+    #[error("checkpoint cache failed: {0}")]
     CacheFailure(String),
+    #[error("DSP operation failed: {0}")]
     DspFailure(String),
+    #[error("audio decode failed: {0}")]
     AudioDecodeFailure(String),
+    #[error("audio export failed: {0}")]
     AudioExportFailure(String),
 }
 
-impl fmt::Display for DomainError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyIdentifier => write!(f, "identifier must not be empty"),
-            Self::InvalidAudioFormat => write!(f, "sample rate and channel count must be positive"),
-            Self::IncompleteInterleavedFrame => {
-                write!(f, "sample count must contain complete interleaved frames")
-            }
-            Self::NonFiniteSample => write!(f, "audio samples must be finite"),
-            Self::MissingStem(stem) => write!(f, "required stem is missing: {stem:?}"),
-            Self::DuplicateStem(stem) => write!(f, "stem was supplied more than once: {stem:?}"),
-            Self::UnexpectedStemCount(count) => write!(f, "expected five stems, received {count}"),
-            Self::StemFormatMismatch(stem) => {
-                write!(f, "stem format does not match the original mix: {stem:?}")
-            }
-            Self::ReconstructionMismatch { frame, deviation } => write!(
-                f,
-                "stem reconstruction differs at sample {frame} by {deviation}"
-            ),
-            Self::SeparationCancelled => write!(f, "separation was cancelled"),
-            Self::AudioAlignmentMismatch => write!(
-                f,
-                "audio buffers must have matching formats and frame counts"
-            ),
-            Self::CacheFailure(message) => write!(f, "checkpoint cache failed: {message}"),
-            Self::DspFailure(message) => write!(f, "DSP operation failed: {message}"),
-            Self::AudioDecodeFailure(message) => write!(f, "audio decode failed: {message}"),
-            Self::AudioExportFailure(message) => write!(f, "audio export failed: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for DomainError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum StemType {
     LeadVocal,
     BackingVocals,
@@ -77,7 +75,7 @@ impl StemType {
     ];
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AudioAssetId(String);
 
 impl AudioAssetId {
@@ -94,20 +92,36 @@ impl AudioAssetId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioAsset {
     pub id: AudioAssetId,
     pub path: PathBuf,
     pub display_name: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct AudioFormat {
     pub sample_rate_hz: u32,
     pub channels: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize)]
+struct AudioFormatRepr {
+    sample_rate_hz: u32,
+    channels: u16,
+}
+
+impl<'de> Deserialize<'de> for AudioFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = AudioFormatRepr::deserialize(deserializer)?;
+        Self::new(repr.sample_rate_hz, repr.channels).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioAssetMetadata {
     pub format: AudioFormat,
     pub frame_count: u64,
@@ -115,8 +129,11 @@ pub struct AudioAssetMetadata {
 
 impl AudioFormat {
     pub fn new(sample_rate_hz: u32, channels: u16) -> Result<Self, DomainError> {
-        if sample_rate_hz == 0 || channels == 0 {
-            return Err(DomainError::InvalidAudioFormat);
+        if sample_rate_hz == 0 {
+            return Err(DomainError::InvalidSampleRate(sample_rate_hz));
+        }
+        if !(1..=2).contains(&channels) {
+            return Err(DomainError::InvalidChannelCount(channels));
         }
         Ok(Self {
             sample_rate_hz,
@@ -125,10 +142,68 @@ impl AudioFormat {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PitchShiftSpec {
+    semitones: f32,
+    preserve_formants: bool,
+}
+
+#[derive(Deserialize)]
+struct PitchShiftSpecRepr {
+    semitones: f32,
+    preserve_formants: bool,
+}
+
+impl<'de> Deserialize<'de> for PitchShiftSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = PitchShiftSpecRepr::deserialize(deserializer)?;
+        Self::try_new(repr.semitones, repr.preserve_formants).map_err(serde::de::Error::custom)
+    }
+}
+
+impl PitchShiftSpec {
+    pub fn try_new(semitones: f32, preserve_formants: bool) -> Result<Self, DomainError> {
+        if !(-12.0..=12.0).contains(&semitones) {
+            return Err(DomainError::PitchOutOfBounds(semitones));
+        }
+        Ok(Self {
+            semitones,
+            preserve_formants,
+        })
+    }
+
+    pub fn semitones(&self) -> f32 {
+        self.semitones
+    }
+
+    pub fn preserve_formants(&self) -> bool {
+        self.preserve_formants
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AudioBufferF32 {
     format: AudioFormat,
     samples: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct AudioBufferF32Repr {
+    format: AudioFormat,
+    samples: Vec<f32>,
+}
+
+impl<'de> Deserialize<'de> for AudioBufferF32 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = AudioBufferF32Repr::deserialize(deserializer)?;
+        Self::new(repr.format, repr.samples).map_err(serde::de::Error::custom)
+    }
 }
 
 impl AudioBufferF32 {
@@ -153,13 +228,13 @@ impl AudioBufferF32 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stem {
     pub kind: StemType,
     pub audio: AudioBufferF32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeparationResult {
     stems: BTreeMap<StemType, Stem>,
 }
@@ -214,7 +289,7 @@ impl SeparationResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioSession {
     pub id: String,
     pub name: String,
@@ -222,7 +297,7 @@ pub struct AudioSession {
     pub stem_assets: Vec<AudioAsset>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SeparationJobStatus {
     Queued,
     Running,
@@ -231,7 +306,7 @@ pub enum SeparationJobStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeparationJob {
     pub id: String,
     pub source: AudioAssetId,
