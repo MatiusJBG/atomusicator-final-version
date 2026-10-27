@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+    branches: [develop, master]
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_core
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust_core/Cargo.toml --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --manifest-path rust_core/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust_core/Cargo.toml --workspace
+
+  flutter:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Run widget tests
+        run: flutter test

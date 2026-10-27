@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/infrastructure",
+    "crates/bootstrap_ffi",
+]
+
+[workspace.package]
+version = "0.6.0"
+edition = "2024"
+authors = ["Matias Benjamin Morales Aigaje"]
+license = "MIT"
+
+[workspace.dependencies]
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "download-binaries", "copy-dylibs"] }
+ort-sys = "=2.0.0-rc.9"
+ndarray = { version = "0.16", features = ["rayon"] }
+realfft = "3.4"
+apodize = "1.0"
+rubato = "0.16"
+symphonia = { version = "0.5", features = ["all"] }
+hound = "3.5"
+cpal = "0.15"
+rtrb = "0.3"
+tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "fs", "macros"] }
+rayon = "1.10"
+tokio-util = { version = "0.7", features = ["rt"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+lru = "0.12"
+memmap2 = "0.9"
+reqwest = { version = "0.12", features = ["stream", "rustls-tls"] }
+directories = "6.0"
+fs4 = "0.12"
+flutter_rust_bridge = "=2.8.0"
+thiserror = "2.0"
+tracing = "0.1"
