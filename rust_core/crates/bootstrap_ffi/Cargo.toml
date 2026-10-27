@@ -1,0 +1,15 @@
+[package]
+name = "atomusicator-bootstrap-ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+atomusicator-domain = { path = "../domain" }
+atomusicator-application = { path = "../application" }
+atomusicator-infrastructure = { path = "../infrastructure" }
+flutter_rust_bridge.workspace = true

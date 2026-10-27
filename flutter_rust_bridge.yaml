@@ -1,0 +1,7 @@
+rust_input: crate::api
+dart_output: lib/src/rust_bridge
+dart_root: lib/src/rust_bridge
+rust_root: rust_core/crates/bootstrap_ffi
+rust_output: rust_core/crates/bootstrap_ffi/src/frb_generated.rs
+full_dep: true
+web: false
