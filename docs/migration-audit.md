@@ -1,5 +1,23 @@
 # Auditoría y continuación de la migración Python → Rust/Flutter
 
+## Actualización visual del estudio — 27/10/2026
+
+La referencia Figma proporcionada por el usuario se consultó mediante su sesión
+autenticada: mezclador DAW, exportación y progreso de pitch. Flutter adopta sus
+superficies oscuras, acciones turquesa y colores por stem. Los controles permanecen
+fijos junto al timeline durante el zoom; transporte, pitch y master comparten el
+panel inferior. Exportación permite elegir formato, destino, pistas e inclusión
+de pistas silenciadas. Las formas de onda muestran los picos combinados reales
+del puente; no se presentan como dos canales independientes.
+
+Verificación de esta actualización: análisis Flutter sin observaciones, 12 pruebas
+Flutter aprobadas con la DLL/FFmpeg configurados y render local adicional de una
+sesión real mediante la DLL empaquetada. Se comprobaron 940×650 y 1440×900,
+controles fijos al desplazar/zoom, pitch con formantes y selección efectiva de
+exportación. Release Windows recompilado; instalador y las puertas restantes de
+la migración conservan su estado pendiente. Los renders y referencias visuales
+permanecen locales. No se modificó el DSP ni se añadieron dependencias Python.
+
 Fecha: 27 de octubre de 2026. Rama única: `feature/complete-python-migration`.
 Referencia: proyecto `Separador`, sus implementaciones y pruebas; contexto del
 chat **migracion fases** y documentos de fases 1–5. Base nueva: `origin/develop`

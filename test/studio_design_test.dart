@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-
+import 'package:file_picker/file_picker.dart';
 import 'package:atomusicator/core/di/native_engine_provider.dart';
 import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:atomusicator/core/theme/app_theme.dart';
@@ -34,7 +34,17 @@ class FiveStemStudio extends FakeStudio {
   );
 }
 
+class _ExportFolderPicker extends FilePicker {
+  @override
+  Future<String?> getDirectoryPath({
+    String? dialogTitle,
+    bool lockParentWindow = false,
+    String? initialDirectory,
+  }) async => '/export';
+}
+
 void main() {
+  setUpAll(() => FilePicker.platform = _ExportFolderPicker());
   Future<ProviderContainer> mount(
     WidgetTester tester,
     FakeStudio gateway,
@@ -120,6 +130,68 @@ void main() {
     await tester.tap(find.text('Apply pitch'));
     await tester.pump();
     expect(gateway.calls, contains('pitch:1:true'));
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
+  testWidgets('export dialog selects format and prevents exporting no tracks', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(940, 650);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final container = await mount(tester, FiveStemStudio());
+    await tester.tap(find.byTooltip('Export stems').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('MP3'));
+    await tester.pump();
+    expect(find.text('320 kbps'), findsOneWidget);
+    for (final key in stemNames.keys) {
+      await tester.tap(find.byKey(ValueKey('export-$key')));
+      await tester.pump();
+    }
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('confirm-export')))
+          .onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
+  testWidgets('export excludes muted tracks only when requested', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(940, 650);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final picker = FilePicker.platform;
+    FilePicker.platform = _ExportFolderPicker();
+    addTearDown(() => FilePicker.platform = picker);
+    final gateway = FiveStemStudio();
+    final container = await mount(tester, gateway);
+    await container
+        .read(studioProvider.notifier)
+        .setTrack('bass', const MixTrackState(mute: true));
+    await tester.tap(find.byTooltip('Export stems').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Include muted tracks'));
+    await tester.pump();
+    expect(find.text('4 OF 5 SELECTED'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('confirm-export')));
+    await tester.tap(find.byKey(const ValueKey('confirm-export')));
+    await tester.pumpAndSettle();
+    expect(
+      gateway.calls,
+      contains(
+        'export:lead_vocal,backing_vocals,drums,instrumental:wav:44100:2:24:false',
+      ),
+    );
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     container.dispose();
   });
