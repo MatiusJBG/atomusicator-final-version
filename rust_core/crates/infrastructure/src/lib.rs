@@ -10,6 +10,7 @@ pub mod mdx;
 pub mod model_downloader;
 pub mod models;
 pub mod onnx;
+pub mod pitch_cache;
 pub mod preferences;
 pub mod session_workspace;
 pub mod storage;

@@ -1,7 +1,18 @@
 use std::path::Path;
 
-use atomusicator_domain::{AudioBufferF32, AudioFormat, DomainError};
+use atomusicator_domain::{AudioAssetMetadata, AudioBufferF32, AudioFormat, DomainError};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+
+/// Header-only inspection; duration checks must not allocate full PCM buffers.
+pub fn wav_metadata(path: &Path) -> Result<AudioAssetMetadata, DomainError> {
+    let reader =
+        WavReader::open(path).map_err(|e| DomainError::AudioDecodeFailure(e.to_string()))?;
+    let spec = reader.spec();
+    Ok(AudioAssetMetadata {
+        format: AudioFormat::new(spec.sample_rate, spec.channels)?,
+        frame_count: u64::from(reader.duration()),
+    })
+}
 
 /// Writes IEEE 754 float32 samples without clipping or quantization.
 pub fn write_wav_f32(path: &Path, audio: &AudioBufferF32) -> Result<(), DomainError> {

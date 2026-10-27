@@ -13,6 +13,7 @@ use atomusicator_infrastructure::{
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
     onnx::OrtSessionPool,
+    pitch_cache::PitchRenderCache,
     preferences::{NativeLegacyProjects, ProjectsPreferences},
     session_workspace::LocalSessionWorkspace,
     storage::paths::WorkspacePathPolicy,
@@ -328,33 +329,26 @@ impl Studio {
                 loaded.originals.clone()
             } else {
                 let directory = PathBuf::from(&loaded.dto.directory).join("renders");
-                fs::create_dir_all(&directory).map_err(err)?;
-                let stage = TemporaryDirectory::new(&directory).map_err(err)?;
                 let tools = AudioTools::discover().map_err(err)?;
-                for (index, (kind, source)) in loaded.originals.iter().enumerate() {
-                    check_cancel(cancel)?;
-                    backend.report(
-                        id,
-                        index as f32 / 5.0,
-                        &format!("Rendering {}", stem_key(*kind)),
-                    );
-                    tools
-                        .pitch(
-                            source,
-                            &stage.0.join(format!("{}.wav", stem_key(*kind))),
-                            spec,
-                            cancel,
-                        )
-                        .map_err(err)?;
-                }
-                check_cancel(cancel)?;
-                let target = directory.join(format!("pitch-{}", unique_id()));
-                fs::rename(&stage.0, &target).map_err(err)?;
-                loaded
-                    .originals
-                    .iter()
-                    .map(|(kind, _)| (*kind, target.join(format!("{}.wav", stem_key(*kind)))))
-                    .collect()
+                let runtime = tools.pitch_runtime_signature(cancel).map_err(err)?;
+                let mut index = 0;
+                PitchRenderCache::new(directory)
+                    .get_or_render(
+                        &loaded.originals,
+                        spec,
+                        &runtime,
+                        cancel,
+                        |source, target| {
+                            backend.report(
+                                id,
+                                index as f32 / 5.0,
+                                &format!("Rendering track {} of 5", index + 1),
+                            );
+                            index += 1;
+                            tools.pitch(source, target, spec, cancel)
+                        },
+                    )
+                    .map_err(err)?
             };
             check_cancel(cancel)?;
             let dto = backend.prepare_tracks(
@@ -588,7 +582,21 @@ mod tests {
         let id = backend.pitch(3, true).unwrap();
         let job = wait(&backend, &id);
         assert_eq!(job.status, "completed", "{}", job.message);
-        assert_eq!(job.session.unwrap().pitch_semitones, 3);
+        let pitched = job.session.unwrap();
+        assert_eq!(pitched.pitch_semitones, 3);
+        let render_path = PathBuf::from(&pitched.tracks[0].file_path);
+        let modified = fs::metadata(&render_path).unwrap().modified().unwrap();
+        let id = backend.pitch(3, true).unwrap();
+        let reused = wait(&backend, &id);
+        assert_eq!(reused.status, "completed", "{}", reused.message);
+        assert_eq!(
+            reused.session.unwrap().tracks[0].file_path,
+            pitched.tracks[0].file_path
+        );
+        assert_eq!(
+            fs::metadata(&render_path).unwrap().modified().unwrap(),
+            modified
+        );
         assert_eq!(
             fs::read(root.0.join("outputs/lead_vocal.wav")).unwrap(),
             original

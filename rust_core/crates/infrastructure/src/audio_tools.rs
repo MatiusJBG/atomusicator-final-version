@@ -1,5 +1,5 @@
 //! FFmpeg audio conversion and tempo-preserving pitch. No shell or Python runtime.
-use crate::audio_io::wav_codec::read_wav_f32;
+use crate::audio_io::wav_codec::{read_wav_f32, wav_metadata};
 use atomusicator_application::CancellationToken;
 use atomusicator_domain::{AudioBufferF32, DomainError, PitchShiftSpec};
 use std::{
@@ -100,6 +100,27 @@ impl AudioTools {
     pub fn at(executable: PathBuf) -> Result<Self, DomainError> {
         Ok(Self { executable })
     }
+    pub fn pitch_runtime_signature(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<String, DomainError> {
+        let executable = if self.executable.is_file() {
+            self.executable.clone()
+        } else {
+            let paths = std::env::var_os("PATH").ok_or_else(|| io_error("PATH is unavailable"))?;
+            std::env::split_paths(&paths)
+                .flat_map(|directory| {
+                    let candidate = directory.join(&self.executable);
+                    [candidate.clone(), candidate.with_extension("exe")]
+                })
+                .find(|path| path.is_file())
+                .ok_or_else(|| io_error("FFmpeg executable cannot be fingerprinted"))?
+        };
+        Ok(format!(
+            "rubberband-tempo1-pitch-v1-ffmpeg-sha256-{}",
+            crate::pitch_cache::file_hash(&executable, cancel)?
+        ))
+    }
     pub fn decode_for_separation(
         &self,
         path: &Path,
@@ -158,10 +179,10 @@ impl AudioTools {
             ],
             cancel,
         )?;
-        let original = read_wav_f32(source)?;
-        let rendered = read_wav_f32(target)?;
-        if original.format() != rendered.format()
-            || original.frames().abs_diff(rendered.frames()) > 2
+        let original = wav_metadata(source)?;
+        let rendered = wav_metadata(target)?;
+        if original.format != rendered.format
+            || original.frame_count.abs_diff(rendered.frame_count) > 2
         {
             return Err(io_error(
                 "pitch render changed the audio duration or format",
