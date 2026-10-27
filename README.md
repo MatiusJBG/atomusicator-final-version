@@ -2,8 +2,9 @@
 
 Atomusicator is being migrated from the legacy Python desktop application to a
 Flutter presentation layer and a modular Rust audio engine. The current branch
-contains the architecture foundation and an early workbench; it is not yet a
-working five-stem separation release.
+connects the workbench to native five-stem inference, playback, pitch rendering
+and stem export. Migration parity and the remaining work are tracked in
+[the migration audit](docs/migration-audit.md).
 
 ## Repository layout
 
@@ -46,20 +47,32 @@ root and can fail on Windows when FRB compares it with its canonical Rust
 crate path. The bridge exposes only first-party API types, so it keeps FRB's
 optional full-dependency/`ffigen` mode disabled and does not require LLVM for
 code generation.
+Check `flutter_rust_bridge_codegen --version` before regeneration: newer
+generators may silently rewrite runtime dependencies. With Rust edition 2024,
+2.8.0 can warn that its optional auto-upgrade step cannot parse the workspace;
+generation still completes. Keep the Rust and Dart runtimes pinned to 2.8.0.
 
 ## Migration status
 
-The domain, application ports, separation orchestration, migration persistence
-and caching, STFT/iSTFT, phase subtraction, bleed-gate rebalance, ONNX session
-pool, audio file I/O, waveform peaks, and a responsive workbench are present.
-The Flutter workbench supports audio selection, drag-and-drop, and source
-management. It loads the native bridge from the directory containing the
-application executable, so launching the app from another working directory
-does not change native library lookup. The current bridge reports engine
-metadata only; it does not expose separation or playback operations. The
-planned model profile also remains unconfigured until its artifact, license,
-download URL, and SHA-256 can be verified. Therefore stem separation, native
-playback, pitch shifting, and batch export are not available yet.
+The workbench imports WAV/MP3/FLAC/M4A, selects a source, separates five stems
+using the four reviewed legacy MDX profiles, and reopens native or Python
+sessions. Models are SHA-256 verified; missing models require download consent.
+Existing models under the nested `Separador Vocal/Separador Vocal/models`
+directory are reused without moving them.
+
+Playback exposes synchronized play/pause/stop/seek, track gain, mute/solo, pan,
+master gain and a real master meter. Waveforms contain native audio peaks and
+share a timeline with 100–400% zoom. Offline pitch uses FFmpeg Rubber Band,
+preserves tempo, optionally preserves formants, and never overwrites original
+stems. Export supports selected WAV/FLAC/MP3 stems, 44.1/48 kHz, mono/stereo,
+16/24-bit WAV/FLAC, 320 kbps MP3 and optional loudness normalization.
+
+Separation, pitch and export run as cancellable background jobs. Results are
+published as complete batches. The current connected playback path holds stems
+in memory; bounded streaming, adaptive GPU/resource policy, partial recovery,
+historical QSettings preferences and musical quality benchmarks remain pending.
+See the audit for the precise differences from Python. No quality or performance
+equivalence is implied by a successful reconstruction test.
 
 ## Windows packaging
 
@@ -70,9 +83,22 @@ build tools, and Inno Setup 6 installed, run this from any working directory:
 & "<repository>\packaging\build_windows.ps1"
 ```
 
-The script resolves all project paths from its own location, builds the Flutter
+The script first prepares hash-verified FFmpeg/FFprobe with Rubber Band (no
+Python build dependency), then resolves all project paths from its own location, builds the Flutter
 release and Rust FFI library, places the bridge and ONNX Runtime DLLs beside
 `atomusicator.exe`, then creates `packaging\dist\Atomusicator-Setup-0.6.0.exe`.
 To build the app folder without compiling the installer, pass
 `-SkipInstaller`. The installer output directory is generated locally and is
 not part of the source changes.
+
+An existing verified runtime can be reused with
+`-FfmpegRuntimeDirectory '<directory containing bin, LICENSE and README.txt>'`.
+Otherwise the preparer downloads the pinned archive. Its source, hashes and
+GPL-3.0-or-later distribution notices are retained in `audio-tools` beside the
+installed app. Models and user audio are not bundled.
+
+To test the complete app folder, run `packaging/build_windows.ps1 -SkipInstaller`
+and open `build/windows/x64/runner/Release/atomusicator.exe`. A bare
+`flutter run -d windows` does not copy the native libraries or audio tools.
+For development, place the built bridge, ONNX DLLs and `audio-tools` beside the
+debug executable, or test the prepared release folder.
