@@ -85,15 +85,18 @@ que en la aplicación Python.
    CPU de respaldo. Falta exponer el proveedor realmente activo, medir DirectML/CUDA
    y migrar la política adaptativa de hilos, presupuesto de sesiones y ejecución
    paralela de ramas. Las pruebas no certifican aceleración GPU efectiva.
+   La política CPU es parte de la paridad; GPU es una mejora calificada por
+   proveedor, no un requisito para cerrar una migración CPU completa.
 4. **Recuperación parcial y reanudación.** Los checkpoints exitosos se reutilizan,
    pero un trabajo fallido conserva la sesión anterior y no publica stems parciales.
    Python puede conservar resultados parciales de una rama fallida. Falta una
    representación explícita y una UI de recuperación para esos casos.
-5. **Persistencia de edición y preferencias históricas.** Se restauran las cinco
-   pistas originales de JSON antiguo/nuevo. Falta adoptar la carpeta personalizada
-   de QSettings del registro Windows, restaurar automáticamente el último render
-   de pitch y guardar mezcla/posición como estado de edición persistente. Abrir
-   manualmente una sesión existente y seleccionar la carpeta nueva sí funciona.
+5. **Preferencias históricas.** Se restauran las cinco pistas originales de JSON
+   antiguo/nuevo. Falta adoptar la carpeta personalizada de QSettings del registro
+   Windows. Abrir manualmente una sesión y seleccionar la carpeta nueva funciona.
+   Guardar mezcla/posición y restaurar automáticamente el último render de pitch
+   son mejoras opcionales; no se han demostrado como requisitos de paridad de la
+   aplicación anterior y no bloquean el cierre de la migración.
 6. **Paridad de controles y rendimiento de render.** Faltan medidores individuales
    en vivo (el master sí usa muestras reales), caché de renders de pitch y pruebas
    de desconexión/reconexión del dispositivo de audio. Cancelar una inferencia
@@ -102,9 +105,10 @@ que en la aplicación Python.
    Compilar/verificar el instalador requiere Inno Setup y una instalación limpia
    de Windows; no se considera comprobado por haber compilado solo la app.
 
-Todos estos pendientes pertenecen al mismo alcance de migración y pueden
-continuarse en esta rama con commits independientes. No se abrió PR, no se
-fusionaron ramas y no se añadieron workflows de Actions.
+El [plan de implementación](implementation-plan-native-migration.md) organiza
+la paridad obligatoria, la validación de calidad/rendimiento y las mejoras
+opcionales. Se continuará en esta feature con commits independientes. No se
+abrió PR, no se fusionaron ramas y no se añadieron workflows de Actions.
 
 ## Verificación reproducible
 

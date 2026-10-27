@@ -5,6 +5,8 @@ Flutter presentation layer and a modular Rust audio engine. The current branch
 connects the workbench to native five-stem inference, playback, pitch rendering
 and stem export. Migration parity and the remaining work are tracked in
 [the migration audit](docs/migration-audit.md).
+The remaining work and quality/resource acceptance gates are specified in
+[the native implementation plan](docs/implementation-plan-native-migration.md).
 
 ## Repository layout
 
