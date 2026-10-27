@@ -1,5 +1,8 @@
 //! Pure audio and session domain types with serialization support.
 
+pub mod jobs;
+pub mod quality;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -273,7 +276,7 @@ impl SeparationResult {
                 .map(|kind| by_kind[kind].audio.samples()[index])
                 .sum();
             let deviation = (reconstructed - original_sample).abs();
-            if deviation > 1.0e-5 {
+            if deviation > quality::RECONSTRUCTION_TOLERANCE {
                 return Err(DomainError::ReconstructionMismatch {
                     frame: index,
                     deviation,

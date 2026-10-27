@@ -26,20 +26,18 @@ pub struct MdxConfig {
 impl MdxConfig {
     /// Parameters from the legacy cache's mdx_model_data.json, matched to manifest hashes.
     pub fn for_profile(id: &str) -> Result<Self, DomainError> {
-        let (n_fft, dim_f, dim_t, compensate, invert) = match id {
-            "uvr-mdxnet-main-v1" => (7680, 3072, 256, 1.043, false),
-            "uvr-mdxnet-kara-2-v1" => (5120, 2048, 256, 1.065, true),
-            "kuielab-mdxnet-drums-v1" => (4096, 2048, 512, 1.035, false),
-            "kuielab-mdxnet-bass-v1" => (16384, 2048, 512, 1.035, false),
-            _ => return Err(fail("no reviewed MDX configuration for profile")),
-        };
+        let model = atomusicator_domain::quality::SeparationProfile::compatibility()
+            .models
+            .into_iter()
+            .find(|model| model.profile_id == id)
+            .ok_or_else(|| fail("no reviewed MDX configuration for profile"))?;
         Ok(Self {
-            n_fft,
-            hop: 1024,
-            dim_f,
-            dim_t,
-            compensate,
-            invert,
+            n_fft: model.n_fft,
+            hop: model.hop,
+            dim_f: model.dim_f,
+            dim_t: model.dim_t,
+            compensate: model.compensate,
+            invert: model.invert,
         })
     }
     pub fn chunk_frames(self) -> usize {
