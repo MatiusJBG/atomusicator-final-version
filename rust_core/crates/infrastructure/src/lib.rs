@@ -4,6 +4,7 @@ pub mod audio_io;
 pub mod cache;
 pub mod dsp;
 pub mod errors;
+pub mod mdx;
 pub mod model_downloader;
 pub mod models;
 pub mod onnx;
