@@ -16,9 +16,42 @@ fn stft_round_trip_reconstructs_interleaved_audio() {
     let reconstructed = processor
         .inverse(&processor.forward(&original).unwrap())
         .unwrap();
+    assert_eq!(reconstructed.samples().len(), original.samples().len());
     for (expected, actual) in original.samples().iter().zip(reconstructed.samples()) {
         assert!((expected - actual).abs() < 1.0e-4, "{expected} != {actual}");
     }
+}
+
+#[test]
+fn stft_rejects_spectrograms_with_inconsistent_sample_count() {
+    let format = AudioFormat::new(48_000, 1).unwrap();
+    let audio = AudioBufferF32::new(format, vec![0.25; 257]).unwrap();
+    let processor = StftProcessor::new(64).unwrap();
+    let mut spectrum = processor.forward(&audio).unwrap();
+    spectrum.sample_count += spectrum.hop_size;
+
+    assert!(processor.inverse(&spectrum).is_err());
+}
+
+#[test]
+fn istft_rejects_non_finite_spectral_bins() {
+    let format = AudioFormat::new(48_000, 1).unwrap();
+    let audio = AudioBufferF32::new(format, vec![0.25; 128]).unwrap();
+    let processor = StftProcessor::new(64).unwrap();
+    let mut spectrum = processor.forward(&audio).unwrap();
+    spectrum.bins[0][0].re = f32::NAN;
+
+    assert!(processor.inverse(&spectrum).is_err());
+}
+
+#[test]
+fn bleed_gate_rejects_inputs_with_different_original_lengths() {
+    let format = AudioFormat::new(48_000, 1).unwrap();
+    let lead = AudioBufferF32::new(format, vec![0.25; 200]).unwrap();
+    let backing = AudioBufferF32::new(format, vec![0.01; 201]).unwrap();
+    let gate = NativePhaseDsp::new(64, 0.1, 1.0).unwrap();
+
+    assert!(gate.apply_spectral_bleed_gate(&lead, &backing).is_err());
 }
 
 #[test]
