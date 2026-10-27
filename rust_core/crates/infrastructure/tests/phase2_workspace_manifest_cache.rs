@@ -65,6 +65,23 @@ fn workspace_paths_use_portable_app_data_and_legacy_projects_when_present() {
 }
 
 #[test]
+fn workspace_adopts_the_actual_nested_python_cache_and_projects() {
+    let base = temp_dir("python-paths");
+    let legacy = base.join("Separador Vocal/Separador Vocal");
+    fs::create_dir_all(legacy.join("models")).unwrap();
+    fs::create_dir_all(legacy.join("projects")).unwrap();
+    let policy = WorkspacePathPolicy::from_local_data_dir(&base);
+    assert_eq!(policy.default_projects_dir(), legacy.join("projects"));
+    assert!(
+        policy
+            .model_candidates("model.onnx")
+            .unwrap()
+            .contains(&legacy.join("models/model.onnx"))
+    );
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn workspace_policy_rejects_unc_and_filesystem_roots() {
     assert!(
         WorkspacePathPolicy::validate_projects_destination(std::path::Path::new(
