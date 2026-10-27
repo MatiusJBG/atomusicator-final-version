@@ -13,3 +13,6 @@ atomusicator-domain = { path = "../domain" }
 atomusicator-application = { path = "../application" }
 atomusicator-infrastructure = { path = "../infrastructure" }
 flutter_rust_bridge.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
