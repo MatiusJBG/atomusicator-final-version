@@ -416,6 +416,29 @@ enum TrackReader {
 }
 
 impl TrackReader {
+    fn exhausted(&self) -> bool {
+        match self {
+            Self::Memory {
+                stems,
+                index,
+                cursor,
+            } => *cursor >= stems[*index].audio.frames() as f64,
+            Self::Stream {
+                consumer,
+                current,
+                next,
+                fraction,
+                pending_sample,
+                ..
+            } => {
+                consumer.is_abandoned()
+                    && consumer.is_empty()
+                    && pending_sample.is_none()
+                    && next.is_none()
+                    && (current.is_none() || *fraction >= 1.0)
+            }
+        }
+    }
     /// Stage source frames without advancing the output clock. All tracks must
     /// be ready before the callback commits one mixed frame.
     fn prepare(&mut self) -> bool {
@@ -776,6 +799,9 @@ fn mix_output<T>(
             Ordering::AcqRel,
             Ordering::Relaxed,
         );
+        if tracks.iter().all(TrackReader::exhausted) {
+            controls.transport.playing.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -954,6 +980,39 @@ mod tests {
         drop(producer);
         assert_eq!(track.frame(0.5), Some([0.6; 2]));
         assert_eq!(track.frame(0.5), None);
+    }
+
+    #[test]
+    fn streamed_transport_stops_at_common_end_without_advancing_through_silence() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        producer.push(0.2).unwrap();
+        producer.push(0.4).unwrap();
+        drop(producer);
+        let mut tracks = vec![TrackReader::Stream {
+            consumer,
+            channels: 1,
+            sample_rate_hz: 48000,
+            current: None,
+            next: None,
+            fraction: 0.0,
+            pending_sample: None,
+        }];
+        let controls = MixerControls::new();
+        let mut output = [1.0f32; 6];
+        mix_output(
+            &mut output,
+            2,
+            48000,
+            &mut tracks,
+            &controls,
+            &AtomicU32::new(1.0f32.to_bits()),
+        );
+        assert!(!controls.transport.playing.load(Ordering::Acquire));
+        assert_eq!(&output[4..], &[0.0; 2]);
+        assert_eq!(
+            f64::from_bits(controls.transport.position.load(Ordering::Acquire)),
+            2.0 / 48000.0
+        );
     }
 
     #[test]
