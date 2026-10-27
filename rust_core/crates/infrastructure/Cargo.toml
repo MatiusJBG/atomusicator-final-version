@@ -30,6 +30,7 @@ rtrb.workspace = true
 cpal.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows-registry = "=0.6.1"
 ort = { workspace = true, features = ["directml", "cuda"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

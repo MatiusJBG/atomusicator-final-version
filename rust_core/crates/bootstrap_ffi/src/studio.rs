@@ -13,6 +13,7 @@ use atomusicator_infrastructure::{
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
     onnx::OrtSessionPool,
+    preferences::{NativeLegacyProjects, ProjectsPreferences},
     session_workspace::LocalSessionWorkspace,
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
@@ -47,13 +48,9 @@ pub fn studio() -> Result<Arc<Studio>, String> {
     STUDIO
         .get_or_init(|| {
             let policy = WorkspacePathPolicy::system_default().map_err(err)?;
-            let settings = policy.app_data_root().join("settings.json");
-            let saved = fs::read(&settings)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<PathBuf>(&bytes).ok());
-            let projects = saved
-                .and_then(|p| WorkspacePathPolicy::validate_projects_destination(&p).ok())
-                .unwrap_or_else(|| policy.default_projects_dir());
+            let projects = ProjectsPreferences::new(policy, NativeLegacyProjects)
+                .load()
+                .map_err(err)?;
             Ok(Arc::new(Studio {
                 mixer: CpalRealtimeMixer::new().map_err(err)?,
                 job: Mutex::new(None),
@@ -81,13 +78,10 @@ impl Studio {
     pub fn set_projects_directory(&self, path: &Path) -> Result<(), String> {
         let job = self.job.lock().map_err(err)?;
         ensure_idle(&job)?;
-        let path = WorkspacePathPolicy::validate_projects_destination(path).map_err(err)?;
         let policy = WorkspacePathPolicy::system_default().map_err(err)?;
-        fs::create_dir_all(policy.app_data_root()).map_err(err)?;
-        let file = policy.app_data_root().join("settings.json");
-        let temporary = policy.app_data_root().join("settings.json.tmp");
-        fs::write(&temporary, serde_json::to_vec(&path).map_err(err)?).map_err(err)?;
-        fs::rename(&temporary, &file).map_err(err)?;
+        let path = ProjectsPreferences::new(policy, NativeLegacyProjects)
+            .save(path)
+            .map_err(err)?;
         *self.projects.lock().map_err(err)? = path;
         Ok(())
     }
