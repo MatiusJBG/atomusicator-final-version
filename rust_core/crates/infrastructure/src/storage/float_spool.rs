@@ -35,6 +35,7 @@ struct CacheEntry {
 pub struct FloatSpool {
     data: PathBuf,
     header: Header,
+    _lease: Arc<File>,
 }
 pub struct FloatSpoolStore {
     directory: PathBuf,
@@ -42,6 +43,54 @@ pub struct FloatSpoolStore {
 impl FloatSpoolStore {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
+    }
+    /// Reclaims old, unleased audio only. Active working artifacts may exceed the retained-cache quota.
+    pub fn prune(&self, max_retained_bytes: u64) -> Result<u64, DomainError> {
+        if !self.directory.is_dir() {
+            return Ok(0);
+        }
+        let mut entries = Vec::new();
+        let mut total = 0u64;
+        for entry in fs::read_dir(&self.directory).map_err(failure)? {
+            let path = entry.map_err(failure)?.path();
+            if path.extension().is_none_or(|e| e != "json") {
+                continue;
+            }
+            let data = path.with_extension("f32");
+            if let Ok(metadata) = fs::metadata(&data) {
+                total = total.saturating_add(metadata.len());
+                entries.push((metadata.modified().map_err(failure)?, path, metadata.len()));
+            }
+        }
+        entries.sort_by_key(|(modified, _, _)| *modified);
+        let mut reclaimed = 0;
+        for (_, manifest, bytes) in entries {
+            if total <= max_retained_bytes {
+                break;
+            }
+            let lease = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(manifest.with_extension("lease"))
+                .map_err(failure)?;
+            match lease.try_lock_exclusive() {
+                Ok(()) => {}
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        || error.raw_os_error() == fs4::lock_contended_error().raw_os_error() =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(failure(error)),
+            }
+            fs::remove_file(manifest.with_extension("f32")).map_err(failure)?;
+            fs::remove_file(&manifest).map_err(failure)?;
+            total = total.saturating_sub(bytes);
+            reclaimed += bytes;
+        }
+        Ok(reclaimed)
     }
 }
 fn cache_key(stage: &str, signature: &str, parents: &[Arc<dyn AudioBlockSource>]) -> String {
@@ -179,6 +228,7 @@ impl AudioBlockStore for FloatSpoolStore {
             return Err(failure("invalid spool stage"));
         }
         fs::create_dir_all(&self.directory).map_err(failure)?;
+        self.prune(4 * 1024 * 1024 * 1024)?;
         let bytes = metadata
             .frame_count
             .checked_mul(u64::from(metadata.format.channels) * 4)
@@ -203,6 +253,7 @@ impl AudioBlockStore for FloatSpoolStore {
             peak: 0.0,
             digest: Sha256::new(),
             failed: false,
+            unpublished_data: None,
         }))
     }
 }
@@ -232,6 +283,7 @@ impl FloatSpool {
         format: AudioFormat,
         cancel: &CancellationToken,
     ) -> Result<Self, DomainError> {
+        let lease = shared_lease(&data)?;
         let bytes = fs::metadata(&data).map_err(failure)?.len();
         let frame_bytes = u64::from(format.channels) * 4;
         if !bytes.is_multiple_of(frame_bytes) {
@@ -260,6 +312,7 @@ impl FloatSpool {
         }
         Ok(Self {
             data,
+            _lease: lease,
             header: Header {
                 version: 1,
                 metadata: AudioAssetMetadata {
@@ -320,6 +373,7 @@ struct SpoolWriter {
     peak: f32,
     digest: Sha256,
     failed: bool,
+    unpublished_data: Option<PathBuf>,
 }
 impl AudioBlockWriter for SpoolWriter {
     fn write(&mut self, samples: &[f32]) -> Result<(), DomainError> {
@@ -372,7 +426,9 @@ impl AudioBlockWriter for SpoolWriter {
         file.get_ref().sync_all().map_err(failure)?;
         drop(file);
         let data = self.pending.with_extension("f32");
+        let lease = shared_lease(&data)?;
         fs::rename(&self.pending, &data).map_err(failure)?;
+        self.unpublished_data = Some(data.clone());
         let header = Header {
             version: 1,
             metadata: self.expected,
@@ -391,15 +447,35 @@ impl AudioBlockWriter for SpoolWriter {
         file.sync_all().map_err(failure)?;
         drop(file);
         fs::rename(pending_header, manifest).map_err(failure)?;
-        Ok(Arc::new(FloatSpool { data, header }))
+        self.unpublished_data = None;
+        Ok(Arc::new(FloatSpool {
+            data,
+            header,
+            _lease: lease,
+        }))
     }
 }
 impl Drop for SpoolWriter {
     fn drop(&mut self) {
         self.file.take();
         let _ = fs::remove_file(&self.pending);
+        if let Some(data) = self.unpublished_data.take() {
+            let _ = fs::remove_file(data.with_extension("header-pending"));
+            let _ = fs::remove_file(data);
+        }
     }
 }
 fn failure(error: impl std::fmt::Display) -> DomainError {
     DomainError::WorkspaceFailure(error.to_string())
+}
+fn shared_lease(data: &Path) -> Result<Arc<File>, DomainError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(data.with_extension("lease"))
+        .map_err(failure)?;
+    FileExt::lock_shared(&file).map_err(failure)?;
+    Ok(Arc::new(file))
 }

@@ -42,3 +42,21 @@ fn spool_round_trips_frames_and_rejects_modified_or_incomplete_artifacts() {
     let mut nonfinite = store.create("nonfinite", metadata).unwrap();
     assert!(nonfinite.write(&[f32::NAN, 0.0]).is_err());
 }
+
+#[test]
+fn cache_cleanup_cannot_remove_a_leased_audio_artifact() {
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::new(root.0.clone());
+    let metadata = AudioAssetMetadata {
+        format: AudioFormat::new(44100, 2).unwrap(),
+        frame_count: 16,
+    };
+    let mut writer = store.create("leased", metadata).unwrap();
+    writer.write(&[0.25; 32]).unwrap();
+    let source = writer.finish().unwrap();
+    assert_eq!(store.prune(0).unwrap(), 0);
+    let mut buffer = [0.0; 32];
+    assert_eq!(source.read_frames(0, &mut buffer).unwrap(), 16);
+    drop(source);
+    assert_eq!(store.prune(0).unwrap(), 128);
+}
