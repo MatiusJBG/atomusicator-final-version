@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/workbench_providers.dart';
+import '../../../core/di/studio_controller.dart';
+import 'studio_panels.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -35,18 +37,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
     ]);
   }
 
-  static const _audioExtensions = {
-    'wav',
-    'mp3',
-    'flac',
-    'ogg',
-    'm4a',
-    'aac',
-    'aiff',
-    'aif',
-    'opus',
-    'wma',
-  };
+  static const _audioExtensions = {'wav', 'mp3', 'flac', 'm4a'};
 
   void _addAudio(List<SelectedAudioFile> files) {
     final accepted =
@@ -85,6 +76,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
                   child: Column(
                     children: [
                       _TopBar(onImport: _importAudio),
+                      const StudioActions(),
                       const Divider(height: 1),
                       Expanded(
                         child: _WorkbenchBody(
@@ -108,10 +100,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
                           engineStatus: engineStatus,
                         ),
                       ),
-                      _TransportBar(
-                        hasAudio: workbench.hasSources,
-                        compact: compact,
-                      ),
+                      const StudioTransport(),
                     ],
                   ),
                 ),
@@ -254,7 +243,7 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _WorkbenchBody extends StatelessWidget {
+class _WorkbenchBody extends ConsumerWidget {
   const _WorkbenchBody({
     required this.sources,
     required this.compact,
@@ -275,7 +264,7 @@ class _WorkbenchBody extends StatelessWidget {
   final AsyncValue<NativeEngineStatus> engineStatus;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         compact ? 18 : 28,
@@ -286,16 +275,13 @@ class _WorkbenchBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SessionHeader(
-            hasSource: sources.isNotEmpty,
-            engineStatus: engineStatus,
-          ),
+          _SessionHeader(sources: sources, engineStatus: engineStatus),
           const SizedBox(height: 6),
           engineStatus.when(
             data:
                 (status) => _EngineStatusLabel(
                   label:
-                      'Native engine connected · ${status.supportedStems.length} stems supported · separation not configured',
+                      'Native engine connected · ${status.supportedStems.length} stems supported',
                   connected: true,
                 ),
             error:
@@ -310,6 +296,7 @@ class _WorkbenchBody extends StatelessWidget {
                   connected: false,
                 ),
           ),
+          const StudioFeedback(),
           const SizedBox(height: 10),
           const _StemStrip(),
           const SizedBox(height: 14),
@@ -326,12 +313,15 @@ class _WorkbenchBody extends StatelessWidget {
                       .toList(),
                 );
               },
-              child: _TrackCanvas(
-                sources: sources,
-                onImport: onImport,
-                onRemove: onRemove,
-                dragging: dragging,
-              ),
+              child:
+                  ref.watch(studioProvider).session != null
+                      ? const StudioTracks()
+                      : _TrackCanvas(
+                        sources: sources,
+                        onImport: onImport,
+                        onRemove: onRemove,
+                        dragging: dragging,
+                      ),
             ),
           ),
         ],
@@ -340,13 +330,14 @@ class _WorkbenchBody extends StatelessWidget {
   }
 }
 
-class _SessionHeader extends StatelessWidget {
-  const _SessionHeader({required this.hasSource, required this.engineStatus});
-  final bool hasSource;
+class _SessionHeader extends ConsumerWidget {
+  const _SessionHeader({required this.sources, required this.engineStatus});
+  final List<SelectedAudioFile> sources;
   final AsyncValue<NativeEngineStatus> engineStatus;
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final studio = ref.watch(studioProvider);
+    final selected = ref.watch(workbenchProvider).selectedSource;
     return Row(
       children: [
         Expanded(
@@ -354,31 +345,53 @@ class _SessionHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                hasSource ? 'Untitled session' : 'New session',
+                studio.session?.name ??
+                    (sources.isNotEmpty ? 'Audio selected' : 'New session'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              const SizedBox(height: 3),
-              Text(
-                hasSource ? 'Audio selected' : 'Import a mix to begin',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
+              if (selected != null)
+                DropdownButton<String>(
+                  value: selected.path,
+                  isExpanded: true,
+                  isDense: true,
+                  items:
+                      sources
+                          .map(
+                            (source) => DropdownMenuItem(
+                              value: source.path,
+                              child: Text(
+                                source.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                  onChanged:
+                      studio.busy
+                          ? null
+                          : (path) {
+                            if (path != null) {
+                              ref
+                                  .read(workbenchProvider.notifier)
+                                  .selectSource(path);
+                            }
+                          },
+                )
+              else
+                const Text('Import a mix to begin'),
             ],
           ),
         ),
-        Tooltip(
-          message:
-              'Separation is unavailable until a verified model and native API are configured.',
-          child: OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.auto_awesome_outlined, size: 16),
-            label: const Text('Separate stems'),
-          ),
-        ),
-        const SizedBox(width: 9),
-        IconButton(
-          tooltip: 'Session options',
-          onPressed: null,
-          icon: const Icon(Icons.more_horiz_rounded),
+        OutlinedButton.icon(
+          onPressed:
+              sources.isNotEmpty && engineStatus.hasValue && !studio.busy
+                  ? () =>
+                      ref.read(studioProvider.notifier).separate(selected!.path)
+                  : null,
+          icon: const Icon(Icons.auto_awesome_outlined, size: 16),
+          label: const Text('Separate stems'),
         ),
       ],
     );
@@ -411,7 +424,7 @@ class _EngineStatusLabel extends StatelessWidget {
   );
 }
 
-class _StemStrip extends StatelessWidget {
+class _StemStrip extends ConsumerWidget {
   const _StemStrip();
 
   static const _stems = [
@@ -423,7 +436,7 @@ class _StemStrip extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return SizedBox(
       height: 76,
       child: ListView.separated(
@@ -464,7 +477,9 @@ class _StemStrip extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Not separated',
+                        ref.watch(studioProvider).session != null
+                            ? 'Ready'
+                            : 'Not separated',
                         style: Theme.of(context).textTheme.labelMedium,
                       ),
                     ],
@@ -513,44 +528,46 @@ class _TrackCanvas extends StatelessWidget {
           Positioned.fill(child: CustomPaint(painter: _TimelineGridPainter())),
           if (sources.isEmpty)
             Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 390),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: AppColors.panelRaised,
-                        borderRadius: BorderRadius.circular(16),
+              child: SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 390),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: AppColors.panelRaised,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(
+                          Icons.graphic_eq_rounded,
+                          color: AppColors.seaGlass,
+                          size: 26,
+                        ),
                       ),
-                      child: const Icon(
-                        Icons.graphic_eq_rounded,
-                        color: AppColors.seaGlass,
-                        size: 26,
+                      const SizedBox(height: 7),
+                      Text(
+                        'Your mix starts here',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      'Your mix starts here',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      dragging
-                          ? 'Drop audio files to add them to this session.'
-                          : 'Bring in a song to build a five-stem session. Your original file stays where it is.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: onImport,
-                      icon: const Icon(Icons.folder_open_outlined, size: 17),
-                      label: const Text('Choose audio files'),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      Text(
+                        dragging
+                            ? 'Drop audio files to add them to this session.'
+                            : 'Bring in a song to build a five-stem session. Your original file stays where it is.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: onImport,
+                        icon: const Icon(Icons.folder_open_outlined, size: 17),
+                        label: const Text('Choose audio files'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )
@@ -653,114 +670,4 @@ class _TimelineGridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _TransportBar extends StatelessWidget {
-  const _TransportBar({required this.hasAudio, required this.compact});
-  final bool hasAudio;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 72,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 28),
-      decoration: const BoxDecoration(
-        color: AppColors.panel,
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Go to start',
-            onPressed: null,
-            icon: const Icon(Icons.skip_previous_rounded),
-          ),
-          IconButton(
-            tooltip: 'Play',
-            onPressed: null,
-            icon: const Icon(
-              Icons.play_arrow_rounded,
-              color: AppColors.seaGlass,
-              size: 25,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Stop',
-            onPressed: null,
-            icon: const Icon(Icons.stop_rounded),
-          ),
-          const SizedBox(width: 13),
-          const Text('--:--', style: _timeStyle),
-          if (!compact) ...[
-            const SizedBox(width: 16),
-            const Expanded(child: _IdlePlayhead()),
-            const SizedBox(width: 16),
-            Icon(
-              Icons.volume_up_outlined,
-              color: AppColors.muted.withValues(alpha: 0.8),
-              size: 18,
-            ),
-            const SizedBox(width: 10),
-            const SizedBox(
-              width: 120,
-              child: Slider(value: 0.8, onChanged: null),
-            ),
-          ] else
-            const Spacer(),
-          const SizedBox(width: 14),
-          Icon(
-            Icons.circle,
-            color:
-                hasAudio
-                    ? AppColors.amber
-                    : AppColors.muted.withValues(alpha: 0.45),
-            size: 7,
-          ),
-          const SizedBox(width: 7),
-          Text(
-            hasAudio ? 'Selected' : 'No audio',
-            style: Theme.of(context).textTheme.labelMedium,
-          ),
-        ],
-      ),
-    );
-  }
-
-  static const _timeStyle = TextStyle(
-    color: AppColors.text,
-    fontFeatures: [FontFeature.tabularFigures()],
-    fontSize: 12,
-  );
-}
-
-class _IdlePlayhead extends StatelessWidget {
-  const _IdlePlayhead();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 26,
-      child: Stack(
-        alignment: Alignment.centerLeft,
-        children: [
-          Container(
-            height: 3,
-            decoration: BoxDecoration(
-              color: AppColors.line,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
-          Container(
-            width: 7,
-            height: 7,
-            decoration: const BoxDecoration(
-              color: AppColors.amber,
-              shape: BoxShape.circle,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

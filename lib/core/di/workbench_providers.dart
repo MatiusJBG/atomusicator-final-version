@@ -14,9 +14,13 @@ class SelectedAudioFile {
 }
 
 class WorkbenchState {
-  const WorkbenchState({this.sources = const []});
+  const WorkbenchState({this.sources = const [], this.selectedPath});
 
   final List<SelectedAudioFile> sources;
+  final String? selectedPath;
+  SelectedAudioFile? get selectedSource =>
+      sources.where((s) => s.path == selectedPath).firstOrNull ??
+      sources.firstOrNull;
   bool get hasSources => sources.isNotEmpty;
 }
 
@@ -30,6 +34,7 @@ class WorkbenchController extends Notifier<WorkbenchState> {
     final added = sources.where((file) => knownPaths.add(_pathKey(file.path)));
     state = WorkbenchState(
       sources: List.unmodifiable([...state.sources, ...added]),
+      selectedPath: state.selectedSource?.path ?? sources.first.path,
     );
   }
 
@@ -38,7 +43,14 @@ class WorkbenchController extends Notifier<WorkbenchState> {
       sources: List.unmodifiable(
         state.sources.where((file) => file.path != path),
       ),
+      selectedPath: state.selectedPath,
     );
+  }
+
+  void selectSource(String path) {
+    if (state.sources.any((source) => source.path == path)) {
+      state = WorkbenchState(sources: state.sources, selectedPath: path);
+    }
   }
 
   String _pathKey(String path) {
