@@ -4,6 +4,7 @@ use atomusicator_application::CancellationToken;
 use atomusicator_domain::{AudioBufferF32, DomainError, PitchShiftSpec};
 use std::{
     fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -151,6 +152,35 @@ impl AudioTools {
         }
         Ok(audio)
     }
+    pub fn decode_to_spool(
+        &self,
+        source: &Path,
+        target: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<crate::storage::float_spool::FloatSpool, DomainError> {
+        self.run(
+            &[
+                "-i".into(),
+                source.as_os_str().into(),
+                "-map".into(),
+                "0:a:0".into(),
+                "-vn".into(),
+                "-ar".into(),
+                "44100".into(),
+                "-ac".into(),
+                "2".into(),
+                "-f".into(),
+                "f32le".into(),
+                target.as_os_str().into(),
+            ],
+            cancel,
+        )?;
+        crate::storage::float_spool::FloatSpool::inspect_raw(
+            target.into(),
+            atomusicator_domain::AudioFormat::new(44100, 2)?,
+            cancel,
+        )
+    }
     pub fn pitch(
         &self,
         source: &Path,
@@ -268,6 +298,23 @@ impl AudioTools {
         })?;
         let start = Instant::now();
         loop {
+            let remaining = match fs4::available_space(&log.0) {
+                Ok(available) => available,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io_error(error));
+                }
+            };
+            if remaining < 32 * 1024 * 1024 {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DomainError::InsufficientResources {
+                    resource: "temporary disk safety margin".into(),
+                    requested: 32 * 1024 * 1024,
+                    available: remaining,
+                });
+            }
             if cancel.is_cancelled() || start.elapsed() > Duration::from_secs(3600) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -282,7 +329,10 @@ impl AudioTools {
                     if status.success() {
                         return Ok(());
                     }
-                    let message = fs::read_to_string(&error_path).unwrap_or_default();
+                    let mut message = String::new();
+                    if let Ok(file) = File::open(&error_path) {
+                        let _ = file.take(16384).read_to_string(&mut message);
+                    }
                     return Err(io_error(format!(
                         "FFmpeg failed: {}",
                         message.chars().take(4000).collect::<String>()

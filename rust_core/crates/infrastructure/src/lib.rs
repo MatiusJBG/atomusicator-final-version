@@ -3,6 +3,7 @@
 pub mod audio_evidence;
 pub mod audio_io;
 pub mod audio_tools;
+pub mod block_workspace;
 pub mod cache;
 pub mod dsp;
 pub mod errors;
