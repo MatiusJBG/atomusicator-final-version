@@ -1,21 +1,30 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/workbench_providers.dart';
+import '../../../core/di/native_engine_provider.dart';
 import '../../../core/theme/app_theme.dart';
 
-class AudioWorkbench extends ConsumerWidget {
+class AudioWorkbench extends ConsumerStatefulWidget {
   const AudioWorkbench({super.key});
 
-  Future<void> _importAudio(WidgetRef ref) async {
+  @override
+  ConsumerState<AudioWorkbench> createState() => _AudioWorkbenchState();
+}
+
+class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
+  bool _dragging = false;
+
+  Future<void> _importAudio() async {
     final selection = await FilePicker.platform.pickFiles(
       type: FileType.audio,
       allowMultiple: true,
       withData: false,
     );
     if (selection == null) return;
-    ref.read(workbenchProvider.notifier).addSources([
+    _addAudio([
       for (final file in selection.files)
         if (file.path != null)
           SelectedAudioFile(
@@ -26,9 +35,43 @@ class AudioWorkbench extends ConsumerWidget {
     ]);
   }
 
+  static const _audioExtensions = {
+    'wav',
+    'mp3',
+    'flac',
+    'ogg',
+    'm4a',
+    'aac',
+    'aiff',
+    'aif',
+    'opus',
+    'wma',
+  };
+
+  void _addAudio(List<SelectedAudioFile> files) {
+    final accepted =
+        files
+            .where(
+              (file) => _audioExtensions.contains(
+                file.name.split('.').last.toLowerCase(),
+              ),
+            )
+            .toList();
+    if (accepted.isNotEmpty) {
+      ref.read(workbenchProvider.notifier).addSources(accepted);
+    }
+    final rejected = files.length - accepted.length;
+    if (rejected > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$rejected unsupported file(s) skipped.')),
+      );
+    }
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final workbench = ref.watch(workbenchProvider);
+    final engineStatus = ref.watch(nativeEngineStatusProvider);
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 980;
@@ -41,13 +84,28 @@ class AudioWorkbench extends ConsumerWidget {
                 Expanded(
                   child: Column(
                     children: [
-                      _TopBar(onImport: () => _importAudio(ref)),
+                      _TopBar(onImport: _importAudio),
                       const Divider(height: 1),
                       Expanded(
                         child: _WorkbenchBody(
                           sources: workbench.sources,
                           compact: compact,
-                          onImport: () => _importAudio(ref),
+                          onImport: _importAudio,
+                          onDrop:
+                              (paths) => _addAudio([
+                                for (final path in paths)
+                                  SelectedAudioFile(
+                                    path: path,
+                                    name: path.split(RegExp(r'[/\\]')).last,
+                                    sizeBytes: 0,
+                                  ),
+                              ]),
+                          onRemove:
+                              ref.read(workbenchProvider.notifier).removeSource,
+                          dragging: _dragging,
+                          onDragChanged:
+                              (value) => setState(() => _dragging = value),
+                          engineStatus: engineStatus,
                         ),
                       ),
                       _TransportBar(
@@ -201,10 +259,20 @@ class _WorkbenchBody extends StatelessWidget {
     required this.sources,
     required this.compact,
     required this.onImport,
+    required this.onDrop,
+    required this.onRemove,
+    required this.dragging,
+    required this.onDragChanged,
+    required this.engineStatus,
   });
   final List<SelectedAudioFile> sources;
   final bool compact;
   final VoidCallback onImport;
+  final ValueChanged<List<String>> onDrop;
+  final ValueChanged<String> onRemove;
+  final bool dragging;
+  final ValueChanged<bool> onDragChanged;
+  final AsyncValue<NativeEngineStatus> engineStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -218,11 +286,54 @@ class _WorkbenchBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SessionHeader(hasSource: sources.isNotEmpty),
-          const SizedBox(height: 19),
+          _SessionHeader(
+            hasSource: sources.isNotEmpty,
+            engineStatus: engineStatus,
+          ),
+          const SizedBox(height: 6),
+          engineStatus.when(
+            data:
+                (status) => _EngineStatusLabel(
+                  label:
+                      'Native engine connected · ${status.supportedStems.length} stems supported · separation not configured',
+                  connected: true,
+                ),
+            error:
+                (_, __) => const _EngineStatusLabel(
+                  label:
+                      'Native engine unavailable · audio import is still available',
+                  connected: false,
+                ),
+            loading:
+                () => const _EngineStatusLabel(
+                  label: 'Checking native engine…',
+                  connected: false,
+                ),
+          ),
+          const SizedBox(height: 10),
           const _StemStrip(),
           const SizedBox(height: 14),
-          Expanded(child: _TrackCanvas(sources: sources, onImport: onImport)),
+          Expanded(
+            child: DropTarget(
+              onDragEntered: (_) => onDragChanged(true),
+              onDragExited: (_) => onDragChanged(false),
+              onDragDone: (details) {
+                onDragChanged(false);
+                onDrop(
+                  details.files
+                      .where((file) => file.path.isNotEmpty)
+                      .map((file) => file.path)
+                      .toList(),
+                );
+              },
+              child: _TrackCanvas(
+                sources: sources,
+                onImport: onImport,
+                onRemove: onRemove,
+                dragging: dragging,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -230,8 +341,9 @@ class _WorkbenchBody extends StatelessWidget {
 }
 
 class _SessionHeader extends StatelessWidget {
-  const _SessionHeader({required this.hasSource});
+  const _SessionHeader({required this.hasSource, required this.engineStatus});
   final bool hasSource;
+  final AsyncValue<NativeEngineStatus> engineStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -253,10 +365,14 @@ class _SessionHeader extends StatelessWidget {
             ],
           ),
         ),
-        OutlinedButton.icon(
-          onPressed: null,
-          icon: const Icon(Icons.auto_awesome_outlined, size: 16),
-          label: const Text('Separate stems'),
+        Tooltip(
+          message:
+              'Separation is unavailable until a verified model and native API are configured.',
+          child: OutlinedButton.icon(
+            onPressed: null,
+            icon: const Icon(Icons.auto_awesome_outlined, size: 16),
+            label: const Text('Separate stems'),
+          ),
         ),
         const SizedBox(width: 9),
         IconButton(
@@ -267,6 +383,32 @@ class _SessionHeader extends StatelessWidget {
       ],
     );
   }
+}
+
+class _EngineStatusLabel extends StatelessWidget {
+  const _EngineStatusLabel({required this.label, required this.connected});
+  final String label;
+  final bool connected;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(
+        Icons.circle,
+        size: 7,
+        color: connected ? AppColors.seaGlass : AppColors.amber,
+      ),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelMedium,
+        ),
+      ),
+    ],
+  );
 }
 
 class _StemStrip extends StatelessWidget {
@@ -343,9 +485,16 @@ class _StemStrip extends StatelessWidget {
 }
 
 class _TrackCanvas extends StatelessWidget {
-  const _TrackCanvas({required this.sources, required this.onImport});
+  const _TrackCanvas({
+    required this.sources,
+    required this.onImport,
+    required this.onRemove,
+    required this.dragging,
+  });
   final List<SelectedAudioFile> sources;
   final VoidCallback onImport;
+  final ValueChanged<String> onRemove;
+  final bool dragging;
 
   @override
   Widget build(BuildContext context) {
@@ -353,7 +502,10 @@ class _TrackCanvas extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.panel.withValues(alpha: 0.52),
-        border: Border.all(color: AppColors.line),
+        border: Border.all(
+          color: dragging ? AppColors.seaGlass : AppColors.line,
+          width: dragging ? 2 : 1,
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Stack(
@@ -367,8 +519,8 @@ class _TrackCanvas extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      width: 56,
-                      height: 56,
+                      width: 48,
+                      height: 48,
                       decoration: BoxDecoration(
                         color: AppColors.panelRaised,
                         borderRadius: BorderRadius.circular(16),
@@ -379,18 +531,20 @@ class _TrackCanvas extends StatelessWidget {
                         size: 26,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 7),
                     Text(
                       'Your mix starts here',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Bring in a song to build a five-stem session. Your original file stays where it is.',
+                      dragging
+                          ? 'Drop audio files to add them to this session.'
+                          : 'Bring in a song to build a five-stem session. Your original file stays where it is.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: onImport,
                       icon: const Icon(Icons.folder_open_outlined, size: 17),
@@ -405,7 +559,11 @@ class _TrackCanvas extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 21, 20, 20),
               itemCount: sources.length,
               separatorBuilder: (_, __) => const SizedBox(height: 9),
-              itemBuilder: (context, index) => _SourceRow(file: sources[index]),
+              itemBuilder:
+                  (context, index) => _SourceRow(
+                    file: sources[index],
+                    onRemove: () => onRemove(sources[index].path),
+                  ),
             ),
         ],
       ),
@@ -414,8 +572,9 @@ class _TrackCanvas extends StatelessWidget {
 }
 
 class _SourceRow extends StatelessWidget {
-  const _SourceRow({required this.file});
+  const _SourceRow({required this.file, required this.onRemove});
   final SelectedAudioFile file;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -448,12 +607,18 @@ class _SourceRow extends StatelessWidget {
             _formatBytes(file.sizeBytes),
             style: Theme.of(context).textTheme.labelMedium,
           ),
+          IconButton(
+            tooltip: 'Remove ${file.name}',
+            onPressed: onRemove,
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
         ],
       ),
     );
   }
 
   String _formatBytes(int bytes) {
+    if (bytes == 0) return 'Size unavailable';
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';

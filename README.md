@@ -52,9 +52,27 @@ code generation.
 The domain, application ports, separation orchestration, migration persistence
 and caching, STFT/iSTFT, phase subtraction, bleed-gate rebalance, ONNX session
 pool, audio file I/O, waveform peaks, and a responsive workbench are present.
-The Flutter workbench currently imports files into UI state only; it does not
-invoke the generated Rust bridge. The planned Mel-Band RoFormer / HTDemucs or
-SCNet model profile also remains unconfigured until its model artifact, license,
-download URL, and SHA-256 can be verified. Consequently, model inference, native
-playback and pitch shifting, batch export, packaging, and release remain future
-work.
+The Flutter workbench supports audio selection, drag-and-drop, and source
+management. It loads the native bridge from the directory containing the
+application executable, so launching the app from another working directory
+does not change native library lookup. The current bridge reports engine
+metadata only; it does not expose separation or playback operations. The
+planned model profile also remains unconfigured until its artifact, license,
+download URL, and SHA-256 can be verified. Therefore stem separation, native
+playback, pitch shifting, and batch export are not available yet.
+
+## Windows packaging
+
+On a Windows development machine with Flutter, Rust, the Visual Studio C++
+build tools, and Inno Setup 6 installed, run this from any working directory:
+
+```powershell
+& "<repository>\packaging\build_windows.ps1"
+```
+
+The script resolves all project paths from its own location, builds the Flutter
+release and Rust FFI library, places the bridge and ONNX Runtime DLLs beside
+`atomusicator.exe`, then creates `packaging\dist\Atomusicator-Setup-0.6.0.exe`.
+To build the app folder without compiling the installer, pass
+`-SkipInstaller`. The installer output directory is generated locally and is
+not part of the source changes.
