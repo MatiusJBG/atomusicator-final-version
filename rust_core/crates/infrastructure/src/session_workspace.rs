@@ -1,17 +1,21 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use atomusicator_domain::{AudioAsset, AudioAssetMetadata};
-use directories::BaseDirs;
+use atomusicator_application::ports::SessionWorkspacePort;
+use atomusicator_domain::{
+    AudioAsset, AudioAssetMetadata, DomainError, SeparationResult, StemType,
+};
 use fs4::fs_std::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::InfrastructureError;
+use crate::{audio_io::wav_codec::write_wav_f32, storage::paths::WorkspacePathPolicy};
 
 #[derive(Debug, Clone)]
 pub struct LocalSessionWorkspace {
@@ -37,13 +41,25 @@ pub struct SessionMetadata {
     pub additional: serde_json::Map<String, Value>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct PersistedStem {
+    path: String,
+    sample_rate_hz: u32,
+    channels: u16,
+    frames: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PersistedSeparation {
+    state: &'static str,
+    stems: BTreeMap<StemType, PersistedStem>,
+}
+
 impl LocalSessionWorkspace {
     /// Uses `%LOCALAPPDATA%\Atomusicator` on Windows via the platform's local data directory.
     pub fn user_default() -> Result<Self, InfrastructureError> {
-        let base_dirs = BaseDirs::new().ok_or_else(|| {
-            InfrastructureError::InvalidManifest("local data directory is unavailable".into())
-        })?;
-        Ok(Self::new(base_dirs.data_local_dir().join("Atomusicator")))
+        let policy = WorkspacePathPolicy::system_default()?;
+        Ok(Self::new(policy.default_projects_dir()))
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -59,12 +75,40 @@ impl LocalSessionWorkspace {
         metadata: AudioAssetMetadata,
         size_bytes: u64,
     ) -> Result<WorkspaceSession, InfrastructureError> {
-        fs::create_dir_all(&self.root)
-            .map_err(|error| InfrastructureError::io(&self.root, error))?;
-        let _lock = self.lock_workspace()?;
+        self.create_session_inner(asset, metadata, size_bytes, None)
+    }
+
+    pub fn persist_separation_result(
+        &self,
+        asset: &AudioAsset,
+        result: &SeparationResult,
+    ) -> Result<WorkspaceSession, InfrastructureError> {
+        let representative_stem = result.stems().next().ok_or_else(|| {
+            InfrastructureError::Domain("separation result contains no stems".into())
+        })?;
+        let metadata = AudioAssetMetadata {
+            format: representative_stem.audio.format(),
+            frame_count: representative_stem.audio.frames() as u64,
+        };
+        let size_bytes = fs::metadata(&asset.path)
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        self.create_session_inner(asset, metadata, size_bytes, Some(result))
+    }
+
+    fn create_session_inner(
+        &self,
+        asset: &AudioAsset,
+        metadata: AudioAssetMetadata,
+        size_bytes: u64,
+        separation: Option<&SeparationResult>,
+    ) -> Result<WorkspaceSession, InfrastructureError> {
+        let root = WorkspacePathPolicy::validate_projects_destination(&self.root)?;
+        fs::create_dir_all(&root).map_err(|error| InfrastructureError::io(&root, error))?;
+        let _lock = Self::lock_workspace_at(&root)?;
         let id = unique_session_id();
-        let final_dir = self.root.join(&id);
-        let staging_dir = self.root.join(format!(".{id}.staging"));
+        let final_dir = root.join(&id);
+        let staging_dir = root.join(format!(".{id}.staging"));
         fs::create_dir(&staging_dir)
             .map_err(|error| InfrastructureError::io(&staging_dir, error))?;
 
@@ -72,6 +116,24 @@ impl LocalSessionWorkspace {
             let outputs_dir = staging_dir.join("outputs");
             fs::create_dir(&outputs_dir)
                 .map_err(|error| InfrastructureError::io(&outputs_dir, error))?;
+            let mut persisted_stems = BTreeMap::new();
+            if let Some(result) = separation {
+                for stem in result.stems() {
+                    let file_name = stem_file_name(stem.kind);
+                    let output_path = outputs_dir.join(file_name);
+                    write_wav_f32(&output_path, &stem.audio)
+                        .map_err(|error| InfrastructureError::Domain(error.to_string()))?;
+                    persisted_stems.insert(
+                        stem.kind,
+                        PersistedStem {
+                            path: format!("outputs/{file_name}"),
+                            sample_rate_hz: stem.audio.format().sample_rate_hz,
+                            channels: stem.audio.format().channels,
+                            frames: stem.audio.frames(),
+                        },
+                    );
+                }
+            }
             let metadata_path = staging_dir.join("session.json");
             let temporary_path = staging_dir.join("session.json.tmp");
             let duration_seconds =
@@ -84,7 +146,21 @@ impl LocalSessionWorkspace {
                 sample_rate_hz: metadata.format.sample_rate_hz,
                 channels: metadata.format.channels,
                 size_bytes,
-                additional: serde_json::Map::new(),
+                additional: separation
+                    .map(|_| {
+                        serde_json::to_value(PersistedSeparation {
+                            state: "complete",
+                            stems: persisted_stems,
+                        })
+                        .map(|value| {
+                            let mut additional = serde_json::Map::new();
+                            additional.insert("separation".into(), value);
+                            additional
+                        })
+                        .map_err(|error| InfrastructureError::InvalidManifest(error.to_string()))
+                    })
+                    .transpose()?
+                    .unwrap_or_default(),
             };
             let mut file = OpenOptions::new()
                 .create_new(true)
@@ -103,7 +179,7 @@ impl LocalSessionWorkspace {
             sync_directory(&staging_dir)?;
             fs::rename(&staging_dir, &final_dir)
                 .map_err(|error| InfrastructureError::io(&final_dir, error))?;
-            sync_directory(&self.root)?;
+            sync_directory(&root)?;
             Ok(())
         })();
 
@@ -139,7 +215,8 @@ impl LocalSessionWorkspace {
         session: &WorkspaceSession,
         record: Value,
     ) -> Result<(), InfrastructureError> {
-        let _lock = self.lock_workspace()?;
+        let root = WorkspacePathPolicy::validate_projects_destination(&self.root)?;
+        let _lock = Self::lock_workspace_at(&root)?;
         let mut metadata = self.read_metadata(session)?;
         metadata.additional.insert("separation".into(), record);
         let path = session.directory.join("session.json");
@@ -163,8 +240,8 @@ impl LocalSessionWorkspace {
         Ok(())
     }
 
-    fn lock_workspace(&self) -> Result<WorkspaceLock, InfrastructureError> {
-        let lock_path = self.root.join(".workspace.lock");
+    fn lock_workspace_at(root: &Path) -> Result<WorkspaceLock, InfrastructureError> {
+        let lock_path = root.join(".workspace.lock");
         let file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -180,6 +257,28 @@ impl LocalSessionWorkspace {
             }
         })?;
         Ok(WorkspaceLock(file))
+    }
+}
+
+impl SessionWorkspacePort for LocalSessionWorkspace {
+    fn publish_separation_result(
+        &self,
+        asset: &AudioAsset,
+        result: &SeparationResult,
+    ) -> Result<(), DomainError> {
+        self.persist_separation_result(asset, result)
+            .map(|_| ())
+            .map_err(|error| DomainError::WorkspaceFailure(error.to_string()))
+    }
+}
+
+fn stem_file_name(stem_type: StemType) -> &'static str {
+    match stem_type {
+        StemType::LeadVocal => "01_lead_vocal.wav",
+        StemType::BackingVocals => "02_backing_vocals.wav",
+        StemType::Drums => "03_drums.wav",
+        StemType::Bass => "04_bass.wav",
+        StemType::Instrumental => "05_instrumental.wav",
     }
 }
 

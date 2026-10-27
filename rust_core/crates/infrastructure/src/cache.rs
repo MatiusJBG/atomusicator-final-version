@@ -1,18 +1,21 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, FileTimes, OpenOptions},
     io::{self, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Mutex,
+    sync::atomic::{AtomicU64, Ordering},
     time::SystemTime,
 };
 
-use atomusicator_application::ports::ArtifactCachePort;
+use atomusicator_application::ports::{ArtifactCachePort, StageArtifactCachePort, StageCacheKey};
 use atomusicator_domain::{AudioBufferF32, AudioFormat, DomainError};
 use lru::LruCache;
 use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::storage::paths::WorkspacePathPolicy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactIdentity {
@@ -54,7 +57,15 @@ pub struct ContentAddressedCache {
     disk_quota_bytes: u64,
 }
 
+static NEXT_CACHE_WRITE_ID: AtomicU64 = AtomicU64::new(0);
+
 impl ContentAddressedCache {
+    pub fn user_default(memory_entries: usize, disk_quota_bytes: u64) -> Result<Self, DomainError> {
+        let paths = WorkspacePathPolicy::system_default()
+            .map_err(|error| DomainError::CacheFailure(error.to_string()))?;
+        Self::new(paths.stage_cache_dir(), memory_entries, disk_quota_bytes)
+    }
+
     pub fn new(
         root: impl Into<PathBuf>,
         memory_entries: usize,
@@ -127,6 +138,9 @@ impl ContentAddressedCache {
             {
                 continue;
             }
+            if item_path.extension().and_then(|ext| ext.to_str()) != Some("checkpoint") {
+                continue;
+            }
             let metadata = item
                 .metadata()
                 .map_err(|error| cache_io(&item_path, error))?;
@@ -151,6 +165,7 @@ impl ContentAddressedCache {
 
 impl ArtifactCachePort for ContentAddressedCache {
     fn get_checkpoint(&self, key: &str) -> Result<Option<AudioBufferF32>, DomainError> {
+        let path = self.path_for(key);
         if let Some(buffer) = self
             .memory
             .lock()
@@ -158,9 +173,9 @@ impl ArtifactCachePort for ContentAddressedCache {
             .get(key)
             .cloned()
         {
+            touch_cache_entry(&path);
             return Ok(Some(buffer));
         }
-        let path = self.path_for(key);
         match self.load_from_disk(&path)? {
             Some(buffer) => {
                 self.memory
@@ -169,6 +184,7 @@ impl ArtifactCachePort for ContentAddressedCache {
                         DomainError::CacheFailure("memory cache lock was poisoned".into())
                     })?
                     .put(key.to_owned(), buffer.clone());
+                touch_cache_entry(&path);
                 Ok(Some(buffer))
             }
             None => {
@@ -182,7 +198,14 @@ impl ArtifactCachePort for ContentAddressedCache {
 
     fn put_checkpoint(&self, key: &str, buffer: &AudioBufferF32) -> Result<(), DomainError> {
         let path = self.path_for(key);
-        let temporary_path = path.with_extension(format!("{}.tmp", std::process::id()));
+        let temporary_path = path.with_file_name(format!(
+            ".{}.{}.{}.tmp",
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("cache"),
+            std::process::id(),
+            NEXT_CACHE_WRITE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
         let data: Vec<u8> = buffer
             .samples()
             .iter()
@@ -199,8 +222,7 @@ impl ArtifactCachePort for ContentAddressedCache {
         let header_length = u32::try_from(header_bytes.len())
             .map_err(|_| DomainError::CacheFailure("cache header is too large".into()))?;
         let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .open(&temporary_path)
             .map_err(|error| cache_io(&temporary_path, error))?;
@@ -210,16 +232,62 @@ impl ArtifactCachePort for ContentAddressedCache {
             .and_then(|_| file.sync_all())
             .map_err(|error| cache_io(&temporary_path, error))?;
         drop(file);
-        if path.exists() {
-            fs::remove_file(&path).map_err(|error| cache_io(&path, error))?;
-        }
-        fs::rename(&temporary_path, &path).map_err(|error| cache_io(&path, error))?;
+        publish_cache_file(&temporary_path, &path)?;
         self.evict_disk_files(&path)?;
         self.memory
             .lock()
             .map_err(|_| DomainError::CacheFailure("memory cache lock was poisoned".into()))?
             .put(key.to_owned(), buffer.clone());
         Ok(())
+    }
+}
+
+impl StageArtifactCachePort for ContentAddressedCache {
+    fn get_verified_checkpoint(
+        &self,
+        key: &StageCacheKey,
+    ) -> Result<Option<AudioBufferF32>, DomainError> {
+        self.get_checkpoint(&key.content_key()?)
+    }
+
+    fn store_checkpoint_non_fatal(&self, key: &StageCacheKey, buffer: &AudioBufferF32) {
+        if let Ok(content_key) = key.content_key() {
+            let _ = self.put_checkpoint(&content_key, buffer);
+        }
+    }
+}
+
+fn publish_cache_file(temporary: &Path, destination: &Path) -> Result<(), DomainError> {
+    if !destination.exists() {
+        return fs::rename(temporary, destination).map_err(|error| cache_io(destination, error));
+    }
+
+    let backup = destination.with_file_name(format!(
+        ".{}.{}.{}.previous",
+        destination
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("cache"),
+        std::process::id(),
+        NEXT_CACHE_WRITE_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::rename(destination, &backup).map_err(|error| cache_io(destination, error))?;
+    match fs::rename(temporary, destination) {
+        Ok(()) => {
+            let _ = fs::remove_file(backup);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::rename(&backup, destination);
+            Err(cache_io(destination, error))
+        }
+    }
+}
+
+fn touch_cache_entry(path: &Path) {
+    if let Ok(file) = File::open(path) {
+        let times = FileTimes::new().set_modified(SystemTime::now());
+        let _ = file.set_times(times);
     }
 }
 
