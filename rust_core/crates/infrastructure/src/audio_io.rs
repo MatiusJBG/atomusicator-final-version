@@ -1,3 +1,4 @@
+pub mod streamer;
 pub mod wav_codec;
 
 use std::{
