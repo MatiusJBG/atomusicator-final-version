@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 
 use atomusicator_domain::{
     AudioAssetMetadata, AudioBufferF32, AudioFormat, AudioSession, DomainError, Stem, StemType,
@@ -81,6 +85,108 @@ pub trait SessionWorkspacePort: Send + Sync {
         asset: &atomusicator_domain::AudioAsset,
         result: &atomusicator_domain::SeparationResult,
     ) -> Result<(), DomainError>;
+}
+
+/// Verified metadata for a manifest profile available to the inference adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedModelSpec {
+    pub profile_id: String,
+    pub stage: String,
+    pub local_path: PathBuf,
+    pub sha256_hash: String,
+    pub license: String,
+    pub attribution: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelRegistryError {
+    ProfileNotFound(String),
+    Unavailable(String),
+}
+
+impl std::fmt::Display for ModelRegistryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProfileNotFound(profile_id) => {
+                write!(formatter, "model profile `{profile_id}` was not found")
+            }
+            Self::Unavailable(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ModelRegistryError {}
+
+pub type ModelRegistryFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<VerifiedModelSpec, ModelRegistryError>> + Send + 'a>>;
+
+/// Application-facing boundary for locating or downloading a verified model profile.
+pub trait ModelRegistryPort: Send + Sync {
+    fn ensure_profile_ready<'a>(&'a self, profile_id: &'a str) -> ModelRegistryFuture<'a>;
+}
+
+/// Fully identifies the inputs that make a DSP/inference checkpoint reusable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StageCacheKey {
+    pub stage_tag: String,
+    pub input_audio_sha256: String,
+    pub model_sha256: String,
+    pub stft_n_fft: usize,
+    pub stft_hop_length: usize,
+    pub runtime_signature: String,
+}
+
+impl StageCacheKey {
+    pub fn content_key(&self) -> Result<String, DomainError> {
+        for (label, digest) in [
+            ("input audio", self.input_audio_sha256.as_str()),
+            ("model", self.model_sha256.as_str()),
+        ] {
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(DomainError::CacheFailure(format!(
+                    "{label} hash must be a SHA-256 digest"
+                )));
+            }
+        }
+        if self.stage_tag.trim().is_empty()
+            || self.runtime_signature.trim().is_empty()
+            || self.stft_n_fft == 0
+            || self.stft_hop_length == 0
+            || self.stft_hop_length > self.stft_n_fft
+        {
+            return Err(DomainError::CacheFailure(
+                "stage cache key has invalid stage, runtime, or STFT parameters".into(),
+            ));
+        }
+        let input_hash = self.input_audio_sha256.to_ascii_lowercase();
+        let model_hash = self.model_sha256.to_ascii_lowercase();
+        let mut key = String::new();
+        for component in [
+            self.stage_tag.as_str(),
+            input_hash.as_str(),
+            model_hash.as_str(),
+        ] {
+            key.push_str(&format!("{}:{}", component.len(), component));
+        }
+        key.push_str(&format!(
+            "{}:{}:{}:{}",
+            self.stft_n_fft,
+            self.stft_hop_length,
+            self.runtime_signature.len(),
+            self.runtime_signature
+        ));
+        Ok(key)
+    }
+}
+
+/// Typed cache boundary; cache writes are advisory and never interrupt audio processing.
+pub trait StageArtifactCachePort: Send + Sync {
+    fn get_verified_checkpoint(
+        &self,
+        key: &StageCacheKey,
+    ) -> Result<Option<AudioBufferF32>, DomainError>;
+
+    fn store_checkpoint_non_fatal(&self, key: &StageCacheKey, buffer: &AudioBufferF32);
 }
 
 /// Reports user-facing progress without coupling a use case to Flutter streams.
