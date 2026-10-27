@@ -215,12 +215,12 @@ impl MdxInference {
                 c.dim_t, c.compensate, c.invert
             ),
         };
-        if let Some(cache) = &self.cache {
-            if let Ok(Some(cached)) = cache.get_verified_checkpoint(&key) {
-                if cached.format() == audio.format() && cached.frames() == audio.frames() {
-                    return Ok(cached);
-                }
-            }
+        if let Some(cache) = &self.cache
+            && let Ok(Some(cached)) = cache.get_verified_checkpoint(&key)
+            && cached.format() == audio.format()
+            && cached.frames() == audio.frames()
+        {
+            return Ok(cached);
         }
         let transform = MdxTransform::new(c)?;
         let chunk = c.chunk_frames();

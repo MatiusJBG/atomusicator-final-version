@@ -80,17 +80,17 @@ impl AudioTools {
         if let Some(path) = std::env::var_os("ATOMUSICATOR_FFMPEG") {
             return Self::at(PathBuf::from(path));
         }
-        if let Ok(executable) = std::env::current_exe() {
-            if let Some(parent) = executable.parent() {
-                let name = if cfg!(windows) {
-                    "ffmpeg.exe"
-                } else {
-                    "ffmpeg"
-                };
-                for path in [parent.join("audio-tools/bin").join(name), parent.join(name)] {
-                    if path.is_file() {
-                        return Self::at(path);
-                    }
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(parent) = executable.parent()
+        {
+            let name = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            for path in [parent.join("audio-tools/bin").join(name), parent.join(name)] {
+                if path.is_file() {
+                    return Self::at(path);
                 }
             }
         }

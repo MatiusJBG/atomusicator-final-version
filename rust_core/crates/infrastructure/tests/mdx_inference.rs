@@ -93,6 +93,36 @@ fn mdx_centered_stft_roundtrips_stereo_with_non_power_of_two_fft() {
 }
 
 #[test]
+fn mdx_tensor_layout_matches_independent_torch_stft_fixture() {
+    let config = MdxConfig {
+        n_fft: 60,
+        hop: 12,
+        dim_f: 31,
+        dim_t: 16,
+        compensate: 1.0,
+        invert: false,
+    };
+    let samples = (0..360)
+        .map(|i| ((i % 13) as f32 - 6.0) / 32.0)
+        .collect::<Vec<_>>();
+    let spectrum = MdxTransform::new(config)
+        .unwrap()
+        .forward(&samples)
+        .unwrap();
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/mdx_torch_stft.json")).unwrap();
+    for pair in fixture["values"].as_array().unwrap() {
+        let index = pair[0].as_u64().unwrap() as usize;
+        let expected = pair[1].as_f64().unwrap() as f32;
+        assert!(
+            (spectrum[index] - expected).abs() < 1e-5,
+            "tensor[{index}]: {} != {expected}",
+            spectrum[index]
+        );
+    }
+}
+
+#[test]
 fn reviewed_profiles_include_karas_inverse_target_and_native_shapes() {
     let main = MdxConfig::for_profile("uvr-mdxnet-main-v1").unwrap();
     assert_eq!((main.n_fft, main.dim_f, main.dim_t), (7680, 3072, 256));
