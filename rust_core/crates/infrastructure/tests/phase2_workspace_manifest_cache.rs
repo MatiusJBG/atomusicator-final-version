@@ -124,6 +124,18 @@ async fn manifest_registry_accepts_a_verified_legacy_model_without_network_acces
 }
 
 #[tokio::test]
+async fn model_registry_rejects_unreviewed_profiles_before_using_cached_weights() {
+    let json = manifest("model.onnx", &"a".repeat(64)).replace("reviewed", "pending");
+    assert!(
+        ManifestModelManager::from_manifest_json(
+            &json,
+            WorkspacePathPolicy::from_local_data_dir(temp_dir("pending-license"))
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
 async fn manifest_preparation_can_be_cancelled_before_touching_the_network() {
     let cancel = atomusicator_application::CancellationToken::default();
     cancel.cancel();

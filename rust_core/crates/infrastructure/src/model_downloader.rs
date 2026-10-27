@@ -41,6 +41,12 @@ impl ModelManifest {
         }
         let mut ids = std::collections::HashSet::new();
         for profile in &manifest.models {
+            if profile.license_status != "reviewed" || profile.license.trim().is_empty() {
+                return Err(InfrastructureError::InvalidManifest(format!(
+                    "profile `{}` must have a reviewed license before it can be used",
+                    profile.profile_id
+                )));
+            }
             if !ids.insert(profile.profile_id.as_str()) {
                 return Err(InfrastructureError::InvalidManifest(format!(
                     "duplicate profile id `{}`",
