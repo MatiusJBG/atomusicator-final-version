@@ -1016,6 +1016,7 @@ impl SseDecode for crate::api::UiPlaybackFailure {
         let mut inner = <i32>::sse_decode(deserializer);
         return match inner {
             0 => crate::api::UiPlaybackFailure::DeviceUnavailable,
+            1 => crate::api::UiPlaybackFailure::StemUnreadable,
             _ => unreachable!("Invalid variant for UiPlaybackFailure: {}", inner),
         };
     }
@@ -1230,6 +1231,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiPlaybackFailure {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
             Self::DeviceUnavailable => 0.into_dart(),
+            Self::StemUnreadable => 1.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -1554,6 +1556,7 @@ impl SseEncode for crate::api::UiPlaybackFailure {
         <i32>::sse_encode(
             match self {
                 crate::api::UiPlaybackFailure::DeviceUnavailable => 0,
+                crate::api::UiPlaybackFailure::StemUnreadable => 1,
                 _ => {
                     unimplemented!("");
                 }

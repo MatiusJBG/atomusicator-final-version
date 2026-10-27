@@ -4,23 +4,20 @@ use crate::api::{
 };
 use atomusicator_application::{
     CancellationToken,
-    ports::{AudioDecoderPort, RealtimePlaybackPort, SeparationProgressPort, WaveformCachePort},
-    use_cases::separate_five_stems::SeparateFiveStemsUseCase,
+    ports::{RealtimePlaybackPort, SeparationProgressPort},
+    use_cases::bounded_separation::BoundedSeparation,
 };
 use atomusicator_domain::{AudioAsset, AudioAssetId, PitchShiftSpec, Stem, StemType};
 use atomusicator_infrastructure::{
-    audio_io::{SymphoniaAudioDecoder, playback::CpalRealtimeMixer, wav_codec::read_wav_f32},
+    audio_io::{playback::CpalRealtimeMixer, wav_codec::read_wav_f32},
     audio_tools::{AudioTools, ExportOptions, TemporaryDirectory, unique_id},
-    cache::ContentAddressedCache,
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
     onnx::OrtSessionPool,
     pitch_cache::PitchRenderCache,
     preferences::{NativeLegacyProjects, ProjectsPreferences},
-    session_workspace::LocalSessionWorkspace,
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
-    waveform::WaveformPeakCache,
 };
 use std::{
     collections::BTreeMap,
@@ -36,6 +33,7 @@ pub struct Studio {
     projects: Mutex<PathBuf>,
     runtime: tokio::runtime::Runtime,
     sessions: Arc<OrtSessionPool>,
+    resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission,
 }
 #[derive(Clone)]
 struct LoadedSession {
@@ -65,6 +63,14 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .build()
                     .map_err(err)?,
                 sessions: Arc::new(OrtSessionPool::new(2).map_err(err)?),
+                resources:
+                    atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
+                        atomusicator_application::compute_policy::ComputeBudget::interactive(
+                            std::thread::available_parallelism().map_or(1, usize::from),
+                        )
+                        .threads_per_inference(),
+                    )
+                    .map_err(err)?,
             }))
         })
         .clone()
@@ -109,7 +115,7 @@ impl Studio {
                 operation: kind.into(),
             },
             None,
-            operation,
+            move |backend, id, cancel| operation(backend, id, cancel).map_err(Into::into),
         )
     }
     fn start_request(
@@ -120,7 +126,7 @@ impl Studio {
             &Arc<Self>,
             &str,
             &CancellationToken,
-        ) -> Result<Option<UiSessionDto>, String>
+        ) -> Result<Option<UiSessionDto>, crate::jobs::JobFailure>
         + Send
         + 'static,
     ) -> Result<String, String> {
@@ -172,6 +178,7 @@ impl Studio {
         if record.profile != atomusicator_domain::quality::SeparationProfile::compatibility() {
             return Err("job quality profile is incompatible; start a new separation".into());
         }
+        self.jobs.journal.cleanup_staging(&record).map_err(err)?;
         let atomusicator_infrastructure::job_journal::JobRequest::Separation {
             source,
             projects,
@@ -180,13 +187,41 @@ impl Studio {
         else {
             return Err("this operation does not support recovery".into());
         };
-        let next = self.separate_request(
-            source,
-            projects,
-            download_allowed,
-            Some(record.id.clone()),
-            record.source_sha256.clone(),
-        )?;
+        let published = record
+            .output_directory
+            .clone()
+            .filter(|path| path.join("session.json").is_file());
+        let next = if let Some(directory) = published {
+            let directory = directory.canonicalize().map_err(err)?;
+            let projects = projects.canonicalize().map_err(err)?;
+            if !directory.starts_with(&projects) {
+                return Err("recovery output escapes its project directory".into());
+            }
+            self.start_request(
+                record.request.clone(),
+                Some(record.id.clone()),
+                move |backend, id, cancel| {
+                    check_cancel(cancel)?;
+                    backend.jobs.begin_commit(id)?;
+                    let session = backend.load_directory(&directory).map_err(|error| {
+                        crate::jobs::JobFailure::new(
+                            atomusicator_domain::jobs::FailureKind::InvalidArtifact,
+                            error,
+                        )
+                    })?;
+                    backend.jobs.output(id, directory)?;
+                    Ok(Some(session))
+                },
+            )?
+        } else {
+            self.separate_request(
+                source,
+                projects,
+                download_allowed,
+                Some(record.id.clone()),
+                record.source_sha256.clone(),
+            )?
+        };
         record.discarded = true;
         if let Err(error) = self.jobs.journal.save(&mut record) {
             self.jobs.report(
@@ -223,6 +258,7 @@ impl Studio {
             download_allowed,
         };
         self.start_request(request, retry_of, move |backend,id,cancel| {
+            let _resources=backend.resources.reserve_separation().map_err(crate::jobs::JobFailure::from_domain)?;
             let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
             if expected_hash.is_some_and(|expected| expected != source_hash) {
                 return Err("Source content changed since the interrupted attempt; start a new separation".into());
@@ -251,31 +287,43 @@ impl Studio {
             }
             check_cancel(cancel)?;
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
-            let audio = AudioTools::discover().map_err(err)?.decode_for_separation(&source,cancel).map_err(err)?;
-            let cache = ContentAddressedCache::new(policy.stage_cache_dir(),1,4*1024*1024*1024).ok();
-            let inference = MdxInference::with_session_pool(models,cache,Arc::clone(&backend.sessions)).map_err(err)?;
+            let work = TemporaryDirectory::new(&std::env::temp_dir()).map_err(err)?;
+            let audio = Arc::new(AudioTools::discover().map_err(err)?
+                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(err)?);
+            use atomusicator_application::ports::AudioBlockSource;
+            let working_bytes=audio.metadata().frame_count.checked_mul(8*15).ok_or("audio working size overflow")?;
+            for destination in [&policy.stage_cache_dir(),&projects,&work.0] {
+                atomusicator_infrastructure::resource_probe::ensure_disk(destination,working_bytes).map_err(crate::jobs::JobFailure::from_domain)?;
+            }
+            let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1"));
+            let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
-            let pipeline = SeparateFiveStemsUseCase::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?);
-            let result = pipeline.execute(&audio,cancel).map_err(err)?;
+            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store);
+            let result = pipeline.execute(audio,cancel).map_err(err)?;
             check_cancel(cancel)?;
             if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
                 return Err("Source content changed during separation; result was not published".into());
             }
-            backend.jobs.begin_commit(id)?;
-            backend.report(id,0.92,"Publishing five aligned WAV tracks");
-            let workspace = LocalSessionWorkspace::new(projects);
-            let asset = AudioAsset { id: AudioAssetId::new(unique_id()).map_err(err)?,
-                display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source };
-            let published = workspace.persist_separation_result(&asset,&result).map_err(err)?;
-            backend.jobs.output(id, published.directory.clone())?;
-            let mut metadata = workspace.read_metadata(&published).map_err(err)?;
-            let record = metadata.additional.get_mut("separation").and_then(|r|r.as_object_mut()).ok_or("separation metadata missing")?;
-            record.insert("engine".into(),serde_json::json!({"name":"Atomusicator native MDX","models":usages,
+            backend.report(id, 0.92, "Publishing five aligned WAV tracks");
+            let asset = AudioAsset {
+                id: AudioAssetId::new(unique_id()).map_err(err)?,
+                display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source,
+            };
+            let engine=serde_json::json!({"name":"Atomusicator native MDX","models":usages,
                 "source_sha256":source_hash,"profile":atomusicator_domain::quality::SeparationProfile::compatibility(),
                 "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
-                "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),"inter_threads":1,"execution":"sequential","precision":"float32"}}));
-            workspace.record_separation(&published,serde_json::Value::Object(record.clone())).map_err(err)?;
+                "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),
+                    "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
+            backend.jobs.output(id,projects.join(id))?;
+            let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,id,&asset,&result,engine,cancel,
+                atomusicator_infrastructure::block_workspace::PublicationHooks{
+                    staged:|path:&Path|backend.jobs.staging(id,path.to_path_buf()),commit:||backend.jobs.begin_commit(id)
+                }).map_err(crate::jobs::JobFailure::from_domain)?;
             let session = backend.load_directory(&published.directory)?;
+            drop(result);
+            if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(4*1024*1024*1024) {
+                eprintln!("Nonfatal audio cache cleanup failure: {error}");
+            }
             Ok(Some(session))
         })
     }
@@ -285,6 +333,9 @@ impl Studio {
     }
     fn load_directory(&self, path: &Path) -> Result<UiSessionDto, String> {
         let path = path.canonicalize().map_err(err)?;
+        if fs::metadata(path.join("session.json")).map_err(err)?.len() > 4 * 1024 * 1024 {
+            return Err("session metadata exceeds the supported size".into());
+        }
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(path.join("session.json")).map_err(err)?)
                 .map_err(err)?;
@@ -304,6 +355,16 @@ impl Studio {
             let candidate = path.join(relative).canonicalize().map_err(err)?;
             if !candidate.starts_with(&path) {
                 return Err("stem path escapes the session directory".into());
+            }
+            if let Some(expected_hash) = entry["sha256"].as_str() {
+                let hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(
+                    &candidate,
+                    &CancellationToken::default(),
+                )
+                .map_err(err)?;
+                if hash != expected_hash {
+                    return Err(format!("stem checksum mismatch: {key}"));
+                }
             }
             originals.push((kind, candidate));
         }
@@ -336,29 +397,49 @@ impl Studio {
         paths: &[(StemType, PathBuf)],
         pitch: i32,
     ) -> Result<UiSessionDto, String> {
-        let peaks = WaveformPeakCache::new(5).ok_or("invalid peak cache")?;
-        let mut stems = Vec::new();
         let mut tracks = Vec::new();
+        let mut total_bytes = 0u64;
+        let mut expected = None;
         for (kind, path) in paths {
-            let audio = read_wav_f32(path)
-                .or_else(|_| SymphoniaAudioDecoder.decode_to_f32(path))
-                .map_err(err)?;
-            let buckets = peaks.peaks(&audio, audio.frames().div_ceil(1000).max(1));
+            let (metadata, peaks) =
+                atomusicator_infrastructure::waveform::wav_peaks(path, 1000).map_err(err)?;
+            if metadata.frame_count == 0 || expected.is_some_and(|value| value != metadata) {
+                return Err(
+                    "session stems must have identical nonempty formats and frame counts".into(),
+                );
+            }
+            expected = Some(metadata);
+            total_bytes = total_bytes.saturating_add(
+                metadata
+                    .frame_count
+                    .saturating_mul(u64::from(metadata.format.channels) * 4),
+            );
             tracks.push(UiStemTrackDto {
                 stem_type: stem_key(*kind).into(),
                 file_path: path.to_string_lossy().into_owned(),
-                sample_rate: audio.format().sample_rate_hz,
-                channels: audio.format().channels,
-                duration_seconds: audio.frames() as f64 / f64::from(audio.format().sample_rate_hz),
-                peaks: buckets
-                    .into_iter()
-                    .flat_map(|(min, max)| [min, max])
-                    .collect(),
+                sample_rate: metadata.format.sample_rate_hz,
+                channels: metadata.format.channels,
+                duration_seconds: metadata.frame_count as f64
+                    / f64::from(metadata.format.sample_rate_hz),
+                peaks,
             });
-            stems.push(Stem { kind: *kind, audio });
         }
-        // Validation occurs before replacing the currently loaded session.
-        self.mixer.load_session(stems).map_err(err)?;
+        if total_bytes > 64 * 1024 * 1024 {
+            self.mixer
+                .load_streaming_session(paths.to_vec())
+                .map_err(err)?;
+        } else {
+            let stems = paths
+                .iter()
+                .map(|(kind, path)| {
+                    Ok(Stem {
+                        kind: *kind,
+                        audio: read_wav_f32(path).map_err(err)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            self.mixer.load_session(stems).map_err(err)?;
+        }
         Ok(UiSessionDto {
             id,
             directory,
@@ -490,10 +571,13 @@ impl Studio {
                     peak,
                 })
                 .collect(),
-            failure: self
-                .mixer
-                .device_failed()
-                .then_some(UiPlaybackFailure::DeviceUnavailable),
+            failure: if self.mixer.device_failed() {
+                Some(UiPlaybackFailure::DeviceUnavailable)
+            } else if self.mixer.source_failed() {
+                Some(UiPlaybackFailure::StemUnreadable)
+            } else {
+                None
+            },
         }
     }
 }
@@ -557,6 +641,13 @@ mod tests {
                 .build()
                 .unwrap(),
             sessions: Arc::new(OrtSessionPool::new(2).unwrap()),
+            resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
+                atomusicator_application::compute_policy::ComputeBudget::interactive(
+                    std::thread::available_parallelism().map_or(1, usize::from),
+                )
+                .threads_per_inference(),
+            )
+            .unwrap(),
         })
     }
     fn wait(backend: &Studio, id: &str) -> UiJobDto {
@@ -631,6 +722,35 @@ mod tests {
             backend.loaded.lock().unwrap().as_ref().unwrap().dto.id,
             "legacy"
         );
+    }
+    #[test]
+    fn recovery_finishes_an_already_published_bundle_without_requiring_the_source() {
+        use atomusicator_infrastructure::job_journal::JobRequest;
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        legacy_session(&root.0);
+        let backend = backend(&root.0);
+        let mut record = backend
+            .jobs
+            .journal
+            .create(
+                "crashed",
+                JobRequest::Separation {
+                    source: root.0.join("missing-source.flac"),
+                    projects: root.0.clone(),
+                    download_allowed: false,
+                },
+                None,
+            )
+            .unwrap();
+        record.lifecycle.start().unwrap();
+        record.lifecycle.begin_commit().unwrap();
+        record.output_directory = Some(root.0.clone());
+        backend.jobs.journal.save(&mut record).unwrap();
+        let id = backend.resume("crashed").unwrap();
+        let result = wait(&backend, &id);
+        assert_eq!(result.status, UiJobStatus::Completed, "{}", result.message);
+        assert_eq!(result.session.unwrap().id, "legacy");
+        assert!(backend.jobs.journal.load("crashed").unwrap().discarded);
     }
     #[test]
     #[ignore = "requires the pinned FFmpeg runtime"]

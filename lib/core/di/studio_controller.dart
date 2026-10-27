@@ -117,6 +117,8 @@ class MixTrackState {
 
 const _deviceUnavailableMessage =
     'Audio output device was disconnected. Reconnect it and press Play to retry.';
+const _stemUnreadableMessage =
+    'A stem could not be read. Reopen the session to verify its files before retrying playback.';
 
 class StudioState {
   const StudioState({
@@ -366,13 +368,16 @@ class StudioController extends Notifier<StudioState> {
               for (final meter in status.trackMeters)
                 meter.stemType: meter.peak,
             }),
-            error:
-                status.failure == native.UiPlaybackFailure.deviceUnavailable
-                    ? _deviceUnavailableMessage
-                    : null,
+            error: switch (status.failure) {
+              native.UiPlaybackFailure.deviceUnavailable =>
+                _deviceUnavailableMessage,
+              native.UiPlaybackFailure.stemUnreadable => _stemUnreadableMessage,
+              null => null,
+            },
             clearError:
                 status.failure == null &&
-                state.error == _deviceUnavailableMessage,
+                (state.error == _deviceUnavailableMessage ||
+                    state.error == _stemUnreadableMessage),
           );
         }
       }

@@ -80,6 +80,7 @@ pub struct UiTrackMeterDto {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPlaybackFailure {
     DeviceUnavailable,
+    StemUnreadable,
 }
 #[derive(Debug, Clone)]
 pub struct UiPlaybackDto {

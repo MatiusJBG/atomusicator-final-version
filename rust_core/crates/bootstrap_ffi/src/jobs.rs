@@ -8,6 +8,45 @@ use atomusicator_infrastructure::{
 };
 use std::sync::{Arc, Mutex, MutexGuard};
 
+#[derive(Debug)]
+pub(crate) struct JobFailure {
+    pub kind: FailureKind,
+    pub message: String,
+}
+impl JobFailure {
+    pub fn new(kind: FailureKind, message: impl std::fmt::Display) -> Self {
+        Self {
+            kind,
+            message: message.to_string(),
+        }
+    }
+    pub fn from_domain(error: atomusicator_domain::DomainError) -> Self {
+        use atomusicator_domain::DomainError;
+        let kind = match &error {
+            DomainError::InsufficientResources { .. } => FailureKind::InsufficientResources,
+            DomainError::SeparationCancelled => FailureKind::Cancelled,
+            DomainError::CacheFailure(_) => FailureKind::InvalidArtifact,
+            DomainError::WorkspaceFailure(_) => FailureKind::Storage,
+            DomainError::AudioDecodeFailure(_) => FailureKind::SourceUnavailable,
+            _ => FailureKind::Processing,
+        };
+        Self::new(kind, error)
+    }
+}
+impl From<String> for JobFailure {
+    fn from(message: String) -> Self {
+        Self {
+            kind: FailureKind::Processing,
+            message,
+        }
+    }
+}
+impl From<&str> for JobFailure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
 struct Job {
     dto: UiJobDto,
     record: JournalRecord,
@@ -65,7 +104,7 @@ impl JobRegistry {
         self: &Arc<Self>,
         request: JobRequest,
         retry_of: Option<String>,
-        operation: impl FnOnce(&str, &CancellationToken) -> Result<Option<UiSessionDto>, String>
+        operation: impl FnOnce(&str, &CancellationToken) -> Result<Option<UiSessionDto>, JobFailure>
         + Send
         + 'static,
     ) -> Result<String, String> {
@@ -78,11 +117,16 @@ impl JobRegistry {
         {
             return Err("another audio job is already running".into());
         }
-        let mut record = self
+        let expected_source = retry_of
+            .as_ref()
+            .map(|id| self.journal.load(id))
+            .transpose()
+            .map_err(err)?
+            .and_then(|record| record.source_sha256);
+        let (mut record, lease) = self
             .journal
-            .create(&id, request, retry_of.clone())
+            .create_leased(&id, request, retry_of.clone(), expected_source)
             .map_err(err)?;
-        let lease = self.journal.lease(&id).map_err(err)?;
         record.lifecycle.start().map_err(err)?;
         self.journal.save(&mut record).map_err(err)?;
         let dto = UiJobDto {
@@ -110,7 +154,7 @@ impl JobRegistry {
                     operation(&worker_id, &cancel)
                 }))
                 .unwrap_or_else(|_| Err("native job failed unexpectedly".into()));
-                registry.finish(&worker_id, result);
+                registry.finish(&worker_id, result, _lease);
             });
         if let Err(error) = spawned {
             if let Some(job) = slot.as_mut() {
@@ -145,6 +189,15 @@ impl JobRegistry {
         job.record.source_sha256 = Some(hash);
         self.journal.save(&mut job.record).map_err(err)
     }
+    pub fn staging(&self, id: &str, path: std::path::PathBuf) -> Result<(), String> {
+        let mut guard = self.active.lock().map_err(err)?;
+        let job = guard
+            .as_mut()
+            .filter(|j| j.dto.id == id)
+            .ok_or("job not found")?;
+        job.record.staging_directory = Some(path);
+        self.journal.save(&mut job.record).map_err(err)
+    }
     pub fn begin_commit(&self, id: &str) -> Result<(), String> {
         let mut guard = self.active.lock().map_err(err)?;
         let job = guard
@@ -172,7 +225,12 @@ impl JobRegistry {
         job.dto.output_directory = Some(path.to_string_lossy().into_owned());
         Ok(())
     }
-    fn finish(&self, id: &str, result: Result<Option<UiSessionDto>, String>) {
+    fn finish(
+        &self,
+        id: &str,
+        result: Result<Option<UiSessionDto>, JobFailure>,
+        lease: atomusicator_infrastructure::job_journal::JobLease,
+    ) {
         let Ok(mut guard) = self.active.lock() else {
             return;
         };
@@ -191,20 +249,21 @@ impl JobRegistry {
                     job.record.message = "Completed".into();
                 }
                 result => {
+                    let error = result.err().unwrap_or_else(|| "operation cancelled".into());
                     let reason = if job.cancel.is_cancelled() {
                         FailureKind::Cancelled
                     } else {
-                        FailureKind::Processing
+                        error.kind
                     };
                     job.record.lifecycle.fail(reason).map_err(err)?;
                     job.record.failure = Some(reason);
                     job.dto.failure = Some(failure(reason));
-                    job.record.message =
-                        result.err().unwrap_or_else(|| "operation cancelled".into());
+                    job.record.message = error.message;
                 }
             }
             self.journal.save(&mut job.record).map_err(err)
         })();
+        drop(lease);
         job.dto.status = status(job.record.lifecycle.status());
         job.dto.message = job.record.message.clone();
         if let Err(error) = finish {

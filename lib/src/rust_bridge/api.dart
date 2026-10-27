@@ -209,7 +209,7 @@ class UiPlaybackDto {
           failure == other.failure;
 }
 
-enum UiPlaybackFailure { deviceUnavailable }
+enum UiPlaybackFailure { deviceUnavailable, stemUnreadable }
 
 class UiRecoverableJobDto {
   final String id;
