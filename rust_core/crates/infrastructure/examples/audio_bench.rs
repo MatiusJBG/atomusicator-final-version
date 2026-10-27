@@ -1,7 +1,8 @@
 //! Local licensed-corpus runner. Invoke with a JSON manifest and an output directory.
 use atomusicator_application::{
-    CancellationToken, ports::SeparationProgressPort,
-    use_cases::separate_five_stems::SeparateFiveStemsUseCase,
+    CancellationToken,
+    ports::SeparationProgressPort,
+    use_cases::separate_five_stems::{SeparateFiveStemsUseCase, VocalPolicy},
 };
 use atomusicator_domain::StemType;
 use atomusicator_infrastructure::{
@@ -20,6 +21,8 @@ use std::{
 
 #[derive(Deserialize)]
 struct Corpus {
+    #[serde(default)]
+    profile: Option<String>,
     cases: Vec<Case>,
 }
 #[derive(Deserialize)]
@@ -54,6 +57,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let manifest_path = Path::new(&args[1]);
     let corpus: Corpus = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let vocal_policy = match corpus.profile.as_deref().unwrap_or("native-v1") {
+        "native-v1" => VocalPolicy::CompatibilityV1,
+        "context-candidate-v1" => VocalPolicy::ContextPreservingCandidateV1,
+        _ => return Err("unknown versioned quality profile".into()),
+    };
     if corpus.cases.is_empty() {
         return Err("corpus must contain cases".into());
     }
@@ -91,7 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         MdxInference::with_session_pool(models, None, Arc::clone(&pool))?,
         Progress,
         StftSpectralBleedGate::new(2048, 0.05, 0.25)?,
-    );
+    )
+    .with_vocal_policy(vocal_policy);
     let tools = AudioTools::discover()?;
     let mut reports = Vec::new();
     for case in corpus.cases {
@@ -132,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         reports.push(serde_json::json!({"case_id":case.id,"source_sha256":actual,"license":case.license,"attribution":case.attribution,"frames":audio.frames(),"sample_rate":audio.format().sample_rate_hz,"decode_seconds":decode_seconds,"inference_seconds":inference_seconds,"reference_metrics":comparisons}));
     }
-    let report = serde_json::json!({"schema_version":1,"profile":"native-v1","cache":"disabled","onnx_runtime":ort::info(),"provider_effective":"CPUExecutionProvider","intra_threads":pool.intra_threads(),"inter_threads":1,"precision":"float32","model_hashes":model_hashes,"cases":reports});
+    let report = serde_json::json!({"schema_version":1,"profile":vocal_policy.id(),"cache":"disabled","onnx_runtime":ort::info(),"provider_effective":"CPUExecutionProvider","intra_threads":pool.intra_threads(),"inter_threads":1,"precision":"float32","model_hashes":model_hashes,"cases":reports});
     fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report)?,
