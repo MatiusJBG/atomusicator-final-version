@@ -15,9 +15,9 @@ use std::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args_os().collect::<Vec<_>>();
-    if args.len() != 4 {
+    if args.len() != 4 && args.len() != 5 {
         return Err(
-            "usage: audio_inspect <original-audio> <stem-directory> <local-report.json>".into(),
+            "usage: audio_inspect <original-audio> <stem-directory> <local-report.json> [baseline-stem-directory]".into(),
         );
     }
     let source = AudioTools::discover()?
@@ -42,10 +42,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let channels = usize::from(audio.format().channels);
         let interval = audio.format().sample_rate_hz as usize * 8;
         let boundaries = (interval..audio.frames()).step_by(interval).map(|frame| {
-            let steps = (0..channels).map(|channel| (audio.samples()[frame*channels+channel] - audio.samples()[(frame-1)*channels+channel]).abs()).collect::<Vec<_>>();
+            let steps = (0..channels).map(|channel| (f64::from(audio.samples()[frame*channels+channel]) - f64::from(audio.samples()[(frame-1)*channels+channel])).abs()).collect::<Vec<_>>();
             serde_json::json!({"seconds":frame as f64 / f64::from(audio.format().sample_rate_hz),"absolute_adjacent_step":steps})
         }).collect::<Vec<_>>();
-        stems.insert(key, serde_json::json!({"channels":signal_statistics(&audio)?,"eight_second_boundaries":boundaries}));
+        let mut diagnostic = serde_json::json!({"channels":signal_statistics(&audio)?,"eight_second_boundaries":boundaries});
+        if args.len() == 5 {
+            let baseline = read_wav_f32(&Path::new(&args[4]).join(format!("{key}.wav")))?;
+            diagnostic["difference_from_baseline_not_ground_truth"] =
+                serde_json::to_value(compare_audio(&baseline, &audio)?)?;
+        }
+        stems.insert(key, diagnostic);
     }
     let reconstructed = AudioBufferF32::new(source.format(), sum)?;
     let reconstruction = compare_audio(&source, &reconstructed)?;
