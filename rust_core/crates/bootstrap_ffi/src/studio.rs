@@ -1,15 +1,13 @@
 //! Composition and background job ownership. The bridge passes paths/peaks, never PCM.
-use crate::api::{
-    UiJobDto, UiPlaybackDto, UiPlaybackFailure, UiSessionDto, UiStemTrackDto, UiTrackMeterDto,
-};
+use crate::api::{UiJobDto, UiPlaybackDto, UiPlaybackFailure, UiSessionDto, UiTrackMeterDto};
+use crate::session_preparation::stem_key;
 use atomusicator_application::{
-    CancellationToken,
-    ports::{RealtimePlaybackPort, SeparationProgressPort},
+    CancellationToken, ports::SeparationProgressPort,
     use_cases::bounded_separation::BoundedSeparation,
 };
-use atomusicator_domain::{AudioAsset, AudioAssetId, PitchShiftSpec, Stem, StemType};
+use atomusicator_domain::{AudioAsset, AudioAssetId, PitchShiftSpec, StemType};
 use atomusicator_infrastructure::{
-    audio_io::{playback::CpalRealtimeMixer, wav_codec::read_wav_f32},
+    audio_io::playback::CpalRealtimeMixer,
     audio_tools::{AudioTools, ExportOptions, TemporaryDirectory, unique_id},
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
@@ -376,7 +374,8 @@ impl Studio {
             .as_str()
             .unwrap_or("Audio session")
             .to_owned();
-        let dto = self.prepare_tracks(
+        let dto = crate::session_preparation::prepare_tracks(
+            &self.mixer,
             session_id,
             path.to_string_lossy().into_owned(),
             name,
@@ -388,65 +387,6 @@ impl Studio {
             originals,
         });
         Ok(dto)
-    }
-    fn prepare_tracks(
-        &self,
-        id: String,
-        directory: String,
-        name: String,
-        paths: &[(StemType, PathBuf)],
-        pitch: i32,
-    ) -> Result<UiSessionDto, String> {
-        let mut tracks = Vec::new();
-        let mut total_bytes = 0u64;
-        let mut expected = None;
-        for (kind, path) in paths {
-            let (metadata, peaks) =
-                atomusicator_infrastructure::waveform::wav_peaks(path, 1000).map_err(err)?;
-            if metadata.frame_count == 0 || expected.is_some_and(|value| value != metadata) {
-                return Err(
-                    "session stems must have identical nonempty formats and frame counts".into(),
-                );
-            }
-            expected = Some(metadata);
-            total_bytes = total_bytes.saturating_add(
-                metadata
-                    .frame_count
-                    .saturating_mul(u64::from(metadata.format.channels) * 4),
-            );
-            tracks.push(UiStemTrackDto {
-                stem_type: stem_key(*kind).into(),
-                file_path: path.to_string_lossy().into_owned(),
-                sample_rate: metadata.format.sample_rate_hz,
-                channels: metadata.format.channels,
-                duration_seconds: metadata.frame_count as f64
-                    / f64::from(metadata.format.sample_rate_hz),
-                peaks,
-            });
-        }
-        if total_bytes > 64 * 1024 * 1024 {
-            self.mixer
-                .load_streaming_session(paths.to_vec())
-                .map_err(err)?;
-        } else {
-            let stems = paths
-                .iter()
-                .map(|(kind, path)| {
-                    Ok(Stem {
-                        kind: *kind,
-                        audio: read_wav_f32(path).map_err(err)?,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            self.mixer.load_session(stems).map_err(err)?;
-        }
-        Ok(UiSessionDto {
-            id,
-            directory,
-            name,
-            tracks,
-            pitch_semitones: pitch,
-        })
     }
     pub fn pitch(self: &Arc<Self>, semitones: i32, preserve: bool) -> Result<String, String> {
         let spec = PitchShiftSpec::try_new(semitones as f32, preserve).map_err(err)?;
@@ -485,7 +425,8 @@ impl Studio {
             };
             check_cancel(cancel)?;
             backend.jobs.begin_commit(id)?;
-            let dto = backend.prepare_tracks(
+            let dto = crate::session_preparation::prepare_tracks(
+                &backend.mixer,
                 loaded.dto.id.clone(),
                 loaded.dto.directory.clone(),
                 loaded.dto.name.clone(),
@@ -603,15 +544,6 @@ fn check_cancel(cancel: &CancellationToken) -> Result<(), String> {
 }
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-pub fn stem_key(kind: StemType) -> &'static str {
-    match kind {
-        StemType::LeadVocal => "lead_vocal",
-        StemType::BackingVocals => "backing_vocals",
-        StemType::Drums => "drums",
-        StemType::Bass => "bass",
-        StemType::Instrumental => "instrumental",
-    }
 }
 pub fn parse_stem(key: &str) -> Result<StemType, String> {
     StemType::ALL
