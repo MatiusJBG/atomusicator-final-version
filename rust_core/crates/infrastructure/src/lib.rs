@@ -8,6 +8,7 @@ pub mod dsp;
 pub mod errors;
 pub mod job_journal;
 pub mod mdx;
+pub mod mdx_bounded;
 pub mod model_downloader;
 pub mod models;
 pub mod onnx;

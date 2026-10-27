@@ -348,6 +348,54 @@ impl StemInferencePort for MdxInference {
         Ok(RhythmStems { drums, bass })
     }
 }
+impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
+    fn stage_identity(&self, stage: atomusicator_application::ports::InferenceStage) -> String {
+        let id = block_profile(stage);
+        let hash = self
+            .models
+            .get(id)
+            .map(|(_, hash)| hash.as_str())
+            .unwrap_or("missing");
+        format!(
+            "bounded-mdx-v1/{id}/{hash}/{:?}/{}",
+            MdxConfig::for_profile(id),
+            self.runtime_signature
+        )
+    }
+    fn infer_blocks(
+        &self,
+        stage: atomusicator_application::ports::InferenceStage,
+        source: &dyn atomusicator_application::ports::AudioBlockSource,
+        target: &mut dyn atomusicator_application::ports::AudioBlockWriter,
+        cancel: &CancellationToken,
+    ) -> Result<(), DomainError> {
+        let id = block_profile(stage);
+        let (path, _) = self
+            .models
+            .get(id)
+            .ok_or_else(|| fail("verified MDX model is missing"))?;
+        let c = MdxConfig::for_profile(id)?;
+        crate::mdx_bounded::run_bounded_mdx(c, source, target, cancel, |spectrum| {
+            self.runner
+                .run_f32(
+                    path,
+                    "input",
+                    &[1, 4, c.dim_f as i64, c.dim_t as i64],
+                    spectrum,
+                )
+                .map_err(|e| fail(&e.to_string()))
+        })
+    }
+}
+fn block_profile(stage: atomusicator_application::ports::InferenceStage) -> &'static str {
+    use atomusicator_application::ports::InferenceStage;
+    match stage {
+        InferenceStage::VocalBus => "uvr-mdxnet-main-v1",
+        InferenceStage::LeadVocal => "uvr-mdxnet-kara-2-v1",
+        InferenceStage::Drums => "kuielab-mdxnet-drums-v1",
+        InferenceStage::Bass => "kuielab-mdxnet-bass-v1",
+    }
+}
 fn fail(message: &str) -> DomainError {
     DomainError::DspFailure(message.into())
 }
