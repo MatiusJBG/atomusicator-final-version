@@ -20,6 +20,23 @@ error, RMS and peak are also reported because scale invariance can hide gain
 errors. Silence and mathematically perfect estimates have explicit JSON states.
 Reference duration/rate/channel mismatches fail rather than silently cropping.
 
+Inspect an existing five-stem directory without rerunning inference:
+
+```powershell
+cargo build --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example audio_inspect
+./rust_core/target/release/examples/audio_inspect.exe local_audio/source.flac local_audio/run-001/case local_audio/diagnostics.json
+```
+
+An optional last argument selects a baseline stem directory. Its comparisons are
+algorithm differences, not ground-truth quality scores. The report includes
+per-channel RMS, peaks, float headroom and steps at eight-second boundaries,
+plus alignment and reconstruction checks. A value above full scale in float WAV
+does not prove hard clipping. Keep user-provided audio and its reports local.
+
+The explicit CPU baseline is recorded separately with six intra-op threads,
+one inter-op thread, sequential execution and spinning disabled. That is a
+conservative policy; it has not been established as an optimal thread count.
+
 The 2026-10-27 baseline used Ryzen 9 8945HS / 16 logical CPUs / approximately
 15.3 GiB RAM, ONNX Runtime 1.20.0, with inference artifact cache disabled. It is
 one cold process, not a statistical benchmark. RSS samples concern the Rust

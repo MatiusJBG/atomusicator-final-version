@@ -72,38 +72,51 @@ que en la aplicación Python.
 
 1. **Memoria y streaming para canciones largas.** El flujo conectado carga los
    cinco stems en memoria para garantizar búsqueda y sincronización. Existe un
-   lector por ring buffers, pero requiere búsqueda coordinada, prebuffer y una
-   política común de underruns antes de conectarlo al producto. No se declara
+   lector por ring buffers, pero requiere búsqueda coordinada, prebuffer y
+   conversión de frecuencia de calidad fuera del callback antes de conectarlo al producto.
+   Los underruns comunes, el último frame, el avance diferido y el fin común
+   ya tienen correcciones verificadas. No se declara
    migrada la reproducción de memoria acotada ni la inferencia por archivo completo
    con consumo de memoria constante.
 2. **Comparación musical y rendimiento.** Medir calidad de voz/coros, transitorios,
    SDR/null tests y tiempos/RAM sobre el mismo conjunto de audio licenciado usado
-   por Python, con duración larga y límites de bloques. La prueba neuronal actual
-   usa audio sintético corto. No se atribuyen mejoras de calidad, velocidad o
+   por Python, con duración larga y límites de bloques. Se añadieron un corpus
+   instrumental CC BY 4.0 y una canción local de 225.5 s, procesada completa con
+   dos estrategias. La canción no tiene referencias vocales originales. El loop
+   muestra separación de batería insuficiente. No se atribuyen mejoras de calidad, velocidad o
    latencia de hardware sin esas mediciones.
-3. **GPU y política de recursos.** El pool intenta proveedores de plataforma con
-   CPU de respaldo. Falta exponer el proveedor realmente activo, medir DirectML/CUDA
-   y migrar la política adaptativa de hilos, presupuesto de sesiones y ejecución
-   paralela de ramas. Las pruebas no certifican aceleración GPU efectiva.
+3. **GPU y política de recursos.** El escritorio usa CPU explícita, máximo seis
+   hilos intra-op, un hilo inter-op, ejecución secuencial y spinning desactivado.
+   El runtime y pool se conservan entre trabajos; la admisión cuenta sesiones
+   todavía en uso, no solo entradas del LRU. Faltan presupuesto por bytes,
+   medición de la política adaptativa y ramas paralelas. DirectML/CUDA siguen
+   sin calificar; las pruebas no certifican aceleración GPU efectiva.
    La política CPU es parte de la paridad; GPU es una mejora calificada por
    proveedor, no un requisito para cerrar una migración CPU completa.
 4. **Recuperación parcial y reanudación.** Los checkpoints exitosos se reutilizan,
    pero un trabajo fallido conserva la sesión anterior y no publica stems parciales.
    Python puede conservar resultados parciales de una rama fallida. Falta una
    representación explícita y una UI de recuperación para esos casos.
-5. **Preferencias históricas.** Se restauran las cinco pistas originales de JSON
-   antiguo/nuevo. Falta adoptar la carpeta personalizada de QSettings del registro
-   Windows. Abrir manualmente una sesión y seleccionar la carpeta nueva funciona.
-   Guardar mezcla/posición y restaurar automáticamente el último render de pitch
-   son mejoras opcionales; no se han demostrado como requisitos de paridad de la
-   aplicación anterior y no bloquean el cierre de la migración.
-6. **Paridad de controles y rendimiento de render.** Faltan medidores individuales
-   en vivo (el master sí usa muestras reales), caché de renders de pitch y pruebas
-   de desconexión/reconexión del dispositivo de audio. Cancelar una inferencia
+5. **Hardware y estados del flujo.** Hay medidores individuales en vivo, caché
+   verificable de lotes de pitch y propagación tipada del fallo de salida hasta
+   Flutter. Faltan desconexión/reconexión física y estados tipados de trabajos
+   con su recuperación. Cancelar una inferencia
    espera a que termine la llamada ONNX en curso; no se interrumpe su kernel.
-7. **Instalador completo.** La carpeta release compila con herramientas incluidas.
+6. **Instalador completo.** La carpeta release compila con herramientas incluidas.
    Compilar/verificar el instalador requiere Inno Setup y una instalación limpia
    de Windows; no se considera comprobado por haber compilado solo la app.
+
+La carpeta personalizada de QSettings ya se adopta mediante el registro Windows,
+con prioridad del ajuste nativo y sin Qt/Python. También se corrigió la validación
+repetida de rutas locales canónicas `\\?\C:\...`. Los lotes de pitch se reutilizan
+por contenido original, especificación y huella del ejecutable FFmpeg; se verifican
+hashes de salida y se descartan lotes incompletos. Guardar toda la edición de
+mezcla/posición o restaurar automáticamente el último pitch siguen siendo mejoras
+opcionales, no requisitos demostrados de paridad.
+
+`native-v1` conserva los parámetros actuales del producto.
+`context-candidate-v1` permite evaluar contexto vocal completo sin VAD/gate,
+exclusivamente en el banco de pruebas. No se promovió como mejora de calidad.
 
 El plan de implementación se conserva localmente en una carpeta excluida de Git.
 Organiza la paridad obligatoria, la validación de calidad/rendimiento y las mejoras
@@ -116,11 +129,12 @@ Resultados locales de esta ejecución:
 
 | Verificación | Resultado |
 |---|---|
-| Python de referencia: `unittest discover -s tests`, Qt offscreen | 74 pruebas aprobadas; árbol Git de referencia limpio |
-| Rust workspace con `--include-ignored --test-threads=1` | 56 pruebas aprobadas; se ejecutaron también modelos reales y FFmpeg |
+| Python de referencia, auditoría anterior | 74 pruebas aprobadas entonces; no se volvió a ejecutar Python en esta implementación |
+| Rust workspace con `--include-ignored --test-threads=1` | 79 pruebas aprobadas; se ejecutaron también modelos reales, admisión con sesiones vivas y FFmpeg |
 | `cargo fmt --check` y Clippy con `-D warnings` | Aprobados |
 | `flutter analyze` | Sin observaciones |
-| `flutter test` con DLL/FFmpeg release configurados | 6 pruebas aprobadas, incluido el smoke FFI; sin pruebas omitidas en esa ejecución |
+| `flutter test` con DLL/FFmpeg release configurados | 8 pruebas aprobadas, incluidos medidores, recuperación de dispositivo y smoke FFI; sin omisiones |
+| Integración local de audio proporcionado | Dos separaciones completas, cinco WAV alineados por versión, reapertura y seek mediante la DLL empaquetada; prueba adicional local aprobada |
 | Pantalla Flutter | Sesión vacía y cargada; 940×650/1440×900, mezcla, transporte, zoom y error largo sin desbordamiento |
 | Preparador de audio y análisis sintáctico PowerShell | Aprobados; binarios cotejados con el manifiesto |
 | `build_windows.ps1 -SkipInstaller` | Flutter release y Rust release compilados; DLL y herramientas copiadas al paquete |
