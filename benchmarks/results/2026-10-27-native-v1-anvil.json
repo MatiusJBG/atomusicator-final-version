@@ -1,0 +1,83 @@
+{
+  "cache": "disabled",
+  "cases": [
+    {
+      "attribution": "Anvil Crypt Loop by Oğuzhan Girgin",
+      "case_id": "anvil-cc-by",
+      "decode_seconds": 0.4937731,
+      "frames": 682816,
+      "inference_seconds": 9.4486686,
+      "license": "CC BY 4.0",
+      "reference_metrics": {
+        "bass": {
+          "channels": [
+            {
+              "estimate_peak": 0.24679119884967804,
+              "estimate_rms": 0.06902779191338711,
+              "max_abs_error": 0.39505625516176224,
+              "reference_rms": 0.1656058646740019,
+              "rms_error": 0.11727193614846938,
+              "si_sdr": {
+                "db": 2.694991960267124,
+                "kind": "decibels"
+              }
+            },
+            {
+              "estimate_peak": 0.2496391385793686,
+              "estimate_rms": 0.07051221741262252,
+              "max_abs_error": 0.3922881931066513,
+              "reference_rms": 0.1656058646740019,
+              "rms_error": 0.11647302133755051,
+              "si_sdr": {
+                "db": 2.691541489011602,
+                "kind": "decibels"
+              }
+            }
+          ],
+          "frames": 682816,
+          "sample_rate_hz": 44100
+        },
+        "drums": {
+          "channels": [
+            {
+              "estimate_peak": 0.053885165601968765,
+              "estimate_rms": 0.000448644210883649,
+              "max_abs_error": 0.36210756859509274,
+              "reference_rms": 0.05424566695624933,
+              "rms_error": 0.05423466913850775,
+              "si_sdr": {
+                "db": -30.85399587267996,
+                "kind": "decibels"
+              }
+            },
+            {
+              "estimate_peak": 0.05432317033410072,
+              "estimate_rms": 0.00044863757806119873,
+              "max_abs_error": 0.36220713541842997,
+              "reference_rms": 0.05424566695624933,
+              "rms_error": 0.054233735439859536,
+              "si_sdr": {
+                "db": -30.24539746435056,
+                "kind": "decibels"
+              }
+            }
+          ],
+          "frames": 682816,
+          "sample_rate_hz": 44100
+        }
+      },
+      "sample_rate": 44100,
+      "source_sha256": "9ee71f091d063ac53d8ee1599599e35b7e5907b0afe46462de374f4e9dc05759"
+    }
+  ],
+  "model_hashes": {
+    "kuielab-mdxnet-bass-v1": "0c3e77b9963185b1ea6bb46a4b8924137d9370fc1ccdefec7b1b416ef550dcaa",
+    "kuielab-mdxnet-drums-v1": "40f586b7091934dd6f5563f0cba8f14bad57ce88440da1098bf388ea716c2901",
+    "uvr-mdxnet-kara-2-v1": "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4",
+    "uvr-mdxnet-main-v1": "8289784cda38543ff431add4070662813311a8cccfc0112ca82f76d9dba2b4ca"
+  },
+  "onnx_runtime": "ORT Build Info: git-branch=rel-1.20.0, git-commit-id=c4fb724, build type=Release, cmake cxx flags: /DWIN32 /D_WINDOWS /EHsc /Zc:__cplusplus /EHsc /wd26812 -DEIGEN_HAS_C99_MATH -DCPUINFO_SUPPORTED",
+  "profile": "native-v1",
+  "provider_effective": "not yet instrumented",
+  "schema_version": 1
+}

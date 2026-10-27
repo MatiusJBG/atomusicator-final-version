@@ -1,5 +1,6 @@
 //! Concrete adapters live here; domain policy remains in the inner crates.
 
+pub mod audio_evidence;
 pub mod audio_io;
 pub mod audio_tools;
 pub mod cache;
