@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -19,6 +19,36 @@ use cpal::{
 };
 
 const TRACK_COUNT: usize = 5;
+
+struct Transport {
+    playing: AtomicBool,
+    position: AtomicU64,
+    master: AtomicU32,
+    peak: AtomicU32,
+}
+struct MixerControls {
+    tracks: [TrackControl; TRACK_COUNT],
+    transport: Transport,
+}
+impl MixerControls {
+    fn new() -> Self {
+        Self {
+            tracks: std::array::from_fn(|_| TrackControl::new()),
+            transport: Transport {
+                playing: AtomicBool::new(true),
+                position: AtomicU64::new(0),
+                master: AtomicU32::new(1.0f32.to_bits()),
+                peak: AtomicU32::new(0),
+            },
+        }
+    }
+}
+impl std::ops::Deref for MixerControls {
+    type Target = [TrackControl; TRACK_COUNT];
+    fn deref(&self) -> &Self::Target {
+        &self.tracks
+    }
+}
 
 struct TrackControl {
     gain: AtomicU32,
@@ -53,7 +83,7 @@ struct PreparedSession {
 enum MixerCommand {
     Start {
         session: PlaybackSession,
-        controls: Arc<[TrackControl; TRACK_COUNT]>,
+        controls: Arc<MixerControls>,
         pitch_ratio: Arc<AtomicU32>,
         reply: SyncSender<Result<(), String>>,
     },
@@ -66,7 +96,7 @@ enum MixerCommand {
 /// itself remains `Send + Sync` through a message channel.
 pub struct CpalRealtimeMixer {
     session: Mutex<Option<PreparedSession>>,
-    controls: Arc<[TrackControl; TRACK_COUNT]>,
+    controls: Arc<MixerControls>,
     pitch_ratio: Arc<AtomicU32>,
     commands: Sender<MixerCommand>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -81,7 +111,7 @@ impl CpalRealtimeMixer {
             .map_err(|error| DomainError::DspFailure(error.to_string()))?;
         Ok(Self {
             session: Mutex::new(None),
-            controls: Arc::new(std::array::from_fn(|_| TrackControl::new())),
+            controls: Arc::new(MixerControls::new()),
             pitch_ratio: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             commands,
             worker: Mutex::new(Some(worker)),
@@ -105,14 +135,72 @@ impl CpalRealtimeMixer {
                 reply,
             })
             .map_err(|error| DomainError::DspFailure(error.to_string()))?;
-        response
+        let result = response
             .recv()
             .map_err(|error| DomainError::DspFailure(error.to_string()))?
-            .map_err(DomainError::DspFailure)
+            .map_err(DomainError::DspFailure);
+        if result.is_ok() {
+            self.controls
+                .transport
+                .playing
+                .store(true, Ordering::Release);
+        }
+        result
+    }
+
+    pub fn pause(&self) {
+        self.controls
+            .transport
+            .playing
+            .store(false, Ordering::Release);
+    }
+    pub fn position_seconds(&self) -> f64 {
+        f64::from_bits(self.controls.transport.position.load(Ordering::Acquire))
+    }
+    pub fn is_playing(&self) -> bool {
+        self.controls.transport.playing.load(Ordering::Acquire)
+    }
+    pub fn peak(&self) -> f32 {
+        f32::from_bits(self.controls.transport.peak.load(Ordering::Relaxed))
+    }
+    pub fn set_master(&self, gain: f32) -> Result<(), DomainError> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err(DomainError::DspFailure("invalid master gain".into()));
+        }
+        self.controls
+            .transport
+            .master
+            .store(gain.to_bits(), Ordering::Relaxed);
+        Ok(())
+    }
+    pub fn seek(&self, seconds: f64) -> Result<(), DomainError> {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Err(DomainError::DspFailure("invalid seek position".into()));
+        }
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| DomainError::DspFailure("session poisoned".into()))?;
+        let Some(PreparedSession {
+            playback: PlaybackSession::Memory(stems),
+        }) = session.as_ref()
+        else {
+            return Err(DomainError::DspFailure(
+                "seek requires a memory-backed session".into(),
+            ));
+        };
+        let duration =
+            stems[0].audio.frames() as f64 / f64::from(stems[0].audio.format().sample_rate_hz);
+        self.controls
+            .transport
+            .position
+            .store(seconds.min(duration).to_bits(), Ordering::Release);
+        Ok(())
     }
 
     /// Stops and releases the stream on its owning control thread.
     pub fn stop(&self) -> Result<(), DomainError> {
+        self.pause();
         let (reply, response) = mpsc::sync_channel(1);
         self.commands
             .send(MixerCommand::Stop(reply))
@@ -120,6 +208,7 @@ impl CpalRealtimeMixer {
         response
             .recv()
             .map_err(|error| DomainError::DspFailure(error.to_string()))?;
+        self.controls.transport.position.store(0, Ordering::Release);
         Ok(())
     }
 
@@ -185,7 +274,9 @@ impl RealtimePlaybackPort for CpalRealtimeMixer {
             }
         }
         let format = sorted[0].audio.format();
-        if let Some(stem) = sorted.iter().find(|stem| stem.audio.format() != format) {
+        if let Some(stem) = sorted.iter().find(|stem| {
+            stem.audio.format() != format || stem.audio.frames() != sorted[0].audio.frames()
+        }) {
             return Err(DomainError::StemFormatMismatch(stem.kind));
         }
         self.stop()?;
@@ -384,7 +475,7 @@ fn pop_stream_frame(
 
 fn build_stream(
     session: PlaybackSession,
-    controls: Arc<[TrackControl; TRACK_COUNT]>,
+    controls: Arc<MixerControls>,
     pitch_ratio: Arc<AtomicU32>,
 ) -> Result<ActiveStream, String> {
     let mut producers = Vec::new();
@@ -490,7 +581,7 @@ fn build_typed_stream<T>(
     output_channels: usize,
     output_rate: u32,
     mut tracks: Vec<TrackReader>,
-    controls: Arc<[TrackControl; TRACK_COUNT]>,
+    controls: Arc<MixerControls>,
     pitch_ratio: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, String>
 where
@@ -522,11 +613,24 @@ fn mix_output<T>(
     output_channels: usize,
     output_rate: u32,
     tracks: &mut [TrackReader],
-    controls: &[TrackControl; TRACK_COUNT],
+    controls: &MixerControls,
     pitch_ratio: &AtomicU32,
 ) where
     T: Sample + FromSample<f32>,
 {
+    if !controls.transport.playing.load(Ordering::Acquire) {
+        output.fill(T::from_sample(0.0));
+        controls.transport.peak.store(0, Ordering::Relaxed);
+        return;
+    }
+    let initial_position = controls.transport.position.load(Ordering::Acquire);
+    let initial_seconds = f64::from_bits(initial_position);
+    for track in tracks.iter_mut() {
+        if let TrackReader::Memory { stems, cursor, .. } = track {
+            *cursor = initial_seconds * f64::from(stems[0].audio.format().sample_rate_hz);
+        }
+    }
+    let mut peak = 0.0f32;
     let input_rate = match tracks.first() {
         Some(TrackReader::Memory { stems, .. }) => stems[0].audio.format().sample_rate_hz,
         Some(TrackReader::Stream { sample_rate_hz, .. }) => *sample_rate_hz,
@@ -558,6 +662,11 @@ fn mix_output<T>(
             left += sample_left * gain * pan_left;
             right += sample_right * gain * pan_right;
         }
+        let master = f32::from_bits(controls.transport.master.load(Ordering::Relaxed));
+        // Apply master before clipping, retaining headroom when summing stems.
+        left *= master;
+        right *= master;
+        peak = peak.max(left.abs()).max(right.abs());
         if output_channels == 1 {
             frame[0] =
                 T::from_sample(((left + right) * std::f32::consts::FRAC_1_SQRT_2).clamp(-1.0, 1.0));
@@ -567,6 +676,23 @@ fn mix_output<T>(
         }
     }
     output[complete_sample_count..].fill(T::from_sample(0.0));
+    controls
+        .transport
+        .peak
+        .store(peak.to_bits(), Ordering::Relaxed);
+    if let Some(TrackReader::Memory { stems, cursor, .. }) = tracks.first() {
+        let audio = &stems[0].audio;
+        let seconds = cursor.min(audio.frames() as f64) / f64::from(audio.format().sample_rate_hz);
+        let _ = controls.transport.position.compare_exchange(
+            initial_position,
+            seconds.to_bits(),
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
+        if *cursor >= audio.frames() as f64 {
+            controls.transport.playing.store(false, Ordering::Release);
+        }
+    }
 }
 
 fn track_index(kind: StemType) -> Option<usize> {
@@ -605,7 +731,7 @@ mod tests {
     #[test]
     fn callback_mixes_tracks_applies_pan_mute_and_clips_output() {
         let mut tracks = readers(stems(0.5));
-        let controls = std::array::from_fn(|_| TrackControl::new());
+        let controls = MixerControls::new();
         for kind in StemType::ALL.into_iter().skip(1) {
             let control = &controls[track_index(kind).unwrap()];
             control.mute.store(true, Ordering::Relaxed);
@@ -624,7 +750,7 @@ mod tests {
     #[test]
     fn callback_soloes_tracks_and_limiter_clamps_summed_signal() {
         let mut tracks = readers(stems(1.0));
-        let controls = std::array::from_fn(|_| TrackControl::new());
+        let controls = MixerControls::new();
         let bass = &controls[track_index(StemType::Bass).unwrap()];
         bass.solo.store(true, Ordering::Relaxed);
         bass.gain.store(2.0f32.to_bits(), Ordering::Relaxed);
@@ -662,5 +788,34 @@ mod tests {
         assert!(mixer.set_pitch_semitones(2.0, false).is_ok());
         assert!(mixer.set_pitch_semitones(2.0, true).is_err());
         assert!(mixer.set_pitch_semitones(13.0, false).is_err());
+    }
+
+    #[test]
+    fn loading_rejects_tracks_with_different_lengths() {
+        let mixer = CpalRealtimeMixer::new().unwrap();
+        let mut tracks = stems(0.1);
+        tracks[1].audio = AudioBufferF32::new(tracks[1].audio.format(), vec![0.1; 6]).unwrap();
+        assert!(mixer.load_session(tracks).is_err());
+    }
+
+    #[test]
+    fn transport_pauses_seeks_and_applies_master_gain_to_real_samples() {
+        let mut tracks = readers(stems(0.4));
+        let controls = MixerControls::new();
+        controls.transport.playing.store(false, Ordering::Relaxed);
+        let pitch = AtomicU32::new(1.0f32.to_bits());
+        let mut output = [1.0f32; 2];
+        mix_output(&mut output, 2, 48000, &mut tracks, &controls, &pitch);
+        assert_eq!(output, [0.0; 2]);
+        assert_eq!(controls.transport.position.load(Ordering::Relaxed), 0);
+        controls
+            .transport
+            .master
+            .store(0.1f32.to_bits(), Ordering::Relaxed);
+        controls.transport.playing.store(true, Ordering::Relaxed);
+        mix_output(&mut output, 2, 48000, &mut tracks, &controls, &pitch);
+        assert!((output[0] - 0.14142136).abs() < 1e-6);
+        assert!(f64::from_bits(controls.transport.position.load(Ordering::Relaxed)) > 0.0);
+        assert!(f32::from_bits(controls.transport.peak.load(Ordering::Relaxed)) > 0.0);
     }
 }
