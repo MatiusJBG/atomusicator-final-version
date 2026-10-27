@@ -1,0 +1,101 @@
+{
+  "manifest_version": 1,
+  "license_basis": [
+    {
+      "url": "https://github.com/Anjok07/ultimatevocalremovergui#license",
+      "statement": "UVR solicita que las aplicaciones de terceros que integren sus modelos respeten la licencia MIT y atribuyan a UVR y sus desarrolladores. El README de UVR indica que sus desarrolladores principales entrenaron los modelos que provee, salvo los modelos Demucs v3/v4 de cuatro stems.",
+      "attribution": "Ultimate Vocal Remover (UVR), Anjok07 y aufr33; código y modelos UVR citados bajo MIT."
+    },
+    {
+      "url": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "statement": "El catálogo oficial de descargas identifica UVR_MDXNET_Main.onnx y UVR_MDXNET_KARA_2.onnx como modelos MDX-Net disponibles de UVR."
+    },
+    {
+      "url": "https://github.com/kuielab/mdx-net/blob/main/LICENSE",
+      "statement": "El proyecto original MDX-Net publica una licencia MIT. UVR declara que sus modelos incluidos fueron entrenados por sus desarrolladores principales salvo Demucs de cuatro stems, y solicita a aplicaciones que integren sus modelos que respeten MIT y atribuyan a UVR y sus desarrolladores. Los dos modelos Kuielab usados aquí aparecen en su catálogo oficial de MDX."
+    },
+    {
+      "url": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "statement": "El catálogo de UVR ofrece kuielab_a_drums.onnx y kuielab_a_bass.onnx y enlaza los pesos públicos en el repositorio de modelos de TRvlvr."
+    }
+  ],
+  "migration_pipeline": {
+    "profile_id": "atomusicator-three-pass-v1",
+    "inference_steps": [
+      {
+        "stage": "vocal_bus",
+        "profile_ids": ["uvr-mdxnet-main-v1"]
+      },
+      {
+        "stage": "lead_and_backing_vocals",
+        "profile_ids": ["uvr-mdxnet-kara-2-v1"]
+      },
+      {
+        "stage": "rhythm_section",
+        "profile_ids": ["kuielab-mdxnet-drums-v1", "kuielab-mdxnet-bass-v1"],
+        "note": "Legacy-compatible fallback uses two verified model profiles behind one application port call. The planned single HTDemucs or SCNet ONNX profile remains unconfigured until its exact weights, license, URL, and SHA-256 are verified."
+      }
+    ],
+    "residuals": ["backing_vocals", "instrumental"]
+  },
+  "models": [
+    {
+      "profile_id": "uvr-mdxnet-main-v1",
+      "stage": "voice_and_instrumental",
+      "filename": "UVR_MDXNET_Main.onnx",
+      "sha256": "8289784cda38543ff431add4070662813311a8cccfc0112ca82f76d9dba2b4ca",
+      "download_url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_Main.onnx",
+      "license": "MIT",
+      "license_status": "reviewed",
+      "license_source": "https://github.com/Anjok07/ultimatevocalremovergui#license",
+      "model_catalog_source": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "sha256_source": "https://huggingface.co/seanghay/uvr_models/blob/main/UVR_MDXNET_Main.onnx",
+      "attribution": "Ultimate Vocal Remover (UVR), Anjok07 y aufr33. Respetar los términos MIT y mostrar atribución.",
+      "notes": "Hash reportado para los bytes del modelo; se verifica contra el archivo obtenido desde la URL oficial antes de inferencia."
+    },
+    {
+      "profile_id": "uvr-mdxnet-kara-2-v1",
+      "stage": "lead_and_backing",
+      "filename": "UVR_MDXNET_KARA_2.onnx",
+      "sha256": "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4",
+      "download_url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_KARA_2.onnx",
+      "license": "MIT",
+      "license_status": "reviewed",
+      "license_source": "https://github.com/Anjok07/ultimatevocalremovergui#license",
+      "model_catalog_source": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "sha256_source": "https://huggingface.co/seanghay/uvr_models/blob/main/UVR_MDXNET_KARA_2.onnx",
+      "attribution": "Ultimate Vocal Remover (UVR), Anjok07 y aufr33. Respetar los términos MIT y mostrar atribución.",
+      "notes": "Hash reportado para los bytes del modelo; se verifica contra el archivo obtenido desde la URL oficial antes de inferencia."
+    },
+    {
+      "profile_id": "kuielab-mdxnet-drums-v1",
+      "stage": "drums_and_remainder",
+      "filename": "kuielab_a_drums.onnx",
+      "sha256": "40f586b7091934dd6f5563f0cba8f14bad57ce88440da1098bf388ea716c2901",
+      "download_url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/kuielab_a_drums.onnx",
+      "license": "MIT",
+      "license_status": "reviewed",
+      "license_source": "https://github.com/Anjok07/ultimatevocalremovergui#license",
+      "upstream_code_license": "https://github.com/kuielab/mdx-net/blob/main/LICENSE",
+      "model_catalog_source": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "sha256_source": "SHA-256 calculado localmente sobre el archivo descargado desde la URL oficial; el runtime lo vuelve a comprobar.",
+      "attribution": "Ultimate Vocal Remover (UVR), Anjok07 y aufr33; Kuielab/KINoAI y Woosung Choi por MDX-Net. Respetar MIT y mostrar atribución.",
+      "notes": "UVR identifica el archivo como kuielab_a_drums en su catálogo público y su README pide atribución MIT para apps terceras que integran sus modelos. La descarga local se verifica por hash antes de inferencia."
+    },
+    {
+      "profile_id": "kuielab-mdxnet-bass-v1",
+      "stage": "bass_and_instrumental",
+      "filename": "kuielab_a_bass.onnx",
+      "sha256": "0c3e77b9963185b1ea6bb46a4b8924137d9370fc1ccdefec7b1b416ef550dcaa",
+      "download_url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/kuielab_a_bass.onnx",
+      "license": "MIT",
+      "license_status": "reviewed",
+      "license_source": "https://github.com/Anjok07/ultimatevocalremovergui#license",
+      "upstream_code_license": "https://github.com/kuielab/mdx-net/blob/main/LICENSE",
+      "model_catalog_source": "https://github.com/Anjok07/ultimatevocalremovergui/blob/master/gui_data/model_manual_download.json",
+      "sha256_source": "SHA-256 calculado localmente sobre el archivo descargado desde la URL oficial; el runtime lo vuelve a comprobar.",
+      "attribution": "Ultimate Vocal Remover (UVR), Anjok07 y aufr33; Kuielab/KINoAI y Woosung Choi por MDX-Net. Respetar MIT y mostrar atribución.",
+      "notes": "UVR identifica el archivo como kuielab_a_bass en su catálogo público y su README pide atribución MIT para apps terceras que integran sus modelos. La descarga local se verifica por hash antes de inferencia."
+    }
+  ]
+}
