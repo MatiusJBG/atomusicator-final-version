@@ -6,7 +6,7 @@ use atomusicator_application::{
 use atomusicator_domain::StemType;
 use atomusicator_infrastructure::{
     audio_evidence::compare_audio, audio_io::wav_codec::write_wav_f32, audio_tools::AudioTools,
-    mdx::MdxInference, models::manifest_manager::ManifestModelManager,
+    mdx::MdxInference, models::manifest_manager::ManifestModelManager, onnx::OrtSessionPool,
     storage::paths::WorkspacePathPolicy, use_case_adapters::StftSpectralBleedGate,
 };
 use serde::Deserialize;
@@ -14,6 +14,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -85,8 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|(id, (_, hash))| (id.clone(), hash.clone()))
         .collect::<BTreeMap<_, _>>();
+    let pool = Arc::new(OrtSessionPool::new(2)?);
     let pipeline = SeparateFiveStemsUseCase::new(
-        MdxInference::new(models, None)?,
+        MdxInference::with_session_pool(models, None, Arc::clone(&pool))?,
         Progress,
         StftSpectralBleedGate::new(2048, 0.05, 0.25)?,
     );
@@ -130,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         reports.push(serde_json::json!({"case_id":case.id,"source_sha256":actual,"license":case.license,"attribution":case.attribution,"frames":audio.frames(),"sample_rate":audio.format().sample_rate_hz,"decode_seconds":decode_seconds,"inference_seconds":inference_seconds,"reference_metrics":comparisons}));
     }
-    let report = serde_json::json!({"schema_version":1,"profile":"native-v1","cache":"disabled","onnx_runtime":ort::info(),"provider_effective":"not yet instrumented","model_hashes":model_hashes,"cases":reports});
+    let report = serde_json::json!({"schema_version":1,"profile":"native-v1","cache":"disabled","onnx_runtime":ort::info(),"provider_effective":"CPUExecutionProvider","intra_threads":pool.intra_threads(),"inter_threads":1,"precision":"float32","model_hashes":model_hashes,"cases":reports});
     fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report)?,

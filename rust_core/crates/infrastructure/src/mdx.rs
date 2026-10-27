@@ -166,18 +166,35 @@ pub struct MdxInference {
     runner: OnnxSessionRunner,
     models: BTreeMap<String, (PathBuf, String)>,
     cache: Option<ContentAddressedCache>,
+    runtime_signature: String,
 }
 impl MdxInference {
     pub fn new(
         models: BTreeMap<String, (PathBuf, String)>,
         cache: Option<ContentAddressedCache>,
     ) -> Result<Self, DomainError> {
-        Ok(Self {
-            runner: OnnxSessionRunner::new(Arc::new(
-                OrtSessionPool::new(2).map_err(|e| fail(&e.to_string()))?,
-            )),
+        Self::with_session_pool(
             models,
             cache,
+            Arc::new(OrtSessionPool::new(2).map_err(|e| fail(&e.to_string()))?),
+        )
+    }
+    pub fn with_session_pool(
+        models: BTreeMap<String, (PathBuf, String)>,
+        cache: Option<ContentAddressedCache>,
+        pool: Arc<OrtSessionPool>,
+    ) -> Result<Self, DomainError> {
+        let runtime_signature = format!(
+            "{}-{:?}-intra{}-inter1-sequential-fp32",
+            ort::info(),
+            pool.provider_order(),
+            pool.intra_threads()
+        );
+        Ok(Self {
+            runner: OnnxSessionRunner::new(pool),
+            models,
+            cache,
+            runtime_signature,
         })
     }
     fn infer(
@@ -211,8 +228,8 @@ impl MdxInference {
             stft_n_fft: c.n_fft,
             stft_hop_length: c.hop,
             runtime_signature: format!(
-                "native-mdx-v1-ort-rc9-overlap035-dimt{}-comp{}-inverse{}",
-                c.dim_t, c.compensate, c.invert
+                "native-mdx-v2-overlap035-dimt{}-comp{}-inverse{}-{}",
+                c.dim_t, c.compensate, c.invert, self.runtime_signature
             ),
         };
         if let Some(cache) = &self.cache

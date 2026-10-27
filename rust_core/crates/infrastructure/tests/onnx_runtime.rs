@@ -30,6 +30,13 @@ fn provider_pool_rejects_zero_capacity() {
 }
 
 #[test]
+fn default_runtime_requires_cpu_until_accelerators_are_qualified() {
+    let pool = OrtSessionPool::new(2).unwrap();
+    assert_eq!(pool.provider_order(), &[ExecutionProviderKind::Cpu]);
+    assert!((1..=6).contains(&pool.intra_threads()));
+}
+
+#[test]
 fn runner_rejects_tensor_shape_mismatch_before_loading_a_model() {
     let pool = std::sync::Arc::new(OrtSessionPool::new(1).unwrap());
     let runner = OnnxSessionRunner::new(pool);

@@ -12,6 +12,7 @@ use atomusicator_infrastructure::{
     cache::ContentAddressedCache,
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
+    onnx::OrtSessionPool,
     session_workspace::LocalSessionWorkspace,
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
@@ -29,6 +30,8 @@ pub struct Studio {
     job: Mutex<Option<Job>>,
     loaded: Mutex<Option<LoadedSession>>,
     projects: Mutex<PathBuf>,
+    runtime: tokio::runtime::Runtime,
+    sessions: Arc<OrtSessionPool>,
 }
 struct Job {
     dto: UiJobDto,
@@ -56,6 +59,12 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                 job: Mutex::new(None),
                 loaded: Mutex::new(None),
                 projects: Mutex::new(projects),
+                runtime: tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .map_err(err)?,
+                sessions: Arc::new(OrtSessionPool::new(2).map_err(err)?),
             }))
         })
         .clone()
@@ -188,7 +197,7 @@ impl Studio {
         self.start("separation",move|backend,id,cancel| {
             let policy=WorkspacePathPolicy::system_default().map_err(err)?;
             let manager=ManifestModelManager::from_embedded_manifest(policy.clone()).map_err(err)?;
-            let runtime=tokio::runtime::Runtime::new().map_err(err)?;
+            let runtime=&backend.runtime;
             let mut models=BTreeMap::new();let mut usages=Vec::new();
             for (index,profile) in manager.manifest().models.iter().enumerate(){
                 check_cancel(cancel)?;
@@ -205,7 +214,7 @@ impl Studio {
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
             let audio=AudioTools::discover().map_err(err)?.decode_for_separation(&source,cancel).map_err(err)?;
             let cache=ContentAddressedCache::new(policy.stage_cache_dir(),1,4*1024*1024*1024).ok();
-            let inference=MdxInference::new(models,cache).map_err(err)?;
+            let inference=MdxInference::with_session_pool(models,cache,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress=JobProgress{studio:Arc::clone(backend),id:id.into()};
             let pipeline=SeparateFiveStemsUseCase::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?);
             let result=pipeline.execute(&audio,cancel).map_err(err)?;
@@ -216,7 +225,7 @@ impl Studio {
             let published=workspace.persist_separation_result(&asset,&result).map_err(err)?;
             let mut metadata=workspace.read_metadata(&published).map_err(err)?;
             let record=metadata.additional.get_mut("separation").and_then(|r|r.as_object_mut()).ok_or("separation metadata missing")?;
-            record.insert("engine".into(),serde_json::json!({"name":"Atomusicator native MDX","models":usages,"sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65}));
+            record.insert("engine".into(),serde_json::json!({"name":"Atomusicator native MDX","models":usages,"sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,"compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),"inter_threads":1,"execution":"sequential","precision":"float32"}}));
             workspace.record_separation(&published,serde_json::Value::Object(record.clone())).map_err(err)?;
             let session=backend.load_directory(&published.directory)?;
             Ok(Some(session))
@@ -496,6 +505,12 @@ mod tests {
             job: Mutex::new(None),
             loaded: Mutex::new(None),
             projects: Mutex::new(root.to_path_buf()),
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap(),
+            sessions: Arc::new(OrtSessionPool::new(2).unwrap()),
         })
     }
     fn wait(backend: &Studio, id: &str) -> UiJobDto {
