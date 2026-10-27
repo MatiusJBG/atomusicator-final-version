@@ -1,0 +1,338 @@
+import 'dart:async';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../src/rust_bridge/api.dart' as native;
+import 'native_engine_provider.dart';
+
+abstract class StudioGateway {
+  Future<String> separate(String source, bool download);
+  Future<native.UiJobDto> job(String id);
+  Future<void> cancel(String id);
+  Future<native.UiSessionDto> open(String directory);
+  Future<String> pitch(int semitones, bool formants);
+  Future<String> export(
+    String destination,
+    List<String> stems,
+    String format,
+    int rate,
+    int channels,
+    int bits,
+    bool normalize,
+  );
+  Future<native.UiPlaybackDto> playback();
+  Future<void> play();
+  Future<void> pause();
+  Future<void> stop();
+  Future<void> seek(double seconds);
+  Future<void> master(double gain);
+  Future<void> track(String stem, MixTrackState state);
+}
+
+class NativeStudioGateway implements StudioGateway {
+  @override
+  Future<String> separate(String source, bool download) =>
+      native.startSeparation(sourcePath: source, allowModelDownload: download);
+  @override
+  Future<native.UiJobDto> job(String id) => native.jobStatus(jobId: id);
+  @override
+  Future<void> cancel(String id) => native.cancelJob(jobId: id);
+  @override
+  Future<native.UiSessionDto> open(String directory) =>
+      native.openAudioSession(directory: directory);
+  @override
+  Future<String> pitch(int semitones, bool formants) =>
+      native.startPitch(semitones: semitones, preserveFormants: formants);
+  @override
+  Future<String> export(
+    String destination,
+    List<String> stems,
+    String format,
+    int rate,
+    int channels,
+    int bits,
+    bool normalize,
+  ) => native.startExport(
+    destination: destination,
+    selectedStems: stems,
+    format: format,
+    sampleRate: rate,
+    channels: channels,
+    bitDepth: bits,
+    normalize: normalize,
+  );
+  @override
+  Future<native.UiPlaybackDto> playback() => native.playbackStatus();
+  @override
+  Future<void> play() => native.play();
+  @override
+  Future<void> pause() => native.pause();
+  @override
+  Future<void> stop() => native.stop();
+  @override
+  Future<void> seek(double seconds) => native.seek(positionSeconds: seconds);
+  @override
+  Future<void> master(double gain) => native.setMaster(gain: gain);
+  @override
+  Future<void> track(String stem, MixTrackState state) => native.setTrack(
+    stemType: stem,
+    gainDb: state.gainDb,
+    pan: state.pan,
+    mute: state.mute,
+    solo: state.solo,
+  );
+}
+
+class MixTrackState {
+  const MixTrackState({
+    this.gainDb = 0,
+    this.pan = 0,
+    this.mute = false,
+    this.solo = false,
+  });
+  final double gainDb, pan;
+  final bool mute, solo;
+  MixTrackState copyWith({
+    double? gainDb,
+    double? pan,
+    bool? mute,
+    bool? solo,
+  }) => MixTrackState(
+    gainDb: gainDb ?? this.gainDb,
+    pan: pan ?? this.pan,
+    mute: mute ?? this.mute,
+    solo: solo ?? this.solo,
+  );
+}
+
+class StudioState {
+  const StudioState({
+    this.session,
+    this.job,
+    this.busy = false,
+    this.error,
+    this.playing = false,
+    this.position = 0,
+    this.peak = 0,
+    this.master = 1,
+    this.tracks = const {},
+    this.exportDirectory,
+  });
+  final native.UiSessionDto? session;
+  final native.UiJobDto? job;
+  final bool busy, playing;
+  final String? error, exportDirectory;
+  final double position, peak, master;
+  final Map<String, MixTrackState> tracks;
+  double get duration => session?.tracks.firstOrNull?.durationSeconds ?? 0;
+  StudioState copyWith({
+    native.UiSessionDto? session,
+    native.UiJobDto? job,
+    bool? busy,
+    String? error,
+    bool clearError = false,
+    bool? playing,
+    double? position,
+    double? peak,
+    double? master,
+    Map<String, MixTrackState>? tracks,
+    String? exportDirectory,
+  }) => StudioState(
+    session: session ?? this.session,
+    job: job ?? this.job,
+    busy: busy ?? this.busy,
+    error: clearError ? null : error ?? this.error,
+    playing: playing ?? this.playing,
+    position: position ?? this.position,
+    peak: peak ?? this.peak,
+    master: master ?? this.master,
+    tracks: tracks ?? this.tracks,
+    exportDirectory: exportDirectory ?? this.exportDirectory,
+  );
+}
+
+final studioGatewayProvider = Provider<StudioGateway>(
+  (ref) => NativeStudioGateway(),
+);
+final studioProvider = NotifierProvider<StudioController, StudioState>(
+  StudioController.new,
+);
+
+class StudioController extends Notifier<StudioState> {
+  bool _polling = false, _disposed = false;
+  int _commands = 0;
+  StudioGateway get _gateway => ref.read(studioGatewayProvider);
+  @override
+  StudioState build() {
+    final timer = Timer.periodic(
+      const Duration(milliseconds: 180),
+      (_) => refresh(),
+    );
+    ref.onDispose(() {
+      _disposed = true;
+      timer.cancel();
+    });
+    return const StudioState();
+  }
+
+  Future<void> _guard(Future<void> Function() action) async {
+    try {
+      await ref.read(nativeEngineStatusProvider.future);
+      await action();
+    } catch (error) {
+      if (!_disposed) {
+        state = state.copyWith(error: error.toString(), busy: false);
+      }
+    }
+  }
+
+  Future<void> _start(Future<String> Function() action) async {
+    if (state.busy) return;
+    state = state.copyWith(busy: true, clearError: true, playing: false);
+    await _guard(() async {
+      final id = await action();
+      if (!_disposed) {
+        state = state.copyWith(
+          job: native.UiJobDto(
+            id: id,
+            status: 'running',
+            progress: 0,
+            message: 'Starting…',
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> separate(String source, {bool allowDownload = false}) =>
+      _start(() => _gateway.separate(source, allowDownload));
+  Future<void> applyPitch(int semitones, bool formants) =>
+      _start(() => _gateway.pitch(semitones, formants));
+  Future<void> export(
+    String destination,
+    List<String> stems,
+    String format,
+    int rate,
+    int channels,
+    int bits,
+    bool normalize,
+  ) => _start(
+    () => _gateway.export(
+      destination,
+      stems,
+      format,
+      rate,
+      channels,
+      bits,
+      normalize,
+    ),
+  );
+  Future<void> cancel() => _guard(() async {
+    if (state.job != null) await _gateway.cancel(state.job!.id);
+  });
+  Future<void> open(String directory) async {
+    if (state.busy) return;
+    state = state.copyWith(busy: true, clearError: true);
+    await _guard(() async {
+      final session = await _gateway.open(directory);
+      await _accept(session);
+      if (!_disposed) state = state.copyWith(busy: false);
+    });
+  }
+
+  Future<void> _accept(native.UiSessionDto session) async {
+    final same = state.session?.id == session.id;
+    final tracks = {
+      for (final track in session.tracks)
+        track.stemType:
+            same
+                ? state.tracks[track.stemType] ?? const MixTrackState()
+                : const MixTrackState(),
+    };
+    for (final entry in tracks.entries) {
+      await _gateway.track(entry.key, entry.value);
+    }
+    if (!_disposed) {
+      state = state.copyWith(
+        session: session,
+        tracks: Map.unmodifiable(tracks),
+        playing: false,
+        position: same ? state.position : 0,
+      );
+    }
+  }
+
+  Future<void> refresh() async {
+    if (_disposed ||
+        _polling ||
+        _commands > 0 ||
+        (state.session == null && state.job == null)) {
+      return;
+    }
+    _polling = true;
+    try {
+      if (state.busy && state.job?.status == 'running') {
+        final job = await _gateway.job(state.job!.id);
+        if (_disposed) return;
+        if (job.status == 'completed' && job.session != null) {
+          await _accept(job.session!);
+        }
+        if (_disposed) return;
+        state = state.copyWith(
+          job: job,
+          busy: job.status == 'running',
+          error: job.status == 'failed' ? job.message : null,
+          exportDirectory: job.outputDirectory,
+        );
+      }
+      if (state.session != null && !state.busy) {
+        final status = await _gateway.playback();
+        if (!_disposed) {
+          state = state.copyWith(
+            playing: status.playing,
+            position: status.positionSeconds,
+            peak: status.peak,
+          );
+        }
+      }
+    } catch (error) {
+      if (!_disposed) {
+        state = state.copyWith(error: error.toString(), busy: false);
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  Future<void> transport(String action) => _guard(() async {
+    if (state.busy || state.session == null) return;
+    _commands++;
+    try {
+      if (action == 'play') {
+        if (state.position >= state.duration) await _gateway.seek(0);
+        await _gateway.play();
+      }
+      if (action == 'pause') await _gateway.pause();
+      if (action == 'stop') await _gateway.stop();
+    } finally {
+      _commands--;
+    }
+    await refresh();
+  });
+  Future<void> seek(double seconds) => _guard(() async {
+    if (!state.busy) {
+      await _gateway.seek(seconds);
+      if (!_disposed) state = state.copyWith(position: seconds);
+    }
+  });
+  Future<void> setMaster(double gain) => _guard(() async {
+    await _gateway.master(gain);
+    if (!_disposed) state = state.copyWith(master: gain);
+  });
+  Future<void> setTrack(String stem, MixTrackState track) => _guard(() async {
+    await _gateway.track(stem, track);
+    if (!_disposed) {
+      state = state.copyWith(
+        tracks: Map.unmodifiable({...state.tracks, stem: track}),
+      );
+    }
+  });
+}
