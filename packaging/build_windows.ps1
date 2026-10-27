@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipInstaller
+    [switch]$SkipInstaller,
+    [string]$FfmpegRuntimeDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,11 +12,18 @@ $rustReleaseDirectory = $null
 $installerDefinition = Join-Path $PSScriptRoot 'Atomusicator.iss'
 $installerOutput = Join-Path $PSScriptRoot 'dist'
 
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    if (Test-Path -LiteralPath (Join-Path $cargoBin 'cargo.exe')) { $env:PATH = "$cargoBin;$env:PATH" }
+}
+
 foreach ($tool in @('flutter', 'cargo')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         throw "Required command '$tool' was not found on PATH."
     }
 }
+
+& (Join-Path $PSScriptRoot 'prepare_audio_tools.ps1') -SourceDirectory $FfmpegRuntimeDirectory
 
 Push-Location $repoRoot
 try {
@@ -47,6 +55,9 @@ if (-not (Test-Path -LiteralPath $bridgeLibrary -PathType Leaf)) {
     throw "Rust FFI library was not found: $bridgeLibrary"
 }
 Copy-Item -LiteralPath $bridgeLibrary -Destination $releaseDirectory -Force
+$audioTools = Join-Path $releaseDirectory 'audio-tools'
+New-Item -ItemType Directory -Path $audioTools -Force | Out-Null
+Copy-Item -Path (Join-Path $repoRoot 'build\ffmpeg-runtime\*') -Destination $audioTools -Recurse -Force
 
 # ONNX Runtime and its optional execution-provider DLLs are emitted beside the
 # Rust cdylib by ort's copy-dylibs feature. Copy only those known runtime files.
