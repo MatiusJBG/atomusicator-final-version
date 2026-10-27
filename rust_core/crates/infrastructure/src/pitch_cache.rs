@@ -2,6 +2,7 @@
 use crate::{
     audio_io::wav_codec::wav_metadata,
     audio_tools::{TemporaryDirectory, unique_id},
+    storage::checksum::file_hash,
 };
 use atomusicator_application::CancellationToken;
 use atomusicator_domain::{DomainError, PitchShiftSpec, StemType};
@@ -10,24 +11,9 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
-    io::Read,
     path::{Path, PathBuf},
 };
 
-pub(crate) fn file_hash(path: &Path, cancel: &CancellationToken) -> Result<String, DomainError> {
-    let mut file = fs::File::open(path).map_err(failure)?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        check(cancel)?;
-        let count = file.read(&mut buffer).map_err(failure)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hash.finalize()))
-}
 #[derive(Serialize, Deserialize)]
 struct BatchManifest {
     schema_version: u8,

@@ -118,7 +118,7 @@ impl AudioTools {
         };
         Ok(format!(
             "rubberband-tempo1-pitch-v1-ffmpeg-sha256-{}",
-            crate::pitch_cache::file_hash(&executable, cancel)?
+            crate::storage::checksum::file_hash(&executable, cancel)?
         ))
     }
     pub fn decode_for_separation(
