@@ -1,4 +1,5 @@
 use atomusicator_domain::{AudioBufferF32, AudioFormat};
+use atomusicator_infrastructure::audio_evidence::signal_statistics;
 use atomusicator_infrastructure::audio_evidence::{Score, compare_audio};
 
 fn audio(values: &[f32]) -> AudioBufferF32 {
@@ -33,6 +34,17 @@ fn a_silent_or_dc_estimate_is_never_a_perfect_separation() {
         assert!(report.channels[0].rms_error > 0.0);
     }
 }
+
+#[test]
+fn an_orthogonal_estimate_has_an_explicit_zero_projection_score() {
+    let report = compare_audio(
+        &audio(&[1.0, -1.0, 1.0, -1.0]),
+        &audio(&[1.0, 1.0, -1.0, -1.0]),
+    )
+    .unwrap();
+    assert_eq!(report.channels[0].si_sdr, Score::NoTargetProjection);
+    assert!(!serde_json::to_string(&report).unwrap().contains("null"));
+}
 #[test]
 fn comparisons_reject_misalignment_and_measure_channels_independently() {
     assert!(compare_audio(&audio(&[0.0; 2]), &audio(&[0.0; 3])).is_err());
@@ -42,4 +54,20 @@ fn comparisons_reject_misalignment_and_measure_channels_independently() {
     let report = compare_audio(&left, &right).unwrap();
     assert_eq!(report.channels[0].max_abs_error, 0.0);
     assert_eq!(report.channels[1].si_sdr, Score::UndefinedReference);
+}
+
+#[test]
+fn signal_statistics_separate_channel_levels_from_float_headroom() {
+    let buffer = AudioBufferF32::new(
+        AudioFormat::new(44100, 2).unwrap(),
+        vec![1.5, 0.0, -1.5, 0.0],
+    )
+    .unwrap();
+    let stats = signal_statistics(&buffer).unwrap();
+    assert_eq!(stats[0].peak, 1.5);
+    assert_eq!(stats[0].above_full_scale_samples, 2);
+    assert_eq!(stats[0].rms, 1.5);
+    assert_eq!(stats[0].max_adjacent_step, 3.0);
+    assert_eq!(stats[1].rms, 0.0);
+    assert_eq!(stats[1].above_full_scale_samples, 0);
 }

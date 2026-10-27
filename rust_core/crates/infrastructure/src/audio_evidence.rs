@@ -2,11 +2,56 @@
 use atomusicator_domain::{AudioBufferF32, DomainError};
 use serde::Serialize;
 
+#[derive(Debug, Serialize)]
+pub struct SignalStatistics {
+    pub rms: f64,
+    pub peak: f32,
+    pub dc_offset: f64,
+    /// Float WAVs retain headroom; this counts values, not proven hard clipping.
+    pub above_full_scale_samples: u64,
+    pub max_adjacent_step: f64,
+}
+pub fn signal_statistics(audio: &AudioBufferF32) -> Result<Vec<SignalStatistics>, DomainError> {
+    if audio.frames() == 0 {
+        return Err(DomainError::AudioAlignmentMismatch);
+    }
+    let channels = usize::from(audio.format().channels);
+    Ok((0..channels)
+        .map(|channel| {
+            let mut sum = 0.0;
+            let mut energy = 0.0;
+            let mut peak = 0.0f32;
+            let mut above = 0;
+            let mut previous: Option<f64> = None;
+            let mut max_step = 0.0f64;
+            for sample in audio.samples().iter().skip(channel).step_by(channels) {
+                let value = f64::from(*sample);
+                sum += value;
+                energy += value * value;
+                peak = peak.max(sample.abs());
+                above += u64::from(sample.abs() > 1.0);
+                if let Some(previous) = previous {
+                    max_step = max_step.max((value - previous).abs());
+                }
+                previous = Some(value);
+            }
+            SignalStatistics {
+                rms: (energy / audio.frames() as f64).sqrt(),
+                peak,
+                dc_offset: sum / audio.frames() as f64,
+                above_full_scale_samples: above,
+                max_adjacent_step: max_step,
+            }
+        })
+        .collect())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "db", rename_all = "snake_case")]
 pub enum Score {
     UndefinedReference,
     UndefinedEstimate,
+    NoTargetProjection,
     Perfect,
     Decibels(f64),
 }
@@ -82,6 +127,8 @@ pub fn compare_audio(
                 .sum::<f64>();
             if residual <= f64::MIN_POSITIVE && target_energy <= f64::MIN_POSITIVE {
                 Score::UndefinedEstimate
+            } else if target_energy <= f64::MIN_POSITIVE {
+                Score::NoTargetProjection
             } else if residual <= f64::EPSILON * target_energy.max(f64::MIN_POSITIVE) {
                 Score::Perfect
             } else {
