@@ -1,5 +1,7 @@
 //! Composition and background job ownership. The bridge passes paths/peaks, never PCM.
-use crate::api::{UiJobDto, UiPlaybackDto, UiSessionDto, UiStemTrackDto};
+use crate::api::{
+    UiJobDto, UiPlaybackDto, UiPlaybackFailure, UiSessionDto, UiStemTrackDto, UiTrackMeterDto,
+};
 use atomusicator_application::{
     CancellationToken,
     ports::{AudioDecoderPort, RealtimePlaybackPort, SeparationProgressPort, WaveformCachePort},
@@ -432,6 +434,18 @@ impl Studio {
             playing: self.mixer.is_playing(),
             position_seconds: self.mixer.position_seconds(),
             peak: self.mixer.peak(),
+            track_meters: StemType::ALL
+                .into_iter()
+                .zip(self.mixer.track_peaks())
+                .map(|(kind, peak)| UiTrackMeterDto {
+                    stem_type: stem_key(kind).into(),
+                    peak,
+                })
+                .collect(),
+            failure: self
+                .mixer
+                .device_failed()
+                .then_some(UiPlaybackFailure::DeviceUnavailable),
         }
     }
 }

@@ -25,6 +25,7 @@ struct Transport {
     position: AtomicU64,
     master: AtomicU32,
     peak: AtomicU32,
+    device_failed: AtomicBool,
 }
 struct MixerControls {
     tracks: [TrackControl; TRACK_COUNT],
@@ -39,7 +40,16 @@ impl MixerControls {
                 position: AtomicU64::new(0),
                 master: AtomicU32::new(1.0f32.to_bits()),
                 peak: AtomicU32::new(0),
+                device_failed: AtomicBool::new(false),
             },
+        }
+    }
+    fn fail_device(&self) {
+        self.transport.device_failed.store(true, Ordering::Release);
+        self.transport.playing.store(false, Ordering::Release);
+        self.transport.peak.store(0, Ordering::Relaxed);
+        for track in &self.tracks {
+            track.peak.store(0, Ordering::Relaxed);
         }
     }
 }
@@ -51,6 +61,7 @@ impl std::ops::Deref for MixerControls {
 }
 
 struct TrackControl {
+    peak: AtomicU32,
     gain: AtomicU32,
     pan_left: AtomicU32,
     pan_right: AtomicU32,
@@ -61,6 +72,7 @@ struct TrackControl {
 impl TrackControl {
     fn new() -> Self {
         Self {
+            peak: AtomicU32::new(0),
             gain: AtomicU32::new(1.0f32.to_bits()),
             pan_left: AtomicU32::new(std::f32::consts::FRAC_1_SQRT_2.to_bits()),
             pan_right: AtomicU32::new(std::f32::consts::FRAC_1_SQRT_2.to_bits()),
@@ -119,6 +131,10 @@ impl CpalRealtimeMixer {
     }
 
     pub fn start(&self) -> Result<(), DomainError> {
+        self.controls
+            .transport
+            .device_failed
+            .store(false, Ordering::Release);
         let session = self
             .session
             .lock()
@@ -139,7 +155,7 @@ impl CpalRealtimeMixer {
             .recv()
             .map_err(|error| DomainError::DspFailure(error.to_string()))?
             .map_err(DomainError::DspFailure);
-        if result.is_ok() {
+        if result.is_ok() && !self.device_failed() {
             self.controls
                 .transport
                 .playing
@@ -162,6 +178,17 @@ impl CpalRealtimeMixer {
     }
     pub fn peak(&self) -> f32 {
         f32::from_bits(self.controls.transport.peak.load(Ordering::Relaxed))
+    }
+    pub fn track_peaks(&self) -> [f32; TRACK_COUNT] {
+        std::array::from_fn(|index| {
+            f32::from_bits(self.controls[index].peak.load(Ordering::Relaxed))
+        })
+    }
+    pub fn device_failed(&self) -> bool {
+        self.controls
+            .transport
+            .device_failed
+            .load(Ordering::Acquire)
     }
     pub fn set_master(&self, gain: f32) -> Result<(), DomainError> {
         if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
@@ -613,6 +640,7 @@ fn build_typed_stream<T>(
 where
     T: SizedSample + FromSample<f32>,
 {
+    let errors = Arc::clone(&controls);
     let stream = device
         .build_output_stream(
             config,
@@ -626,7 +654,7 @@ where
                     &pitch_ratio,
                 );
             },
-            |_| {},
+            move |_| errors.fail_device(),
             None,
         )
         .map_err(|error| error.to_string())?;
@@ -647,6 +675,9 @@ fn mix_output<T>(
     if !controls.transport.playing.load(Ordering::Acquire) {
         output.fill(T::from_sample(0.0));
         controls.transport.peak.store(0, Ordering::Relaxed);
+        for track in &controls.tracks {
+            track.peak.store(0, Ordering::Relaxed);
+        }
         return;
     }
     let initial_position = controls.transport.position.load(Ordering::Acquire);
@@ -657,6 +688,7 @@ fn mix_output<T>(
         }
     }
     let mut peak = 0.0f32;
+    let mut track_peaks = [0.0f32; TRACK_COUNT];
     let input_rate = match tracks.first() {
         Some(TrackReader::Memory { stems, .. }) => stems[0].audio.format().sample_rate_hz,
         Some(TrackReader::Stream { sample_rate_hz, .. }) => *sample_rate_hz,
@@ -695,8 +727,13 @@ fn mix_output<T>(
             let gain = f32::from_bits(control.gain.load(Ordering::Relaxed));
             let pan_left = f32::from_bits(control.pan_left.load(Ordering::Relaxed));
             let pan_right = f32::from_bits(control.pan_right.load(Ordering::Relaxed));
-            left += sample_left * gain * pan_left;
-            right += sample_right * gain * pan_right;
+            let track_left = sample_left * gain * pan_left;
+            let track_right = sample_right * gain * pan_right;
+            track_peaks[index] = track_peaks[index]
+                .max(track_left.abs())
+                .max(track_right.abs());
+            left += track_left;
+            right += track_right;
         }
         let master = f32::from_bits(controls.transport.master.load(Ordering::Relaxed));
         // Apply master before clipping, retaining headroom when summing stems.
@@ -716,6 +753,9 @@ fn mix_output<T>(
         .transport
         .peak
         .store(peak.to_bits(), Ordering::Relaxed);
+    for (track, peak) in controls.tracks.iter().zip(track_peaks) {
+        track.peak.store(peak.to_bits(), Ordering::Relaxed);
+    }
     if let Some(TrackReader::Memory { stems, cursor, .. }) = tracks.first() {
         let audio = &stems[0].audio;
         let seconds = cursor.min(audio.frames() as f64) / f64::from(audio.format().sample_rate_hz);
@@ -789,6 +829,23 @@ mod tests {
         mix_output(&mut output, 2, 48_000, &mut tracks, &controls, &pitch);
 
         assert_eq!(output, [0.5, 0.0, 0.5, 0.0]);
+        assert_eq!(f32::from_bits(lead.peak.load(Ordering::Relaxed)), 0.5);
+        assert_eq!(controls[1].peak.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn device_failure_stops_transport_and_clears_all_meters() {
+        let controls = MixerControls::new();
+        controls
+            .transport
+            .peak
+            .store(1.0f32.to_bits(), Ordering::Relaxed);
+        controls[0].peak.store(1.0f32.to_bits(), Ordering::Relaxed);
+        controls.fail_device();
+        assert!(!controls.transport.playing.load(Ordering::Acquire));
+        assert!(controls.transport.device_failed.load(Ordering::Acquire));
+        assert_eq!(controls.transport.peak.load(Ordering::Relaxed), 0);
+        assert_eq!(controls[0].peak.load(Ordering::Relaxed), 0);
     }
 
     #[test]

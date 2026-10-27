@@ -708,6 +708,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UiPlaybackFailure dco_decode_box_autoadd_ui_playback_failure(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_ui_playback_failure(raw);
+  }
+
+  @protected
   UiSessionDto dco_decode_box_autoadd_ui_session_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_ui_session_dto(raw);
@@ -756,9 +762,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<UiTrackMeterDto> dco_decode_list_ui_track_meter_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_ui_track_meter_dto).toList();
+  }
+
+  @protected
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  UiPlaybackFailure? dco_decode_opt_box_autoadd_ui_playback_failure(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_ui_playback_failure(raw);
   }
 
   @protected
@@ -805,13 +825,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiPlaybackDto dco_decode_ui_playback_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return UiPlaybackDto(
       playing: dco_decode_bool(arr[0]),
       positionSeconds: dco_decode_f_64(arr[1]),
       peak: dco_decode_f_32(arr[2]),
+      trackMeters: dco_decode_list_ui_track_meter_dto(arr[3]),
+      failure: dco_decode_opt_box_autoadd_ui_playback_failure(arr[4]),
     );
+  }
+
+  @protected
+  UiPlaybackFailure dco_decode_ui_playback_failure(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UiPlaybackFailure.values[raw as int];
   }
 
   @protected
@@ -846,6 +874,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UiTrackMeterDto dco_decode_ui_track_meter_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return UiTrackMeterDto(
+      stemType: dco_decode_String(arr[0]),
+      peak: dco_decode_f_32(arr[1]),
+    );
+  }
+
+  @protected
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
@@ -862,6 +902,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  UiPlaybackFailure sse_decode_box_autoadd_ui_playback_failure(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_ui_playback_failure(deserializer));
   }
 
   @protected
@@ -931,11 +979,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<UiTrackMeterDto> sse_decode_list_ui_track_meter_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <UiTrackMeterDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_ui_track_meter_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  UiPlaybackFailure? sse_decode_opt_box_autoadd_ui_playback_failure(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_ui_playback_failure(deserializer));
     } else {
       return null;
     }
@@ -997,11 +1072,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_playing = sse_decode_bool(deserializer);
     var var_positionSeconds = sse_decode_f_64(deserializer);
     var var_peak = sse_decode_f_32(deserializer);
+    var var_trackMeters = sse_decode_list_ui_track_meter_dto(deserializer);
+    var var_failure = sse_decode_opt_box_autoadd_ui_playback_failure(
+      deserializer,
+    );
     return UiPlaybackDto(
       playing: var_playing,
       positionSeconds: var_positionSeconds,
       peak: var_peak,
+      trackMeters: var_trackMeters,
+      failure: var_failure,
     );
+  }
+
+  @protected
+  UiPlaybackFailure sse_decode_ui_playback_failure(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return UiPlaybackFailure.values[inner];
   }
 
   @protected
@@ -1041,6 +1131,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UiTrackMeterDto sse_decode_ui_track_meter_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_stemType = sse_decode_String(deserializer);
+    var var_peak = sse_decode_f_32(deserializer);
+    return UiTrackMeterDto(stemType: var_stemType, peak: var_peak);
+  }
+
+  @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
   }
@@ -1055,6 +1153,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_ui_playback_failure(
+    UiPlaybackFailure self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_ui_playback_failure(self, serializer);
   }
 
   @protected
@@ -1126,12 +1233,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_ui_track_meter_dto(
+    List<UiTrackMeterDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_ui_track_meter_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_ui_playback_failure(
+    UiPlaybackFailure? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_ui_playback_failure(self, serializer);
     }
   }
 
@@ -1186,6 +1318,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.playing, serializer);
     sse_encode_f_64(self.positionSeconds, serializer);
     sse_encode_f_32(self.peak, serializer);
+    sse_encode_list_ui_track_meter_dto(self.trackMeters, serializer);
+    sse_encode_opt_box_autoadd_ui_playback_failure(self.failure, serializer);
+  }
+
+  @protected
+  void sse_encode_ui_playback_failure(
+    UiPlaybackFailure self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -1210,6 +1353,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_16(self.channels, serializer);
     sse_encode_f_64(self.durationSeconds, serializer);
     sse_encode_list_prim_f_32_strict(self.peaks, serializer);
+  }
+
+  @protected
+  void sse_encode_ui_track_meter_dto(
+    UiTrackMeterDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.stemType, serializer);
+    sse_encode_f_32(self.peak, serializer);
   }
 
   @protected

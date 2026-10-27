@@ -112,6 +112,7 @@ class StudioState {
     this.playing = false,
     this.position = 0,
     this.peak = 0,
+    this.trackPeaks = const {},
     this.master = 1,
     this.tracks = const {},
     this.exportDirectory,
@@ -121,6 +122,7 @@ class StudioState {
   final bool busy, playing;
   final String? error, exportDirectory;
   final double position, peak, master;
+  final Map<String, double> trackPeaks;
   final Map<String, MixTrackState> tracks;
   double get duration => session?.tracks.firstOrNull?.durationSeconds ?? 0;
   StudioState copyWith({
@@ -132,6 +134,7 @@ class StudioState {
     bool? playing,
     double? position,
     double? peak,
+    Map<String, double>? trackPeaks,
     double? master,
     Map<String, MixTrackState>? tracks,
     String? exportDirectory,
@@ -143,6 +146,7 @@ class StudioState {
     playing: playing ?? this.playing,
     position: position ?? this.position,
     peak: peak ?? this.peak,
+    trackPeaks: trackPeaks ?? this.trackPeaks,
     master: master ?? this.master,
     tracks: tracks ?? this.tracks,
     exportDirectory: exportDirectory ?? this.exportDirectory,
@@ -255,6 +259,8 @@ class StudioController extends Notifier<StudioState> {
         session: session,
         tracks: Map.unmodifiable(tracks),
         playing: false,
+        peak: 0,
+        trackPeaks: const {},
         position: same ? state.position : 0,
       );
     }
@@ -290,6 +296,14 @@ class StudioController extends Notifier<StudioState> {
             playing: status.playing,
             position: status.positionSeconds,
             peak: status.peak,
+            trackPeaks: Map.unmodifiable({
+              for (final meter in status.trackMeters)
+                meter.stemType: meter.peak,
+            }),
+            error:
+                status.failure == native.UiPlaybackFailure.deviceUnavailable
+                    ? 'Audio output device was disconnected. Reconnect it and press Play to retry.'
+                    : null,
           );
         }
       }

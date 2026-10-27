@@ -16,6 +16,34 @@ const stemNames = {
 };
 final timelineZoomProvider = StateProvider<double>((ref) => 1);
 
+class TrackLevelMeter extends StatelessWidget {
+  const TrackLevelMeter({
+    super.key,
+    required this.stemType,
+    required this.peak,
+  });
+  final String stemType;
+  final double peak;
+
+  @override
+  Widget build(BuildContext context) {
+    final level = peak.isFinite ? peak.clamp(0.0, 1.0) : 0.0;
+    final name = stemNames[stemType] ?? stemType;
+    return Tooltip(
+      message:
+          '$name level: ${peak > 1 ? 'clipping' : 'post fader, before master'}',
+      child: LinearProgressIndicator(
+        key: ValueKey('meter-$stemType'),
+        value: level,
+        minHeight: 4,
+        color: peak > 1 ? AppColors.coral : AppColors.seaGlass,
+        backgroundColor: AppColors.line,
+        semanticsLabel: '$name audio level',
+      ),
+    );
+  }
+}
+
 class StudioActions extends ConsumerWidget {
   const StudioActions({super.key});
   Future<void> _open(BuildContext context, WidgetRef ref) async {
@@ -261,6 +289,11 @@ class StudioTracks extends ConsumerWidget {
                   ),
                 ],
               ),
+              TrackLevelMeter(
+                stemType: track.stemType,
+                peak: state.trackPeaks[track.stemType] ?? 0,
+              ),
+              const SizedBox(height: 4),
               LayoutBuilder(
                 builder:
                     (context, box) => GestureDetector(

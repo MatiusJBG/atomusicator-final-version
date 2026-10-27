@@ -25,6 +25,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  UiPlaybackFailure dco_decode_box_autoadd_ui_playback_failure(dynamic raw);
+
+  @protected
   UiSessionDto dco_decode_box_autoadd_ui_session_dto(dynamic raw);
 
   @protected
@@ -49,7 +52,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<UiStemTrackDto> dco_decode_list_ui_stem_track_dto(dynamic raw);
 
   @protected
+  List<UiTrackMeterDto> dco_decode_list_ui_track_meter_dto(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  UiPlaybackFailure? dco_decode_opt_box_autoadd_ui_playback_failure(
+    dynamic raw,
+  );
 
   @protected
   UiSessionDto? dco_decode_opt_box_autoadd_ui_session_dto(dynamic raw);
@@ -70,10 +81,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPlaybackDto dco_decode_ui_playback_dto(dynamic raw);
 
   @protected
+  UiPlaybackFailure dco_decode_ui_playback_failure(dynamic raw);
+
+  @protected
   UiSessionDto dco_decode_ui_session_dto(dynamic raw);
 
   @protected
   UiStemTrackDto dco_decode_ui_stem_track_dto(dynamic raw);
+
+  @protected
+  UiTrackMeterDto dco_decode_ui_track_meter_dto(dynamic raw);
 
   @protected
   void dco_decode_unit(dynamic raw);
@@ -83,6 +100,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  UiPlaybackFailure sse_decode_box_autoadd_ui_playback_failure(
+    SseDeserializer deserializer,
+  );
 
   @protected
   UiSessionDto sse_decode_box_autoadd_ui_session_dto(
@@ -113,7 +135,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<UiTrackMeterDto> sse_decode_list_ui_track_meter_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  UiPlaybackFailure? sse_decode_opt_box_autoadd_ui_playback_failure(
+    SseDeserializer deserializer,
+  );
 
   @protected
   UiSessionDto? sse_decode_opt_box_autoadd_ui_session_dto(
@@ -136,10 +168,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPlaybackDto sse_decode_ui_playback_dto(SseDeserializer deserializer);
 
   @protected
+  UiPlaybackFailure sse_decode_ui_playback_failure(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   UiSessionDto sse_decode_ui_session_dto(SseDeserializer deserializer);
 
   @protected
   UiStemTrackDto sse_decode_ui_stem_track_dto(SseDeserializer deserializer);
+
+  @protected
+  UiTrackMeterDto sse_decode_ui_track_meter_dto(SseDeserializer deserializer);
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
@@ -149,6 +189,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_ui_playback_failure(
+    UiPlaybackFailure self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_ui_session_dto(
@@ -187,7 +233,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_ui_track_meter_dto(
+    List<UiTrackMeterDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_ui_playback_failure(
+    UiPlaybackFailure? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_ui_session_dto(
@@ -211,11 +269,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_ui_playback_dto(UiPlaybackDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_ui_playback_failure(
+    UiPlaybackFailure self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_ui_session_dto(UiSessionDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_ui_stem_track_dto(
     UiStemTrackDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ui_track_meter_dto(
+    UiTrackMeterDto self,
     SseSerializer serializer,
   );
 

@@ -26,7 +26,7 @@
 // Section: imports
 
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -745,11 +745,34 @@ impl SseDecode for Vec<crate::api::UiStemTrackDto> {
     }
 }
 
+impl SseDecode for Vec<crate::api::UiTrackMeterDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::UiTrackMeterDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Option<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::UiPlaybackFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::UiPlaybackFailure>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -814,10 +837,25 @@ impl SseDecode for crate::api::UiPlaybackDto {
         let mut var_playing = <bool>::sse_decode(deserializer);
         let mut var_positionSeconds = <f64>::sse_decode(deserializer);
         let mut var_peak = <f32>::sse_decode(deserializer);
+        let mut var_trackMeters = <Vec<crate::api::UiTrackMeterDto>>::sse_decode(deserializer);
+        let mut var_failure = <Option<crate::api::UiPlaybackFailure>>::sse_decode(deserializer);
         return crate::api::UiPlaybackDto {
             playing: var_playing,
             position_seconds: var_positionSeconds,
             peak: var_peak,
+            track_meters: var_trackMeters,
+            failure: var_failure,
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiPlaybackFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::UiPlaybackFailure::DeviceUnavailable,
+            _ => unreachable!("Invalid variant for UiPlaybackFailure: {}", inner),
         };
     }
 }
@@ -856,6 +894,18 @@ impl SseDecode for crate::api::UiStemTrackDto {
             channels: var_channels,
             duration_seconds: var_durationSeconds,
             peaks: var_peaks,
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiTrackMeterDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_stemType = <String>::sse_decode(deserializer);
+        let mut var_peak = <f32>::sse_decode(deserializer);
+        return crate::api::UiTrackMeterDto {
+            stem_type: var_stemType,
+            peak: var_peak,
         };
     }
 }
@@ -937,6 +987,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiPlaybackDto {
             self.playing.into_into_dart().into_dart(),
             self.position_seconds.into_into_dart().into_dart(),
             self.peak.into_into_dart().into_dart(),
+            self.track_meters.into_into_dart().into_dart(),
+            self.failure.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -944,6 +996,23 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiPlaybackDto {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiPlaybackDto {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::UiPlaybackDto> for crate::api::UiPlaybackDto {
     fn into_into_dart(self) -> crate::api::UiPlaybackDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiPlaybackFailure {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::DeviceUnavailable => 0.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiPlaybackFailure {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiPlaybackFailure>
+    for crate::api::UiPlaybackFailure
+{
+    fn into_into_dart(self) -> crate::api::UiPlaybackFailure {
         self
     }
 }
@@ -983,6 +1052,24 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiStemTrackDto {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiStemTrackDto {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::UiStemTrackDto> for crate::api::UiStemTrackDto {
     fn into_into_dart(self) -> crate::api::UiStemTrackDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiTrackMeterDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.stem_type.into_into_dart().into_dart(),
+            self.peak.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiTrackMeterDto {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiTrackMeterDto>
+    for crate::api::UiTrackMeterDto
+{
+    fn into_into_dart(self) -> crate::api::UiTrackMeterDto {
         self
     }
 }
@@ -1062,12 +1149,32 @@ impl SseEncode for Vec<crate::api::UiStemTrackDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::UiTrackMeterDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::UiTrackMeterDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::UiPlaybackFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::UiPlaybackFailure>::sse_encode(value, serializer);
         }
     }
 }
@@ -1121,6 +1228,23 @@ impl SseEncode for crate::api::UiPlaybackDto {
         <bool>::sse_encode(self.playing, serializer);
         <f64>::sse_encode(self.position_seconds, serializer);
         <f32>::sse_encode(self.peak, serializer);
+        <Vec<crate::api::UiTrackMeterDto>>::sse_encode(self.track_meters, serializer);
+        <Option<crate::api::UiPlaybackFailure>>::sse_encode(self.failure, serializer);
+    }
+}
+
+impl SseEncode for crate::api::UiPlaybackFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::UiPlaybackFailure::DeviceUnavailable => 0,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -1147,6 +1271,14 @@ impl SseEncode for crate::api::UiStemTrackDto {
     }
 }
 
+impl SseEncode for crate::api::UiTrackMeterDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.stem_type, serializer);
+        <f32>::sse_encode(self.peak, serializer);
+    }
+}
+
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
@@ -1163,7 +1295,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

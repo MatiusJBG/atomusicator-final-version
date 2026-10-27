@@ -6,7 +6,7 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<String> startSeparation({
   required String sourcePath,
@@ -139,16 +139,24 @@ class UiPlaybackDto {
   final bool playing;
   final double positionSeconds;
   final double peak;
+  final List<UiTrackMeterDto> trackMeters;
+  final UiPlaybackFailure? failure;
 
   const UiPlaybackDto({
     required this.playing,
     required this.positionSeconds,
     required this.peak,
+    required this.trackMeters,
+    this.failure,
   });
 
   @override
   int get hashCode =>
-      playing.hashCode ^ positionSeconds.hashCode ^ peak.hashCode;
+      playing.hashCode ^
+      positionSeconds.hashCode ^
+      peak.hashCode ^
+      trackMeters.hashCode ^
+      failure.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -157,8 +165,12 @@ class UiPlaybackDto {
           runtimeType == other.runtimeType &&
           playing == other.playing &&
           positionSeconds == other.positionSeconds &&
-          peak == other.peak;
+          peak == other.peak &&
+          trackMeters == other.trackMeters &&
+          failure == other.failure;
 }
+
+enum UiPlaybackFailure { deviceUnavailable }
 
 class UiSessionDto {
   final String id;
@@ -235,4 +247,24 @@ class UiStemTrackDto {
           channels == other.channels &&
           durationSeconds == other.durationSeconds &&
           peaks == other.peaks;
+}
+
+class UiTrackMeterDto {
+  final String stemType;
+
+  /// Post track gain/pan/mute/solo, before master gain and output clipping.
+  final double peak;
+
+  const UiTrackMeterDto({required this.stemType, required this.peak});
+
+  @override
+  int get hashCode => stemType.hashCode ^ peak.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiTrackMeterDto &&
+          runtimeType == other.runtimeType &&
+          stemType == other.stemType &&
+          peak == other.peak;
 }

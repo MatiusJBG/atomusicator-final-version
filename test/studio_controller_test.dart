@@ -3,6 +3,7 @@ import 'package:atomusicator/core/di/native_engine_provider.dart';
 import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:atomusicator/src/rust_bridge/api.dart';
 
 void main() {
   late FakeStudio gateway;
@@ -23,6 +24,26 @@ void main() {
     );
   });
   tearDown(() => container.dispose());
+  test(
+    'native meters retain stem identity and device failure is actionable',
+    () async {
+      final controller = container.read(studioProvider.notifier);
+      await controller.open('/session');
+      gateway.playbackValue = const UiPlaybackDto(
+        playing: false,
+        positionSeconds: 2,
+        peak: 0.5,
+        trackMeters: [UiTrackMeterDto(stemType: 'bass', peak: 0.25)],
+        failure: UiPlaybackFailure.deviceUnavailable,
+      );
+      await controller.refresh();
+      final state = container.read(studioProvider);
+      expect(state.trackPeaks['bass'], 0.25);
+      expect(state.position, 2);
+      expect(state.playing, false);
+      expect(state.error, contains('Reconnect'));
+    },
+  );
   test(
     'separation publishes real session state and rejects overlapping UI jobs',
     () async {

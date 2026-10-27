@@ -66,9 +66,15 @@ class FakeStudio implements StudioGateway {
     return 'export';
   }
 
+  UiPlaybackDto playbackValue = const UiPlaybackDto(
+    playing: false,
+    positionSeconds: 0,
+    peak: 0,
+    trackMeters: [],
+    failure: null,
+  );
   @override
-  Future<UiPlaybackDto> playback() async =>
-      UiPlaybackDto(playing: false, positionSeconds: 0, peak: 0);
+  Future<UiPlaybackDto> playback() async => playbackValue;
   @override
   Future<void> play() async {
     calls.add('play');

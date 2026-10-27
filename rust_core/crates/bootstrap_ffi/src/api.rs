@@ -32,10 +32,22 @@ pub struct UiJobDto {
     pub output_directory: Option<String>,
 }
 #[derive(Debug, Clone)]
+pub struct UiTrackMeterDto {
+    pub stem_type: String,
+    /// Post track gain/pan/mute/solo, before master gain and output clipping.
+    pub peak: f32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiPlaybackFailure {
+    DeviceUnavailable,
+}
+#[derive(Debug, Clone)]
 pub struct UiPlaybackDto {
     pub playing: bool,
     pub position_seconds: f64,
     pub peak: f32,
+    pub track_meters: Vec<UiTrackMeterDto>,
+    pub failure: Option<UiPlaybackFailure>,
 }
 
 pub fn start_separation(source_path: String, allow_model_download: bool) -> Result<String, String> {
