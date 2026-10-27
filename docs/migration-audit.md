@@ -105,8 +105,8 @@ que en la aplicación Python.
    Compilar/verificar el instalador requiere Inno Setup y una instalación limpia
    de Windows; no se considera comprobado por haber compilado solo la app.
 
-El [plan de implementación](implementation-plan-native-migration.md) organiza
-la paridad obligatoria, la validación de calidad/rendimiento y las mejoras
+El plan de implementación se conserva localmente en una carpeta excluida de Git.
+Organiza la paridad obligatoria, la validación de calidad/rendimiento y las mejoras
 opcionales. Se continuará en esta feature con commits independientes. No se
 abrió PR, no se fusionaron ramas y no se añadieron workflows de Actions.
 
