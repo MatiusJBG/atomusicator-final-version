@@ -29,18 +29,32 @@ flutter test
 
 The Rust workspace uses Rust 2024. The Flutter app requires Dart 3.7 or newer.
 
+## Regenerate Flutter-Rust bindings
+
+The Flutter-Rust-Bridge runtime is pinned to 2.8.0, so use the matching code
+generator version from the repository root:
+
+```powershell
+cargo install flutter_rust_bridge_codegen --version 2.8.0 --locked
+flutter_rust_bridge_codegen generate
+```
+
+The generator configuration uses repository-relative paths and lets FRB place
+its Rust output under the configured crate. Keep `rust_output` unset in
+`flutter_rust_bridge.yaml`; an explicit path is resolved against the Flutter
+root and can fail on Windows when FRB compares it with its canonical Rust
+crate path. The bridge exposes only first-party API types, so it keeps FRB's
+optional full-dependency/`ffigen` mode disabled and does not require LLVM for
+code generation.
+
 ## Migration status
 
 The domain, application ports, separation orchestration, migration persistence
 and caching, STFT/iSTFT, phase subtraction, bleed-gate rebalance, ONNX session
 pool, audio file I/O, waveform peaks, and a responsive workbench are present.
 The Flutter workbench currently imports files into UI state only; it does not
-invoke the Rust engine.
-
-The FFI bindings have not been generated because the installed
-`flutter_rust_bridge_codegen` currently fails on this Windows checkout while
-resolving the Rust output path. The planned Mel-Band RoFormer / HTDemucs or SCNet
-model profile also remains unconfigured until its model artifact, license,
+invoke the generated Rust bridge. The planned Mel-Band RoFormer / HTDemucs or
+SCNet model profile also remains unconfigured until its model artifact, license,
 download URL, and SHA-256 can be verified. Consequently, model inference, native
 playback and pitch shifting, batch export, packaging, and release remain future
 work.

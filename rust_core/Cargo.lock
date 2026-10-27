@@ -111,6 +111,11 @@ dependencies = [
 [[package]]
 name = "atomusicator-domain"
 version = "0.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "atomusicator-infrastructure"

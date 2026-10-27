@@ -1,6 +1,8 @@
+use atomusicator_application::ports::PhaseDspPort;
 use atomusicator_application::ports::WaveformCachePort;
 use atomusicator_domain::{AudioBufferF32, AudioFormat};
 use atomusicator_infrastructure::dsp::{PhaseSubtractor, SpectralBleedGate, StftProcessor};
+use atomusicator_infrastructure::use_case_adapters::NativePhaseDsp;
 use atomusicator_infrastructure::waveform::WaveformPeakCache;
 
 #[test]
@@ -68,4 +70,30 @@ fn waveform_cache_returns_channel_merged_minimum_and_maximum_peaks() {
 
     assert_eq!(cache.peaks(&audio, 2), vec![(-0.5, 0.4), (-0.3, 0.2)]);
     assert!(cache.peaks(&audio, 0).is_empty());
+}
+
+#[test]
+fn native_phase_dsp_adapter_subtracts_and_rebalances_compatible_audio() {
+    let dsp = NativePhaseDsp::new(64, 0.1, 1.0).unwrap();
+    let format = AudioFormat::new(48_000, 1).unwrap();
+    let mix = AudioBufferF32::new(format, vec![0.7; 256]).unwrap();
+    let stem = AudioBufferF32::new(format, vec![0.2; 256]).unwrap();
+
+    let residual = dsp.subtract_phase(&mix, &stem).unwrap();
+    assert!(
+        residual
+            .samples()
+            .iter()
+            .all(|sample| (*sample - 0.5).abs() < 1.0e-6)
+    );
+
+    let (lead, backing) = dsp.apply_spectral_bleed_gate(&stem, &residual).unwrap();
+    for ((lead, backing), original) in lead
+        .samples()
+        .iter()
+        .zip(backing.samples())
+        .zip(mix.samples())
+    {
+        assert!((lead + backing - original).abs() < 1.0e-4);
+    }
 }

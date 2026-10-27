@@ -43,6 +43,21 @@ pub trait SpectralBleedGatePort: Send + Sync {
     ) -> Result<(AudioBufferF32, AudioBufferF32), DomainError>;
 }
 
+/// DSP boundary for exact phase subtraction and optional vocal bleed rebalance.
+pub trait PhaseDspPort: Send + Sync {
+    fn subtract_phase(
+        &self,
+        minuend: &AudioBufferF32,
+        subtrahend: &AudioBufferF32,
+    ) -> Result<AudioBufferF32, DomainError>;
+
+    fn apply_spectral_bleed_gate(
+        &self,
+        lead_vocal: &AudioBufferF32,
+        raw_backing_vocals: &AudioBufferF32,
+    ) -> Result<(AudioBufferF32, AudioBufferF32), DomainError>;
+}
+
 pub trait ArtifactCachePort: Send + Sync {
     fn get_checkpoint(&self, key: &str) -> Result<Option<AudioBufferF32>, DomainError>;
     fn put_checkpoint(&self, key: &str, buffer: &AudioBufferF32) -> Result<(), DomainError>;
@@ -57,6 +72,20 @@ pub trait RealtimePlaybackPort: Send + Sync {
 pub trait SessionRepositoryPort: Send + Sync {
     fn load(&self, id: &str) -> Result<Option<AudioSession>, DomainError>;
     fn save(&self, session: &AudioSession) -> Result<(), DomainError>;
+}
+
+/// Persistence boundary for publishing a validated separation result.
+pub trait SessionWorkspacePort: Send + Sync {
+    fn publish_separation_result(
+        &self,
+        asset: &atomusicator_domain::AudioAsset,
+        result: &atomusicator_domain::SeparationResult,
+    ) -> Result<(), DomainError>;
+}
+
+/// Reports user-facing progress without coupling a use case to Flutter streams.
+pub trait ProgressReporterPort: Send + Sync {
+    fn on_progress(&self, stage_name: &str, progress_ratio: f32);
 }
 
 pub trait SeparationStage: Send + Sync {
