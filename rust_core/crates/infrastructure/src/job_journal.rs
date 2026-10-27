@@ -33,6 +33,8 @@ pub struct JournalRecord {
     pub profile: atomusicator_domain::quality::SeparationProfile,
     pub message: String,
     pub output_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub staging_directory: Option<PathBuf>,
     pub failure: Option<atomusicator_domain::jobs::FailureKind>,
     pub discarded: bool,
 }
@@ -68,9 +70,21 @@ impl JobJournal {
         request: JobRequest,
         retry_of: Option<String>,
     ) -> Result<JournalRecord, DomainError> {
+        self.create_leased(id, request, retry_of, None)
+            .map(|(record, _lease)| record)
+    }
+    /// Acquire ownership before making the first recoverable revision visible.
+    pub fn create_leased(
+        &self,
+        id: &str,
+        request: JobRequest,
+        retry_of: Option<String>,
+        source_sha256: Option<String>,
+    ) -> Result<(JournalRecord, JobLease), DomainError> {
         fs::create_dir_all(&self.root).map_err(failure)?;
         let directory = self.directory(id)?;
         fs::create_dir(&directory).map_err(failure)?;
+        let lease = self.lease(id)?;
         let record = JournalRecord {
             schema_version: 1,
             id: id.into(),
@@ -78,15 +92,16 @@ impl JobJournal {
             retry_of,
             lifecycle: JobLifecycle::new(),
             request,
-            source_sha256: None,
+            source_sha256,
             profile: atomusicator_domain::quality::SeparationProfile::compatibility(),
             message: "Queued".into(),
             output_directory: None,
+            staging_directory: None,
             failure: None,
             discarded: false,
         };
         Self::publish(&directory, &record)?;
-        Ok(record)
+        Ok((record, lease))
     }
     pub fn load(&self, id: &str) -> Result<JournalRecord, DomainError> {
         let directory = self.directory(id)?;
@@ -165,6 +180,7 @@ impl JobJournal {
             return Ok(Vec::new());
         }
         let mut records = Vec::new();
+        let mut superseded = std::collections::BTreeSet::new();
         for entry in fs::read_dir(&self.root).map_err(failure)? {
             let entry = entry.map_err(failure)?;
             if !entry.file_type().map_err(failure)?.is_dir() {
@@ -175,10 +191,14 @@ impl JobJournal {
             if latest_revision(&directory)?.is_none() {
                 continue;
             }
+            let mut record = self.load(&id)?;
+            if let Some(parent) = &record.retry_of {
+                superseded.insert(parent.clone());
+            }
             let Some(_lease) = self.try_lease(&id)? else {
                 continue;
             };
-            let mut record = self.load(&id)?;
+            record = self.load(&id)?;
             record.lifecycle.interrupt();
             if !record.discarded
                 && matches!(record.request, JobRequest::Separation { .. })
@@ -187,14 +207,46 @@ impl JobJournal {
                 records.push(record);
             }
         }
+        records.retain(|record| !superseded.contains(&record.id));
         records.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(records)
     }
     pub fn discard(&self, id: &str) -> Result<(), DomainError> {
         let _lease = self.lease(id)?;
         let mut record = self.load(id)?;
+        self.cleanup_staging(&record)?;
         record.discarded = true;
         self.save(&mut record)
+    }
+    pub fn cleanup_staging(&self, record: &JournalRecord) -> Result<(), DomainError> {
+        let Some(path) = record
+            .staging_directory
+            .as_ref()
+            .filter(|path| path.exists())
+        else {
+            return Ok(());
+        };
+        let JobRequest::Separation { projects, .. } = &record.request else {
+            return Err(failure("unexpected staging owner"));
+        };
+        let directory = path.canonicalize().map_err(failure)?;
+        let projects = projects.canonicalize().map_err(failure)?;
+        if directory.parent() != Some(projects.as_path())
+            || !directory
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".atomusicator-"))
+        {
+            return Err(failure(
+                "recovery staging is outside its owned project directory",
+            ));
+        }
+        let marker = directory.join(".job-owner");
+        if fs::metadata(&marker).map_err(failure)?.len() > 160
+            || fs::read_to_string(marker).map_err(failure)? != record.id
+        {
+            return Err(failure("recovery staging ownership mismatch"));
+        }
+        fs::remove_dir_all(directory).map_err(failure)
     }
 }
 fn latest_revision(directory: &Path) -> Result<Option<u64>, DomainError> {
