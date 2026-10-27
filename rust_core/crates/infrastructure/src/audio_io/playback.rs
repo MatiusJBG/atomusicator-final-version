@@ -389,7 +389,51 @@ enum TrackReader {
 }
 
 impl TrackReader {
+    /// Stage source frames without advancing the output clock. All tracks must
+    /// be ready before the callback commits one mixed frame.
+    fn prepare(&mut self) -> bool {
+        let Self::Stream {
+            consumer,
+            channels,
+            current,
+            next,
+            fraction,
+            pending_sample,
+            ..
+        } = self
+        else {
+            return true;
+        };
+        if current.is_none() {
+            *current = pop_stream_frame(consumer, *channels, pending_sample);
+        }
+        if current.is_none() {
+            return false;
+        }
+        while *fraction >= 1.0 {
+            let advanced = next
+                .take()
+                .or_else(|| pop_stream_frame(consumer, *channels, pending_sample));
+            let Some(advanced) = advanced else {
+                return false;
+            };
+            *current = Some(advanced);
+            *fraction -= 1.0;
+        }
+        if *fraction > 0.0 && next.is_none() {
+            *next = pop_stream_frame(consumer, *channels, pending_sample);
+            // At EOF, match the in-memory reader's final-frame clamping.
+            if next.is_none() && !consumer.is_abandoned() {
+                return false;
+            }
+        }
+        true
+    }
+
     fn frame(&mut self, step: f64) -> Option<[f32; 2]> {
+        if !self.prepare() {
+            return None;
+        }
         match self {
             Self::Memory {
                 stems,
@@ -419,36 +463,18 @@ impl TrackReader {
                 Some([left, right])
             }
             Self::Stream {
-                consumer,
-                channels,
                 current,
                 next,
                 fraction,
-                pending_sample,
                 ..
             } => {
-                if current.is_none() {
-                    *current = pop_stream_frame(consumer, *channels, pending_sample);
-                }
-                if next.is_none() {
-                    *next = pop_stream_frame(consumer, *channels, pending_sample);
-                }
-                let (Some(current_frame), Some(next_frame)) = (*current, *next) else {
-                    return None;
-                };
+                let current_frame = (*current)?;
+                let next_frame = next.unwrap_or(current_frame);
                 let interpolated = [
                     current_frame[0] + (next_frame[0] - current_frame[0]) * *fraction as f32,
                     current_frame[1] + (next_frame[1] - current_frame[1]) * *fraction as f32,
                 ];
                 *fraction += step;
-                while *fraction >= 1.0 {
-                    *current = *next;
-                    *next = pop_stream_frame(consumer, *channels, pending_sample);
-                    *fraction -= 1.0;
-                    if next.is_none() {
-                        break;
-                    }
-                }
                 Some(interpolated)
             }
         }
@@ -642,7 +668,17 @@ fn mix_output<T>(
         .iter()
         .any(|control| control.solo.load(Ordering::Relaxed));
     let complete_sample_count = output.len() / output_channels * output_channels;
+    let mut rendered_frames = 0usize;
     for frame in output[..complete_sample_count].chunks_exact_mut(output_channels) {
+        // Use non-short-circuit evaluation so every reader may stage its input.
+        let ready = tracks
+            .iter_mut()
+            .fold(true, |ready, track| track.prepare() & ready);
+        if !ready {
+            frame.fill(T::from_sample(0.0));
+            continue;
+        }
+        rendered_frames += 1;
         let mut left = 0.0f32;
         let mut right = 0.0f32;
         for (index, track) in tracks.iter_mut().enumerate() {
@@ -692,6 +728,14 @@ fn mix_output<T>(
         if *cursor >= audio.frames() as f64 {
             controls.transport.playing.store(false, Ordering::Release);
         }
+    } else if matches!(tracks.first(), Some(TrackReader::Stream { .. })) {
+        let seconds = initial_seconds + rendered_frames as f64 * rate_step / f64::from(input_rate);
+        let _ = controls.transport.position.compare_exchange(
+            initial_position,
+            seconds.to_bits(),
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -780,6 +824,116 @@ mod tests {
 
         assert_eq!(track.frame(1.0), Some([0.25, -0.25]));
         assert_eq!(track.frame(1.0), Some([0.5, -0.5]));
+    }
+
+    #[test]
+    fn streamed_reader_emits_the_last_frame_without_requiring_another_frame() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        for sample in [0.25, -0.25, 0.75, -0.75] {
+            producer.push(sample).unwrap();
+        }
+        drop(producer);
+        let mut track = TrackReader::Stream {
+            consumer,
+            channels: 2,
+            sample_rate_hz: 48_000,
+            current: None,
+            next: None,
+            fraction: 0.0,
+            pending_sample: None,
+        };
+
+        assert_eq!(track.frame(1.0), Some([0.25, -0.25]));
+        assert_eq!(track.frame(1.0), Some([0.75, -0.75]));
+        assert_eq!(track.frame(1.0), None);
+    }
+
+    #[test]
+    fn streamed_reader_retains_source_position_when_refilled_after_a_large_step() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(8);
+        for sample in [0.1, 0.2] {
+            producer.push(sample).unwrap();
+        }
+        let mut track = TrackReader::Stream {
+            consumer,
+            channels: 1,
+            sample_rate_hz: 48_000,
+            current: None,
+            next: None,
+            fraction: 0.0,
+            pending_sample: None,
+        };
+        assert_eq!(track.frame(3.0), Some([0.1, 0.1]));
+        assert_eq!(track.frame(3.0), None);
+
+        // The next output position is source frame 3. Nonlinear samples expose
+        // extrapolation from old frames instead of consuming the skipped frames.
+        for sample in [0.3, 0.9, 0.4, 0.5, 0.6] {
+            producer.push(sample).unwrap();
+        }
+
+        assert_eq!(track.frame(3.0), Some([0.9, 0.9]));
+    }
+
+    #[test]
+    fn streamed_reader_waits_for_fractional_lookahead_and_clamps_only_at_eof() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        producer.push(0.2).unwrap();
+        let mut track = TrackReader::Stream {
+            consumer,
+            channels: 1,
+            sample_rate_hz: 48000,
+            current: None,
+            next: None,
+            fraction: 0.0,
+            pending_sample: None,
+        };
+        assert_eq!(track.frame(0.5), Some([0.2; 2]));
+        assert_eq!(track.frame(0.5), None);
+        producer.push(0.6).unwrap();
+        assert!((track.frame(0.5).unwrap()[0] - 0.4).abs() < 1e-6);
+        assert_eq!(track.frame(0.5), Some([0.6; 2]));
+        assert_eq!(track.frame(0.5), None);
+        drop(producer);
+        assert_eq!(track.frame(0.5), Some([0.6; 2]));
+        assert_eq!(track.frame(0.5), None);
+    }
+
+    #[test]
+    fn streamed_callback_keeps_all_stems_aligned_during_one_stem_underrun() {
+        let (mut ready_producer, ready_consumer) = rtrb::RingBuffer::new(8);
+        for sample in [0.2, 0.4, 0.6] {
+            ready_producer.push(sample).unwrap();
+        }
+        let (mut delayed_producer, delayed_consumer) = rtrb::RingBuffer::new(8);
+        let mut tracks: Vec<_> = [ready_consumer, delayed_consumer]
+            .into_iter()
+            .map(|consumer| TrackReader::Stream {
+                consumer,
+                channels: 1,
+                sample_rate_hz: 48_000,
+                current: None,
+                next: None,
+                fraction: 0.0,
+                pending_sample: None,
+            })
+            .collect();
+        let controls = MixerControls::new();
+        let pitch = AtomicU32::new(1.0f32.to_bits());
+        let mut output = [1.0f32; 2];
+
+        mix_output(&mut output, 2, 48_000, &mut tracks, &controls, &pitch);
+        assert_eq!(output, [0.0; 2], "an underrun must stall the whole mix");
+        assert_eq!(controls.transport.position.load(Ordering::Relaxed), 0);
+
+        for sample in [0.1, 0.3, 0.5] {
+            delayed_producer.push(sample).unwrap();
+        }
+        mix_output(&mut output, 2, 48_000, &mut tracks, &controls, &pitch);
+        let expected = 0.3 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((output[0] - expected).abs() < 1e-6);
+        assert!((output[1] - expected).abs() < 1e-6);
+        assert!(f64::from_bits(controls.transport.position.load(Ordering::Relaxed)) > 0.0);
     }
 
     #[test]
