@@ -124,6 +124,22 @@ async fn manifest_registry_accepts_a_verified_legacy_model_without_network_acces
 }
 
 #[tokio::test]
+async fn manifest_preparation_can_be_cancelled_before_touching_the_network() {
+    let cancel = atomusicator_application::CancellationToken::default();
+    cancel.cancel();
+    let manager = ManifestModelManager::from_manifest_json(
+        &manifest("model.onnx", &"a".repeat(64)),
+        WorkspacePathPolicy::from_local_data_dir(temp_dir("cancelled-model")),
+    )
+    .unwrap();
+    let error = manager
+        .ensure_profile_ready_cancellable("test-profile", &cancel)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
+}
+
+#[tokio::test]
 async fn manifest_registry_rejects_unknown_profiles_without_network_access() {
     let base = temp_dir("manifest-missing");
     fs::create_dir_all(&base).unwrap();

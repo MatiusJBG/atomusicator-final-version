@@ -51,6 +51,7 @@ where
         check_alignment(mix, &bass)?;
         let instrumental = subtract(&instrumental_master, &add(&drums, &bass)?)?;
 
+        check_cancelled(cancel)?;
         self.progress.report(3, 3, "Validating reconstruction");
         SeparationResult::try_new(
             mix,

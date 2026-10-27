@@ -118,6 +118,7 @@ impl ModelDownloader {
             std::process::id(),
             id
         ));
+        let _cleanup = PartialDownload(temporary_path.clone());
         let result = self.download_to(profile, &temporary_path).await;
         if result.is_err() {
             let _ = fs::remove_file(&temporary_path).await;
@@ -135,6 +136,7 @@ impl ModelDownloader {
         let mut response = self
             .client
             .get(&profile.download_url)
+            .timeout(std::time::Duration::from_secs(600))
             .send()
             .await?
             .error_for_status()?;
@@ -148,7 +150,14 @@ impl ModelDownloader {
             .await
             .map_err(|error| InfrastructureError::io(path, error))?;
         let mut digest = Sha256::new();
+        let mut received = 0usize;
         while let Some(chunk) = response.chunk().await? {
+            received = received.saturating_add(chunk.len());
+            if received > 512 * 1024 * 1024 {
+                return Err(InfrastructureError::InvalidManifest(
+                    "model download exceeds 512 MiB".into(),
+                ));
+            }
             digest.update(&chunk);
             file.write_all(&chunk)
                 .await
@@ -175,6 +184,14 @@ impl ModelDownloader {
 }
 
 static NEXT_DOWNLOAD_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Also removes incomplete artifacts when the async download future is cancelled.
+struct PartialDownload(PathBuf);
+impl Drop for PartialDownload {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 pub(crate) async fn hash_file(path: &Path) -> Result<String, InfrastructureError> {
     let mut file = fs::File::open(path)
