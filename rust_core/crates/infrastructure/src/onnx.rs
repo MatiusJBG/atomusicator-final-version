@@ -54,9 +54,9 @@ impl OrtSessionPool {
         capacity: usize,
         provider_order: Vec<ExecutionProviderKind>,
     ) -> Result<Self, InfrastructureError> {
-        if provider_order.is_empty() || !provider_order.contains(&ExecutionProviderKind::Cpu) {
+        if provider_order.last() != Some(&ExecutionProviderKind::Cpu) {
             return Err(InfrastructureError::InvalidManifest(
-                "execution provider order must include CPU fallback".into(),
+                "execution provider order must end with the CPU fallback".into(),
             ));
         }
         let mut pool = Self::new(capacity)?;
@@ -136,16 +136,24 @@ impl OnnxSessionRunner {
         shape: &[i64],
         input: &[f32],
     ) -> Result<Vec<f32>, InfrastructureError> {
+        if input_name.trim().is_empty() {
+            return Err(InfrastructureError::OnnxRuntime(
+                "tensor input name cannot be empty".into(),
+            ));
+        }
         let element_count = shape
             .iter()
             .try_fold(1usize, |size, dimension| {
+                if *dimension <= 0 {
+                    return None;
+                }
                 usize::try_from(*dimension)
                     .ok()
                     .and_then(|dimension| size.checked_mul(dimension))
             })
             .ok_or_else(|| {
                 InfrastructureError::OnnxRuntime(
-                    "tensor shape is invalid or overflows usize".into(),
+                    "tensor shape must contain positive dimensions and fit usize".into(),
                 )
             })?;
         if element_count != input.len() {
@@ -153,6 +161,11 @@ impl OnnxSessionRunner {
                 "tensor shape describes {element_count} values, received {}",
                 input.len()
             )));
+        }
+        if input.iter().any(|value| !value.is_finite()) {
+            return Err(InfrastructureError::OnnxRuntime(
+                "tensor input contains non-finite values".into(),
+            ));
         }
         let session = self.pool.load_session(model_path)?;
         let session = session.lock().map_err(|_| {
@@ -166,9 +179,17 @@ impl OnnxSessionRunner {
         let outputs = session
             .run(inputs)
             .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
-        let output = outputs[0]
+        let (_, output) = outputs.iter().next().ok_or_else(|| {
+            InfrastructureError::OnnxRuntime("ONNX model returned no output tensors".into())
+        })?;
+        let output = output
             .try_extract_tensor::<f32>()
             .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        if output.iter().any(|value| !value.is_finite()) {
+            return Err(InfrastructureError::OnnxRuntime(
+                "ONNX model returned non-finite values".into(),
+            ));
+        }
         Ok(output.iter().copied().collect())
     }
 }
