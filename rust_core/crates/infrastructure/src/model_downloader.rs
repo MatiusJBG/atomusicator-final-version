@@ -5,7 +5,10 @@ use std::{
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 
 use crate::errors::InfrastructureError;
 
@@ -61,6 +64,9 @@ impl ModelManifest {
                 .file_name()
                 .and_then(|name| name.to_str())
                 != Some(profile.filename.as_str())
+                || profile.filename.contains('/')
+                || profile.filename.contains('\\')
+                || profile.filename.trim().is_empty()
             {
                 return Err(InfrastructureError::InvalidManifest(format!(
                     "profile `{}` filename must be a single path component",
@@ -117,14 +123,7 @@ impl ModelDownloader {
             let _ = fs::remove_file(&temporary_path).await;
         }
         result?;
-        if final_path.exists() {
-            fs::remove_file(&final_path)
-                .await
-                .map_err(|error| InfrastructureError::io(&final_path, error))?;
-        }
-        fs::rename(&temporary_path, &final_path)
-            .await
-            .map_err(|error| InfrastructureError::io(&final_path, error))?;
+        publish_verified_model(&temporary_path, &final_path).await?;
         Ok(final_path)
     }
 
@@ -139,6 +138,12 @@ impl ModelDownloader {
             .send()
             .await?
             .error_for_status()?;
+        if response.url().scheme() != "https" {
+            return Err(InfrastructureError::InvalidManifest(format!(
+                "profile `{}` download redirected to a non-HTTPS URL",
+                profile.profile_id
+            )));
+        }
         let mut file = fs::File::create(path)
             .await
             .map_err(|error| InfrastructureError::io(path, error))?;
@@ -171,11 +176,57 @@ impl ModelDownloader {
 
 static NEXT_DOWNLOAD_ID: AtomicU64 = AtomicU64::new(0);
 
-async fn hash_file(path: &Path) -> Result<String, InfrastructureError> {
-    let bytes = fs::read(path)
+pub(crate) async fn hash_file(path: &Path) -> Result<String, InfrastructureError> {
+    let mut file = fs::File::open(path)
         .await
         .map_err(|error| InfrastructureError::io(path, error))?;
-    Ok(hex_lower(&Sha256::digest(bytes)))
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|error| InfrastructureError::io(path, error))?;
+        if bytes_read == 0 {
+            break;
+        }
+        digest.update(&buffer[..bytes_read]);
+    }
+    Ok(hex_lower(&digest.finalize()))
+}
+
+async fn publish_verified_model(
+    temporary_path: &Path,
+    final_path: &Path,
+) -> Result<(), InfrastructureError> {
+    if !final_path.exists() {
+        return fs::rename(temporary_path, final_path)
+            .await
+            .map_err(|error| InfrastructureError::io(final_path, error));
+    }
+
+    let backup_path = final_path.with_file_name(format!(
+        ".{}.{}.{}.previous",
+        final_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("model"),
+        std::process::id(),
+        NEXT_DOWNLOAD_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::rename(final_path, &backup_path)
+        .await
+        .map_err(|error| InfrastructureError::io(final_path, error))?;
+    match fs::rename(temporary_path, final_path).await {
+        Ok(()) => {
+            let _ = fs::remove_file(backup_path).await;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::rename(&backup_path, final_path).await;
+            Err(InfrastructureError::io(final_path, error))
+        }
+    }
 }
 
 fn hex_lower(bytes: &[u8]) -> String {

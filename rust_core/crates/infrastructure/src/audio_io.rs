@@ -1,3 +1,5 @@
+pub mod wav_codec;
+
 use std::{
     fs,
     fs::File,

@@ -15,6 +15,7 @@ pub struct StftProcessor {
 pub struct SpectrogramF32 {
     pub sample_rate_hz: u32,
     pub channels: u16,
+    /// Original interleaved audio frame count (samples per channel).
     pub sample_count: usize,
     pub frame_size: usize,
     pub hop_size: usize,
@@ -47,7 +48,12 @@ impl StftProcessor {
 
     pub fn forward(&self, audio: &AudioBufferF32) -> Result<SpectrogramF32, DomainError> {
         let channels = usize::from(audio.format().channels);
-        let sample_count = audio.samples().len();
+        let sample_count = audio.frames();
+        if sample_count == 0 {
+            return Err(DomainError::DspFailure(
+                "STFT cannot process an empty audio buffer".into(),
+            ));
+        }
         let frame_count = sample_count.div_ceil(self.hop_size) + 1;
         let bins_per_channel = self.frame_size / 2 + 1;
         let mut frames = Vec::with_capacity(frame_count);
@@ -88,10 +94,26 @@ impl StftProcessor {
                 "spectrogram was produced with a different STFT configuration".into(),
             ));
         }
+        atomusicator_domain::AudioFormat::new(spectrum.sample_rate_hz, spectrum.channels)?;
+        if spectrum.sample_count == 0
+            || spectrum.bins.len() != spectrum.sample_count.div_ceil(self.hop_size) + 1
+        {
+            return Err(DomainError::DspFailure(
+                "spectrogram frame count does not match its original sample count".into(),
+            ));
+        }
         let channels = usize::from(spectrum.channels);
         let bins_per_channel = self.frame_size / 2 + 1;
-        let output_len = spectrum.bins.len() * self.hop_size + self.hop_size;
-        let mut output = vec![0.0f32; output_len * channels];
+        let output_len = spectrum
+            .bins
+            .len()
+            .checked_add(1)
+            .and_then(|frame_count| frame_count.checked_mul(self.hop_size))
+            .ok_or_else(|| DomainError::DspFailure("iSTFT output size overflows usize".into()))?;
+        let output_samples = output_len
+            .checked_mul(channels)
+            .ok_or_else(|| DomainError::DspFailure("iSTFT output size overflows usize".into()))?;
+        let mut output = vec![0.0f32; output_samples];
         let mut normalization = vec![0.0f32; output_len];
         let mut time = self.inverse.make_output_vec();
         let mut scratch = self.inverse.make_scratch_vec();
@@ -100,6 +122,14 @@ impl StftProcessor {
             if frame.len() != channels * bins_per_channel {
                 return Err(DomainError::DspFailure(
                     "spectrogram frame has an unexpected number of bins".into(),
+                ));
+            }
+            if frame
+                .iter()
+                .any(|bin| !bin.re.is_finite() || !bin.im.is_finite())
+            {
+                return Err(DomainError::DspFailure(
+                    "spectrogram contains a non-finite frequency bin".into(),
                 ));
             }
             let start = frame_index as isize * self.hop_size as isize - self.hop_size as isize;
@@ -201,6 +231,7 @@ impl SpectralBleedGate {
         }
         if lead.sample_rate_hz != backing.sample_rate_hz
             || lead.channels != backing.channels
+            || lead.sample_count != backing.sample_count
             || lead.frame_size != backing.frame_size
             || lead.hop_size != backing.hop_size
             || lead.bins.len() != backing.bins.len()

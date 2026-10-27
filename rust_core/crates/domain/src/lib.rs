@@ -48,6 +48,8 @@ pub enum DomainError {
     AudioAlignmentMismatch,
     #[error("checkpoint cache failed: {0}")]
     CacheFailure(String),
+    #[error("session workspace failed: {0}")]
+    WorkspaceFailure(String),
     #[error("DSP operation failed: {0}")]
     DspFailure(String),
     #[error("audio decode failed: {0}")]
