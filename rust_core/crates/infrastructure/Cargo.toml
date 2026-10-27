@@ -27,6 +27,7 @@ tokio.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 rtrb.workspace = true
+cpal.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { workspace = true, features = ["directml", "cuda"] }

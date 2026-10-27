@@ -70,7 +70,11 @@ pub trait ArtifactCachePort: Send + Sync {
 pub trait RealtimePlaybackPort: Send + Sync {
     fn load_session(&self, stems: Vec<Stem>) -> Result<(), DomainError>;
     fn set_track_state(&self, stem_id: StemType, gain_db: f32, pan: f32, mute: bool, solo: bool);
-    fn set_pitch_semitones(&self, semitones: f32, preserve_formants: bool);
+    fn set_pitch_semitones(
+        &self,
+        semitones: f32,
+        preserve_formants: bool,
+    ) -> Result<(), DomainError>;
 }
 
 pub trait SessionRepositoryPort: Send + Sync {
