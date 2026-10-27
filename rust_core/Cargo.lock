@@ -170,6 +170,7 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-registry",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

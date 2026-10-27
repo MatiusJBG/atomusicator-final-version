@@ -14,6 +14,7 @@ pub mod models;
 pub mod onnx;
 pub mod pitch_cache;
 pub mod preferences;
+pub mod resource_probe;
 pub mod session_workspace;
 pub mod storage;
 pub mod use_case_adapters;

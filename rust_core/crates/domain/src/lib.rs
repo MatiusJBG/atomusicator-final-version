@@ -59,6 +59,12 @@ pub enum DomainError {
     AudioDecodeFailure(String),
     #[error("audio export failed: {0}")]
     AudioExportFailure(String),
+    #[error("insufficient {resource}: requested {requested}, available {available}")]
+    InsufficientResources {
+        resource: String,
+        requested: u64,
+        available: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
