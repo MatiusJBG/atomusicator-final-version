@@ -42,6 +42,15 @@ void main() {
       expect(state.position, 2);
       expect(state.playing, false);
       expect(state.error, contains('Reconnect'));
+      gateway.playbackValue = const UiPlaybackDto(
+        playing: true,
+        positionSeconds: 2,
+        peak: 0.5,
+        trackMeters: [],
+        failure: null,
+      );
+      await controller.transport('play');
+      expect(container.read(studioProvider).error, isNull);
     },
   );
   test(

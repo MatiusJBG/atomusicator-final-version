@@ -103,6 +103,9 @@ class MixTrackState {
   );
 }
 
+const _deviceUnavailableMessage =
+    'Audio output device was disconnected. Reconnect it and press Play to retry.';
+
 class StudioState {
   const StudioState({
     this.session,
@@ -302,8 +305,11 @@ class StudioController extends Notifier<StudioState> {
             }),
             error:
                 status.failure == native.UiPlaybackFailure.deviceUnavailable
-                    ? 'Audio output device was disconnected. Reconnect it and press Play to retry.'
+                    ? _deviceUnavailableMessage
                     : null,
+            clearError:
+                status.failure == null &&
+                state.error == _deviceUnavailableMessage,
           );
         }
       }
