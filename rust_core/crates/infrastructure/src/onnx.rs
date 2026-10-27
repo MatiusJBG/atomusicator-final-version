@@ -82,7 +82,13 @@ impl OrtSessionPool {
             return Ok(session);
         }
         if sessions.len() == sessions.cap().get() {
-            sessions.pop_lru();
+            let evictable = sessions
+                .iter()
+                .rev()
+                .find(|(_, session)| Arc::strong_count(session) == 1)
+                .map(|(path, _)| path.clone())
+                .ok_or(InfrastructureError::SessionCapacityBusy)?;
+            sessions.pop(&evictable);
         }
 
         let providers = self
