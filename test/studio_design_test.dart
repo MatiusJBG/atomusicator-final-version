@@ -116,6 +116,33 @@ void main() {
     },
   );
 
+  testWidgets('an interrupted separation can be resumed from the studio', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(940, 650);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gateway = FiveStemStudio();
+    gateway.recoveryItems = [
+      const UiRecoverableJobDto(
+        id: 'old-attempt',
+        sourcePath: 'C:/music/song.flac',
+        message: 'Interrupted',
+      ),
+    ];
+    final container = await mount(tester, gateway);
+    await tester.pump();
+    expect(find.text('Interrupted separation: song.flac'), findsOneWidget);
+    await tester.tap(find.text('Resume'));
+    await tester.pump();
+    expect(gateway.calls, contains('resume:old-attempt'));
+    expect(container.read(studioProvider).busy, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
   testWidgets('pitch dock applies selected semitones and preserves formants', (
     tester,
   ) async {

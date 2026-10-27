@@ -31,15 +31,11 @@ use std::{
 
 pub struct Studio {
     pub mixer: CpalRealtimeMixer,
-    job: Mutex<Option<Job>>,
+    jobs: Arc<crate::jobs::JobRegistry>,
     loaded: Mutex<Option<LoadedSession>>,
     projects: Mutex<PathBuf>,
     runtime: tokio::runtime::Runtime,
     sessions: Arc<OrtSessionPool>,
-}
-struct Job {
-    dto: UiJobDto,
-    cancel: CancellationToken,
 }
 #[derive(Clone)]
 struct LoadedSession {
@@ -51,12 +47,16 @@ pub fn studio() -> Result<Arc<Studio>, String> {
     STUDIO
         .get_or_init(|| {
             let policy = WorkspacePathPolicy::system_default().map_err(err)?;
-            let projects = ProjectsPreferences::new(policy, NativeLegacyProjects)
+            let projects = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
                 .load()
                 .map_err(err)?;
             Ok(Arc::new(Studio {
                 mixer: CpalRealtimeMixer::new().map_err(err)?,
-                job: Mutex::new(None),
+                jobs: Arc::new(crate::jobs::JobRegistry::new(
+                    atomusicator_infrastructure::job_journal::JobJournal::new(
+                        policy.app_data_root().join("jobs"),
+                    ),
+                )),
                 loaded: Mutex::new(None),
                 projects: Mutex::new(projects),
                 runtime: tokio::runtime::Builder::new_multi_thread()
@@ -79,33 +79,19 @@ impl Studio {
             .into_owned())
     }
     pub fn set_projects_directory(&self, path: &Path) -> Result<(), String> {
-        let job = self.job.lock().map_err(err)?;
-        ensure_idle(&job)?;
+        let _idle = self.jobs.idle()?;
         let policy = WorkspacePathPolicy::system_default().map_err(err)?;
-        let path = ProjectsPreferences::new(policy, NativeLegacyProjects)
+        let path = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
             .save(path)
             .map_err(err)?;
         *self.projects.lock().map_err(err)? = path;
         Ok(())
     }
     pub fn job(&self, id: &str) -> Result<UiJobDto, String> {
-        let jobs = self.job.lock().map_err(err)?;
-        let job = jobs
-            .as_ref()
-            .filter(|j| j.dto.id == id)
-            .ok_or("job not found")?;
-        Ok(job.dto.clone())
+        self.jobs.snapshot(id)
     }
     pub fn cancel(&self, id: &str) -> Result<(), String> {
-        let jobs = self.job.lock().map_err(err)?;
-        let job = jobs
-            .as_ref()
-            .filter(|j| j.dto.id == id)
-            .ok_or("job not found")?;
-        if job.dto.status == "running" {
-            job.cancel.cancel();
-        }
-        Ok(())
+        self.jobs.cancel(id)
     }
     pub fn start(
         self: &Arc<Self>,
@@ -118,119 +104,183 @@ impl Studio {
         + Send
         + 'static,
     ) -> Result<String, String> {
-        let id = unique_id();
-        let cancel = CancellationToken::default();
-        {
-            let mut job = self.job.lock().map_err(err)?;
-            ensure_idle(&job)?;
-            *job = Some(Job {
-                cancel: cancel.clone(),
-                dto: UiJobDto {
-                    id: id.clone(),
-                    status: "running".into(),
-                    message: kind.into(),
-                    progress: 0.0,
-                    session: None,
-                    output_directory: None,
-                },
-            });
-        }
-        self.mixer.pause();
+        self.start_request(
+            atomusicator_infrastructure::job_journal::JobRequest::Ephemeral {
+                operation: kind.into(),
+            },
+            None,
+            operation,
+        )
+    }
+    fn start_request(
+        self: &Arc<Self>,
+        request: atomusicator_infrastructure::job_journal::JobRequest,
+        retry_of: Option<String>,
+        operation: impl FnOnce(
+            &Arc<Self>,
+            &str,
+            &CancellationToken,
+        ) -> Result<Option<UiSessionDto>, String>
+        + Send
+        + 'static,
+    ) -> Result<String, String> {
         let backend = Arc::clone(self);
-        let worker_id = id.clone();
-        let spawn = std::thread::Builder::new()
-            .name(format!("atomusicator-{kind}"))
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    operation(&backend, &worker_id, &cancel)
-                }))
-                .unwrap_or_else(|_| Err("native job failed unexpectedly".into()));
-                if let Ok(mut job) = backend.job.lock()
-                    && let Some(job) = job.as_mut().filter(|j| j.dto.id == worker_id)
-                {
-                    match result {
-                        Ok(session) => {
-                            job.dto.status = "completed".into();
-                            job.dto.progress = 1.0;
-                            job.dto.message = "Completed".into();
-                            job.dto.session = session;
-                        }
-                        Err(error) => {
-                            job.dto.status = if cancel.is_cancelled() {
-                                "cancelled"
-                            } else {
-                                "failed"
-                            }
-                            .into();
-                            job.dto.message = error;
-                        }
-                    }
-                }
-            });
-        if let Err(error) = spawn {
-            if let Ok(mut job) = self.job.lock() {
-                *job = None;
-            }
-            return Err(err(error));
-        }
+        let id = self.jobs.start(request, retry_of, move |id, cancel| {
+            operation(&backend, id, cancel)
+        })?;
+        self.mixer.pause();
         Ok(id)
     }
     fn report(&self, id: &str, progress: f32, message: &str) {
-        if let Ok(mut job) = self.job.lock()
-            && let Some(job) = job.as_mut().filter(|j| j.dto.id == id)
+        self.jobs.report(id, progress, message);
+    }
+    pub fn recoverable(&self) -> Result<Vec<crate::api::UiRecoverableJobDto>, String> {
+        self.jobs
+            .journal
+            .recoverable()
+            .map_err(err)?
+            .into_iter()
+            .map(|record| {
+                let atomusicator_infrastructure::job_journal::JobRequest::Separation {
+                    source, ..
+                } = record.request.clone()
+                else {
+                    unreachable!()
+                };
+                Ok(crate::api::UiRecoverableJobDto {
+                    id: record.id,
+                    source_path: source.to_string_lossy().into_owned(),
+                    message: record.message,
+                    output_directory: record
+                        .output_directory
+                        .map(|p| p.to_string_lossy().into_owned()),
+                })
+            })
+            .collect()
+    }
+    pub fn discard(&self, id: &str) -> Result<(), String> {
+        self.jobs.journal.discard(id).map_err(err)
+    }
+    pub fn resume(self: &Arc<Self>, id: &str) -> Result<String, String> {
+        let _lease = self.jobs.journal.lease(id).map_err(err)?;
+        let mut record = self.jobs.journal.load(id).map_err(err)?;
+        if record.discarded
+            || record.lifecycle.status() == atomusicator_domain::jobs::JobStatus::Completed
         {
-            job.dto.progress = job.dto.progress.max(progress.clamp(0.0, 1.0));
-            job.dto.message = message.into();
+            return Err("job cannot be resumed".into());
         }
+        if record.profile != atomusicator_domain::quality::SeparationProfile::compatibility() {
+            return Err("job quality profile is incompatible; start a new separation".into());
+        }
+        let atomusicator_infrastructure::job_journal::JobRequest::Separation {
+            source,
+            projects,
+            download_allowed,
+        } = record.request.clone()
+        else {
+            return Err("this operation does not support recovery".into());
+        };
+        let next = self.separate_request(
+            source,
+            projects,
+            download_allowed,
+            Some(record.id.clone()),
+            record.source_sha256.clone(),
+        )?;
+        record.discarded = true;
+        if let Err(error) = self.jobs.journal.save(&mut record) {
+            self.jobs.report(
+                &next,
+                0.0,
+                &format!("Retry started; previous attempt could not be marked superseded: {error}"),
+            );
+        }
+        Ok(next)
     }
     pub fn separate(
         self: &Arc<Self>,
         source: PathBuf,
         download_allowed: bool,
     ) -> Result<String, String> {
+        let source = source.canonicalize().map_err(err)?;
+        let projects = self.projects.lock().map_err(err)?.clone();
+        self.separate_request(source, projects, download_allowed, None, None)
+    }
+    fn separate_request(
+        self: &Arc<Self>,
+        source: PathBuf,
+        projects: PathBuf,
+        download_allowed: bool,
+        retry_of: Option<String>,
+        expected_hash: Option<String>,
+    ) -> Result<String, String> {
         if !source.is_file() {
             return Err("source audio does not exist".into());
         }
-        self.start("separation",move|backend,id,cancel| {
-            let policy=WorkspacePathPolicy::system_default().map_err(err)?;
-            let manager=ManifestModelManager::from_embedded_manifest(policy.clone()).map_err(err)?;
-            let runtime=&backend.runtime;
-            let mut models=BTreeMap::new();let mut usages=Vec::new();
-            for (index,profile) in manager.manifest().models.iter().enumerate(){
+        let request = atomusicator_infrastructure::job_journal::JobRequest::Separation {
+            source: source.clone(),
+            projects: projects.clone(),
+            download_allowed,
+        };
+        self.start_request(request, retry_of, move |backend,id,cancel| {
+            let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
+            if expected_hash.is_some_and(|expected| expected != source_hash) {
+                return Err("Source content changed since the interrupted attempt; start a new separation".into());
+            }
+            backend.jobs.source_hash(id, source_hash.clone())?;
+            let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+            let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).map_err(err)?;
+            let runtime = &backend.runtime;
+            let mut models = BTreeMap::new();
+            let mut usages = Vec::new();
+            for (index, profile) in manager.manifest().models.iter().enumerate() {
                 check_cancel(cancel)?;
-                backend.report(id,index as f32*0.025,&format!("Verifying {}",profile.filename));
-                let mut local=None;
+                backend.report(id,index as f32 * 0.025,&format!("Verifying {}",profile.filename));
+                let mut local = None;
                 for candidate in policy.model_candidates(&profile.filename).map_err(err)? {
-                    if candidate.is_file() && runtime.block_on(ManifestModelManager::verify_model_file(&candidate)).map(|h|h==profile.sha256).unwrap_or(false){local=Some(candidate);break;}
+                    if candidate.is_file() && runtime.block_on(ManifestModelManager::verify_model_file(&candidate))
+                        .map(|h|h == profile.sha256).unwrap_or(false) { local=Some(candidate); break; }
                 }
-                let path=match local { Some(path)=>path,None if download_allowed=>runtime.block_on(manager.ensure_profile_ready_cancellable(&profile.profile_id, cancel)).map_err(err)?.local_path,None=>return Err("Models are missing or corrupt. Authorize the verified model download and retry.".into()) };
+                let path = match local {
+                    Some(path) => path,
+                    None if download_allowed => runtime.block_on(manager.ensure_profile_ready_cancellable(&profile.profile_id,cancel)).map_err(err)?.local_path,
+                    None => return Err("Models are missing or corrupt. Authorize the verified model download and retry.".into()),
+                };
                 models.insert(profile.profile_id.clone(),(path,profile.sha256.clone()));
                 usages.push(serde_json::json!({"profile_id":profile.profile_id,"sha256":profile.sha256,"license":profile.license,"attribution":profile.attribution,"runtime":"native-mdx-v1 / ort 2.0.0-rc.9"}));
             }
             check_cancel(cancel)?;
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
-            let audio=AudioTools::discover().map_err(err)?.decode_for_separation(&source,cancel).map_err(err)?;
-            let cache=ContentAddressedCache::new(policy.stage_cache_dir(),1,4*1024*1024*1024).ok();
-            let inference=MdxInference::with_session_pool(models,cache,Arc::clone(&backend.sessions)).map_err(err)?;
-            let progress=JobProgress{studio:Arc::clone(backend),id:id.into()};
-            let pipeline=SeparateFiveStemsUseCase::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?);
-            let result=pipeline.execute(&audio,cancel).map_err(err)?;
+            let audio = AudioTools::discover().map_err(err)?.decode_for_separation(&source,cancel).map_err(err)?;
+            let cache = ContentAddressedCache::new(policy.stage_cache_dir(),1,4*1024*1024*1024).ok();
+            let inference = MdxInference::with_session_pool(models,cache,Arc::clone(&backend.sessions)).map_err(err)?;
+            let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
+            let pipeline = SeparateFiveStemsUseCase::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?);
+            let result = pipeline.execute(&audio,cancel).map_err(err)?;
             check_cancel(cancel)?;
+            if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
+                return Err("Source content changed during separation; result was not published".into());
+            }
+            backend.jobs.begin_commit(id)?;
             backend.report(id,0.92,"Publishing five aligned WAV tracks");
-            let workspace=LocalSessionWorkspace::new(backend.projects.lock().map_err(err)?.clone());
-            let asset=AudioAsset{id:AudioAssetId::new(unique_id()).map_err(err)?,display_name:source.file_name().unwrap_or_default().to_string_lossy().into_owned(),path:source};
-            let published=workspace.persist_separation_result(&asset,&result).map_err(err)?;
-            let mut metadata=workspace.read_metadata(&published).map_err(err)?;
-            let record=metadata.additional.get_mut("separation").and_then(|r|r.as_object_mut()).ok_or("separation metadata missing")?;
-            record.insert("engine".into(),serde_json::json!({"name":"Atomusicator native MDX","models":usages,"sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,"compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),"inter_threads":1,"execution":"sequential","precision":"float32"}}));
+            let workspace = LocalSessionWorkspace::new(projects);
+            let asset = AudioAsset { id: AudioAssetId::new(unique_id()).map_err(err)?,
+                display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source };
+            let published = workspace.persist_separation_result(&asset,&result).map_err(err)?;
+            backend.jobs.output(id, published.directory.clone())?;
+            let mut metadata = workspace.read_metadata(&published).map_err(err)?;
+            let record = metadata.additional.get_mut("separation").and_then(|r|r.as_object_mut()).ok_or("separation metadata missing")?;
+            record.insert("engine".into(),serde_json::json!({"name":"Atomusicator native MDX","models":usages,
+                "source_sha256":source_hash,"profile":atomusicator_domain::quality::SeparationProfile::compatibility(),
+                "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
+                "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),"inter_threads":1,"execution":"sequential","precision":"float32"}}));
             workspace.record_separation(&published,serde_json::Value::Object(record.clone())).map_err(err)?;
-            let session=backend.load_directory(&published.directory)?;
+            let session = backend.load_directory(&published.directory)?;
             Ok(Some(session))
         })
     }
     pub fn open(&self, path: &Path) -> Result<UiSessionDto, String> {
-        let job = self.job.lock().map_err(err)?;
-        ensure_idle(&job)?;
+        let _idle = self.jobs.idle()?;
         self.load_directory(path)
     }
     fn load_directory(&self, path: &Path) -> Result<UiSessionDto, String> {
@@ -353,6 +403,7 @@ impl Studio {
                     .map_err(err)?
             };
             check_cancel(cancel)?;
+            backend.jobs.begin_commit(id)?;
             let dto = backend.prepare_tracks(
                 loaded.dto.id.clone(),
                 loaded.dto.directory.clone(),
@@ -420,12 +471,9 @@ impl Studio {
             }
             check_cancel(cancel)?;
             let target = destination.join(format!("Atomusicator-export-{}", unique_id()));
+            backend.jobs.begin_commit(id)?;
             fs::rename(&stage.0, &target).map_err(err)?;
-            if let Ok(mut job) = backend.job.lock()
-                && let Some(job) = job.as_mut()
-            {
-                job.dto.output_directory = Some(target.to_string_lossy().into_owned());
-            }
+            backend.jobs.output(id, target)?;
             Ok(None)
         })
     }
@@ -462,13 +510,6 @@ impl SeparationProgressPort for JobProgress {
         );
     }
 }
-fn ensure_idle(job: &Option<Job>) -> Result<(), String> {
-    if job.as_ref().is_some_and(|j| j.dto.status == "running") {
-        Err("another audio job is already running".into())
-    } else {
-        Ok(())
-    }
-}
 fn check_cancel(cancel: &CancellationToken) -> Result<(), String> {
     if cancel.is_cancelled() {
         Err("operation cancelled".into())
@@ -498,13 +539,16 @@ pub fn parse_stem(key: &str) -> Result<StemType, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::UiJobStatus;
     use atomusicator_domain::{AudioBufferF32, AudioFormat};
     use atomusicator_infrastructure::audio_io::wav_codec::write_wav_f32;
     use std::time::{Duration, Instant};
     fn backend(root: &Path) -> Arc<Studio> {
         Arc::new(Studio {
             mixer: CpalRealtimeMixer::new().unwrap(),
-            job: Mutex::new(None),
+            jobs: Arc::new(crate::jobs::JobRegistry::new(
+                atomusicator_infrastructure::job_journal::JobJournal::new(root.join("jobs")),
+            )),
             loaded: Mutex::new(None),
             projects: Mutex::new(root.to_path_buf()),
             runtime: tokio::runtime::Builder::new_multi_thread()
@@ -519,7 +563,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             let job = backend.job(id).unwrap();
-            if job.status != "running" {
+            if !matches!(
+                job.status,
+                UiJobStatus::Running | UiJobStatus::Cancelling | UiJobStatus::Committing
+            ) {
                 return job;
             }
             assert!(Instant::now() < deadline);
@@ -552,12 +599,12 @@ mod tests {
             .unwrap();
         assert!(backend.start("second", |_, _, _| Ok(None)).is_err());
         backend.cancel(&first).unwrap();
-        assert_eq!(wait(&backend, &first).status, "cancelled");
+        assert_eq!(wait(&backend, &first).status, UiJobStatus::Cancelled);
         let failed = backend
             .start("failure", |_, _, _| Err("broken codec".into()))
             .unwrap();
         let job = wait(&backend, &failed);
-        assert_eq!(job.status, "failed");
+        assert_eq!(job.status, UiJobStatus::Failed);
         assert_eq!(job.message, "broken codec");
         assert!(backend.job(&first).is_err());
     }
@@ -595,14 +642,14 @@ mod tests {
         let original = fs::read(root.0.join("outputs/lead_vocal.wav")).unwrap();
         let id = backend.pitch(3, true).unwrap();
         let job = wait(&backend, &id);
-        assert_eq!(job.status, "completed", "{}", job.message);
+        assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         let pitched = job.session.unwrap();
         assert_eq!(pitched.pitch_semitones, 3);
         let render_path = PathBuf::from(&pitched.tracks[0].file_path);
         let modified = fs::metadata(&render_path).unwrap().modified().unwrap();
         let id = backend.pitch(3, true).unwrap();
         let reused = wait(&backend, &id);
-        assert_eq!(reused.status, "completed", "{}", reused.message);
+        assert_eq!(reused.status, UiJobStatus::Completed, "{}", reused.message);
         assert_eq!(
             reused.session.unwrap().tracks[0].file_path,
             pitched.tracks[0].file_path
@@ -623,12 +670,12 @@ mod tests {
             )
             .unwrap();
         let job = wait(&backend, &id);
-        assert_eq!(job.status, "completed", "{}", job.message);
+        assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         let directory = PathBuf::from(job.output_directory.unwrap());
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
         let id = backend.pitch(0, false).unwrap();
         let job = wait(&backend, &id);
-        assert_eq!(job.status, "completed", "{}", job.message);
+        assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         assert_eq!(
             job.session.unwrap().tracks[0].file_path,
             root.0
@@ -657,7 +704,7 @@ mod tests {
         .unwrap();
         let id = backend.separate(source, false).unwrap();
         let job = wait(&backend, &id);
-        assert_eq!(job.status, "completed", "{}", job.message);
+        assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         let dto = job.session.unwrap();
         assert_eq!(dto.tracks.len(), 5);
         let path = PathBuf::from(dto.directory);

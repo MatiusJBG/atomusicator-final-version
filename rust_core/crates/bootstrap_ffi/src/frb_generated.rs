@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.8.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1773426056;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1747314208;
 
 // Section: executor
 
@@ -104,6 +104,39 @@ fn wire__crate__api__cancel_job_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::cancel_job(api_job_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__discard_job_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "discard_job",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_job_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::discard_job(api_job_id)?;
                     Ok(output_ok)
                 })())
             }
@@ -330,6 +363,71 @@ fn wire__crate__api__projects_directory_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::projects_directory()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__recoverable_jobs_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "recoverable_jobs",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::recoverable_jobs()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__resume_job_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "resume_job",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_job_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::resume_job(api_job_id)?;
                     Ok(output_ok)
                 })())
             }
@@ -733,6 +831,18 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::UiRecoverableJobDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::UiRecoverableJobDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::UiStemTrackDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -762,6 +872,17 @@ impl SseDecode for Option<String> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::UiJobFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::UiJobFailure>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -815,7 +936,9 @@ impl SseDecode for crate::api::UiJobDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_id = <String>::sse_decode(deserializer);
-        let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_status = <crate::api::UiJobStatus>::sse_decode(deserializer);
+        let mut var_retryOf = <Option<String>>::sse_decode(deserializer);
+        let mut var_failure = <Option<crate::api::UiJobFailure>>::sse_decode(deserializer);
         let mut var_progress = <f32>::sse_decode(deserializer);
         let mut var_message = <String>::sse_decode(deserializer);
         let mut var_session = <Option<crate::api::UiSessionDto>>::sse_decode(deserializer);
@@ -823,10 +946,48 @@ impl SseDecode for crate::api::UiJobDto {
         return crate::api::UiJobDto {
             id: var_id,
             status: var_status,
+            retry_of: var_retryOf,
+            failure: var_failure,
             progress: var_progress,
             message: var_message,
             session: var_session,
             output_directory: var_outputDirectory,
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiJobFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::UiJobFailure::Cancelled,
+            1 => crate::api::UiJobFailure::SourceUnavailable,
+            2 => crate::api::UiJobFailure::InvalidArtifact,
+            3 => crate::api::UiJobFailure::InsufficientResources,
+            4 => crate::api::UiJobFailure::Storage,
+            5 => crate::api::UiJobFailure::DeviceUnavailable,
+            6 => crate::api::UiJobFailure::Processing,
+            7 => crate::api::UiJobFailure::Interrupted,
+            _ => unreachable!("Invalid variant for UiJobFailure: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiJobStatus {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::UiJobStatus::Queued,
+            1 => crate::api::UiJobStatus::Running,
+            2 => crate::api::UiJobStatus::Cancelling,
+            3 => crate::api::UiJobStatus::Committing,
+            4 => crate::api::UiJobStatus::Cancelled,
+            5 => crate::api::UiJobStatus::Failed,
+            6 => crate::api::UiJobStatus::Recoverable,
+            7 => crate::api::UiJobStatus::Completed,
+            _ => unreachable!("Invalid variant for UiJobStatus: {}", inner),
         };
     }
 }
@@ -856,6 +1017,22 @@ impl SseDecode for crate::api::UiPlaybackFailure {
         return match inner {
             0 => crate::api::UiPlaybackFailure::DeviceUnavailable,
             _ => unreachable!("Invalid variant for UiPlaybackFailure: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiRecoverableJobDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_sourcePath = <String>::sse_decode(deserializer);
+        let mut var_message = <String>::sse_decode(deserializer);
+        let mut var_outputDirectory = <Option<String>>::sse_decode(deserializer);
+        return crate::api::UiRecoverableJobDto {
+            id: var_id,
+            source_path: var_sourcePath,
+            message: var_message,
+            output_directory: var_outputDirectory,
         };
     }
 }
@@ -926,22 +1103,25 @@ fn pde_ffi_dispatcher_primary_impl(
     match func_id {
         1 => wire__crate__api__application_version_impl(port, ptr, rust_vec_len, data_len),
         2 => wire__crate__api__cancel_job_impl(port, ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__get_engine_version_impl(port, ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__job_status_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__open_audio_session_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__pause_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__play_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__playback_status_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__projects_directory_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__seek_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__set_master_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__set_projects_directory_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__set_track_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__start_export_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__start_pitch_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__start_separation_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__stop_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__supported_stems_impl(port, ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__discard_job_impl(port, ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__get_engine_version_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__job_status_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__open_audio_session_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__pause_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__play_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__playback_status_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__projects_directory_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__recoverable_jobs_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__resume_job_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__seek_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__set_master_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__set_projects_directory_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__set_track_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__start_export_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__start_pitch_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__start_separation_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__stop_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__supported_stems_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -966,6 +1146,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiJobDto {
         [
             self.id.into_into_dart().into_dart(),
             self.status.into_into_dart().into_dart(),
+            self.retry_of.into_into_dart().into_dart(),
+            self.failure.into_into_dart().into_dart(),
             self.progress.into_into_dart().into_dart(),
             self.message.into_into_dart().into_dart(),
             self.session.into_into_dart().into_dart(),
@@ -977,6 +1159,50 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiJobDto {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiJobDto {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::UiJobDto> for crate::api::UiJobDto {
     fn into_into_dart(self) -> crate::api::UiJobDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiJobFailure {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Cancelled => 0.into_dart(),
+            Self::SourceUnavailable => 1.into_dart(),
+            Self::InvalidArtifact => 2.into_dart(),
+            Self::InsufficientResources => 3.into_dart(),
+            Self::Storage => 4.into_dart(),
+            Self::DeviceUnavailable => 5.into_dart(),
+            Self::Processing => 6.into_dart(),
+            Self::Interrupted => 7.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiJobFailure {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiJobFailure> for crate::api::UiJobFailure {
+    fn into_into_dart(self) -> crate::api::UiJobFailure {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiJobStatus {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Queued => 0.into_dart(),
+            Self::Running => 1.into_dart(),
+            Self::Cancelling => 2.into_dart(),
+            Self::Committing => 3.into_dart(),
+            Self::Cancelled => 4.into_dart(),
+            Self::Failed => 5.into_dart(),
+            Self::Recoverable => 6.into_dart(),
+            Self::Completed => 7.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiJobStatus {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiJobStatus> for crate::api::UiJobStatus {
+    fn into_into_dart(self) -> crate::api::UiJobStatus {
         self
     }
 }
@@ -1013,6 +1239,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::UiPlaybackFailure>
     for crate::api::UiPlaybackFailure
 {
     fn into_into_dart(self) -> crate::api::UiPlaybackFailure {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiRecoverableJobDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.source_path.into_into_dart().into_dart(),
+            self.message.into_into_dart().into_dart(),
+            self.output_directory.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::UiRecoverableJobDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiRecoverableJobDto>
+    for crate::api::UiRecoverableJobDto
+{
+    fn into_into_dart(self) -> crate::api::UiRecoverableJobDto {
         self
     }
 }
@@ -1139,6 +1388,16 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::UiRecoverableJobDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::UiRecoverableJobDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::UiStemTrackDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1165,6 +1424,16 @@ impl SseEncode for Option<String> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::UiJobFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::UiJobFailure>::sse_encode(value, serializer);
         }
     }
 }
@@ -1214,11 +1483,57 @@ impl SseEncode for crate::api::UiJobDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.id, serializer);
-        <String>::sse_encode(self.status, serializer);
+        <crate::api::UiJobStatus>::sse_encode(self.status, serializer);
+        <Option<String>>::sse_encode(self.retry_of, serializer);
+        <Option<crate::api::UiJobFailure>>::sse_encode(self.failure, serializer);
         <f32>::sse_encode(self.progress, serializer);
         <String>::sse_encode(self.message, serializer);
         <Option<crate::api::UiSessionDto>>::sse_encode(self.session, serializer);
         <Option<String>>::sse_encode(self.output_directory, serializer);
+    }
+}
+
+impl SseEncode for crate::api::UiJobFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::UiJobFailure::Cancelled => 0,
+                crate::api::UiJobFailure::SourceUnavailable => 1,
+                crate::api::UiJobFailure::InvalidArtifact => 2,
+                crate::api::UiJobFailure::InsufficientResources => 3,
+                crate::api::UiJobFailure::Storage => 4,
+                crate::api::UiJobFailure::DeviceUnavailable => 5,
+                crate::api::UiJobFailure::Processing => 6,
+                crate::api::UiJobFailure::Interrupted => 7,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::UiJobStatus {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::UiJobStatus::Queued => 0,
+                crate::api::UiJobStatus::Running => 1,
+                crate::api::UiJobStatus::Cancelling => 2,
+                crate::api::UiJobStatus::Committing => 3,
+                crate::api::UiJobStatus::Cancelled => 4,
+                crate::api::UiJobStatus::Failed => 5,
+                crate::api::UiJobStatus::Recoverable => 6,
+                crate::api::UiJobStatus::Completed => 7,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -1245,6 +1560,16 @@ impl SseEncode for crate::api::UiPlaybackFailure {
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for crate::api::UiRecoverableJobDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.source_path, serializer);
+        <String>::sse_encode(self.message, serializer);
+        <Option<String>>::sse_encode(self.output_directory, serializer);
     }
 }
 

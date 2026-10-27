@@ -4,6 +4,11 @@ import '../../src/rust_bridge/api.dart' as native;
 import 'native_engine_provider.dart';
 
 abstract class StudioGateway {
+  Future<List<native.UiRecoverableJobDto>> recoverableJobs() async => [];
+  Future<String> resume(String id) =>
+      throw UnsupportedError('Recovery is unavailable');
+  Future<void> discard(String id) =>
+      throw UnsupportedError('Recovery is unavailable');
   Future<String> separate(String source, bool download);
   Future<native.UiJobDto> job(String id);
   Future<void> cancel(String id);
@@ -28,6 +33,13 @@ abstract class StudioGateway {
 }
 
 class NativeStudioGateway implements StudioGateway {
+  @override
+  Future<List<native.UiRecoverableJobDto>> recoverableJobs() =>
+      native.recoverableJobs();
+  @override
+  Future<String> resume(String id) => native.resumeJob(jobId: id);
+  @override
+  Future<void> discard(String id) => native.discardJob(jobId: id);
   @override
   Future<String> separate(String source, bool download) =>
       native.startSeparation(sourcePath: source, allowModelDownload: download);
@@ -131,6 +143,7 @@ class StudioState {
   StudioState copyWith({
     native.UiSessionDto? session,
     native.UiJobDto? job,
+    bool clearJob = false,
     bool? busy,
     String? error,
     bool clearError = false,
@@ -143,7 +156,7 @@ class StudioState {
     String? exportDirectory,
   }) => StudioState(
     session: session ?? this.session,
-    job: job ?? this.job,
+    job: clearJob ? null : job ?? this.job,
     busy: busy ?? this.busy,
     error: clearError ? null : error ?? this.error,
     playing: playing ?? this.playing,
@@ -163,9 +176,25 @@ final studioProvider = NotifierProvider<StudioController, StudioState>(
   StudioController.new,
 );
 
+bool jobIsActive(native.UiJobStatus? status) => switch (status) {
+  native.UiJobStatus.queued ||
+  native.UiJobStatus.running ||
+  native.UiJobStatus.cancelling ||
+  native.UiJobStatus.committing => true,
+  _ => false,
+};
+
+final recoverableJobsProvider =
+    FutureProvider<List<native.UiRecoverableJobDto>>((ref) async {
+      if (ref.watch(studioProvider.select((s) => s.busy))) return [];
+      await ref.watch(nativeEngineStatusProvider.future);
+      return ref.read(studioGatewayProvider).recoverableJobs();
+    });
+
 class StudioController extends Notifier<StudioState> {
   bool _polling = false, _disposed = false;
   int _commands = 0;
+  int _epoch = 0, _playbackRevision = 0;
   StudioGateway get _gateway => ref.read(studioGatewayProvider);
   @override
   StudioState build() {
@@ -180,39 +209,59 @@ class StudioController extends Notifier<StudioState> {
     return const StudioState();
   }
 
-  Future<void> _guard(Future<void> Function() action) async {
+  Future<void> _guard(
+    Future<void> Function() action, {
+    bool ownsBusy = false,
+  }) async {
+    final epoch = _epoch;
     try {
       await ref.read(nativeEngineStatusProvider.future);
+      if (_disposed || epoch != _epoch) return;
       await action();
     } catch (error) {
-      if (!_disposed) {
-        state = state.copyWith(error: error.toString(), busy: false);
+      if (!_disposed && epoch == _epoch) {
+        state = state.copyWith(
+          error: error.toString(),
+          busy: ownsBusy ? false : state.busy,
+        );
       }
     }
   }
 
   Future<void> _start(Future<String> Function() action) async {
     if (state.busy) return;
-    state = state.copyWith(busy: true, clearError: true, playing: false);
+    final epoch = ++_epoch;
+    _playbackRevision++;
+    state = state.copyWith(
+      busy: true,
+      clearJob: true,
+      clearError: true,
+      playing: false,
+    );
     await _guard(() async {
       final id = await action();
-      if (!_disposed) {
+      if (!_disposed && epoch == _epoch) {
         state = state.copyWith(
           job: native.UiJobDto(
             id: id,
-            status: 'running',
+            status: native.UiJobStatus.running,
             progress: 0,
             message: 'Starting…',
           ),
         );
       }
-    });
+    }, ownsBusy: true);
   }
 
   Future<void> separate(String source, {bool allowDownload = false}) =>
       _start(() => _gateway.separate(source, allowDownload));
   Future<void> applyPitch(int semitones, bool formants) =>
       _start(() => _gateway.pitch(semitones, formants));
+  Future<void> resumeSavedJob(String id) => _start(() => _gateway.resume(id));
+  Future<void> discardSavedJob(String id) => _guard(() async {
+    await _gateway.discard(id);
+    ref.invalidate(recoverableJobsProvider);
+  });
   Future<void> export(
     String destination,
     List<String> stems,
@@ -233,19 +282,26 @@ class StudioController extends Notifier<StudioState> {
     ),
   );
   Future<void> cancel() => _guard(() async {
-    if (state.job != null) await _gateway.cancel(state.job!.id);
+    final id = state.job?.id;
+    if (id != null) {
+      await _gateway.cancel(id);
+      _epoch++;
+    }
   });
   Future<void> open(String directory) async {
     if (state.busy) return;
-    state = state.copyWith(busy: true, clearError: true);
+    final epoch = ++_epoch;
+    _playbackRevision++;
+    state = state.copyWith(busy: true, clearJob: true, clearError: true);
     await _guard(() async {
       final session = await _gateway.open(directory);
-      await _accept(session);
-      if (!_disposed) state = state.copyWith(busy: false);
-    });
+      if (_disposed || epoch != _epoch) return;
+      await _accept(session, epoch);
+      if (!_disposed && epoch == _epoch) state = state.copyWith(busy: false);
+    }, ownsBusy: true);
   }
 
-  Future<void> _accept(native.UiSessionDto session) async {
+  Future<void> _accept(native.UiSessionDto session, int epoch) async {
     final same = state.session?.id == session.id;
     final tracks = {
       for (final track in session.tracks)
@@ -255,9 +311,10 @@ class StudioController extends Notifier<StudioState> {
                 : const MixTrackState(),
     };
     for (final entry in tracks.entries) {
+      if (_disposed || epoch != _epoch) return;
       await _gateway.track(entry.key, entry.value);
     }
-    if (!_disposed) {
+    if (!_disposed && epoch == _epoch) {
       state = state.copyWith(
         session: session,
         tracks: Map.unmodifiable(tracks),
@@ -277,24 +334,30 @@ class StudioController extends Notifier<StudioState> {
       return;
     }
     _polling = true;
+    final epoch = _epoch;
+    final revision = _playbackRevision;
     try {
-      if (state.busy && state.job?.status == 'running') {
-        final job = await _gateway.job(state.job!.id);
-        if (_disposed) return;
-        if (job.status == 'completed' && job.session != null) {
-          await _accept(job.session!);
+      if (state.busy && jobIsActive(state.job?.status)) {
+        final jobId = state.job!.id;
+        final job = await _gateway.job(jobId);
+        if (_disposed || epoch != _epoch || state.job?.id != jobId) return;
+        if (job.status == native.UiJobStatus.completed && job.session != null) {
+          await _accept(job.session!, epoch);
         }
-        if (_disposed) return;
+        if (_disposed || epoch != _epoch) return;
         state = state.copyWith(
           job: job,
-          busy: job.status == 'running',
-          error: job.status == 'failed' ? job.message : null,
+          busy: jobIsActive(job.status),
+          error: job.status == native.UiJobStatus.failed ? job.message : null,
           exportDirectory: job.outputDirectory,
         );
       }
       if (state.session != null && !state.busy) {
         final status = await _gateway.playback();
-        if (!_disposed) {
+        if (!_disposed &&
+            epoch == _epoch &&
+            revision == _playbackRevision &&
+            !state.busy) {
           state = state.copyWith(
             playing: status.playing,
             position: status.positionSeconds,
@@ -314,8 +377,8 @@ class StudioController extends Notifier<StudioState> {
         }
       }
     } catch (error) {
-      if (!_disposed) {
-        state = state.copyWith(error: error.toString(), busy: false);
+      if (!_disposed && epoch == _epoch) {
+        state = state.copyWith(error: error.toString());
       }
     } finally {
       _polling = false;
@@ -324,6 +387,7 @@ class StudioController extends Notifier<StudioState> {
 
   Future<void> transport(String action) => _guard(() async {
     if (state.busy || state.session == null) return;
+    _playbackRevision++;
     _commands++;
     try {
       if (action == 'play') {
@@ -339,8 +403,12 @@ class StudioController extends Notifier<StudioState> {
   });
   Future<void> seek(double seconds) => _guard(() async {
     if (!state.busy) {
+      final epoch = _epoch;
+      final revision = ++_playbackRevision;
       await _gateway.seek(seconds);
-      if (!_disposed) state = state.copyWith(position: seconds);
+      if (!_disposed && epoch == _epoch && revision == _playbackRevision) {
+        state = state.copyWith(position: seconds.clamp(0, state.duration));
+      }
     }
   });
   Future<void> setMaster(double gain) => _guard(() async {

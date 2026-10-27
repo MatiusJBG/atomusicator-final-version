@@ -25,11 +25,51 @@ pub struct UiSessionDto {
 #[derive(Debug, Clone)]
 pub struct UiJobDto {
     pub id: String,
-    pub status: String,
+    pub status: UiJobStatus,
+    pub retry_of: Option<String>,
+    pub failure: Option<UiJobFailure>,
     pub progress: f32,
     pub message: String,
     pub session: Option<UiSessionDto>,
     pub output_directory: Option<String>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiJobStatus {
+    Queued,
+    Running,
+    Cancelling,
+    Committing,
+    Cancelled,
+    Failed,
+    Recoverable,
+    Completed,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiJobFailure {
+    Cancelled,
+    SourceUnavailable,
+    InvalidArtifact,
+    InsufficientResources,
+    Storage,
+    DeviceUnavailable,
+    Processing,
+    Interrupted,
+}
+#[derive(Debug, Clone)]
+pub struct UiRecoverableJobDto {
+    pub id: String,
+    pub source_path: String,
+    pub message: String,
+    pub output_directory: Option<String>,
+}
+pub fn recoverable_jobs() -> Result<Vec<UiRecoverableJobDto>, String> {
+    crate::studio::studio()?.recoverable()
+}
+pub fn resume_job(job_id: String) -> Result<String, String> {
+    crate::studio::studio()?.resume(&job_id)
+}
+pub fn discard_job(job_id: String) -> Result<(), String> {
+    crate::studio::studio()?.discard(&job_id)
 }
 #[derive(Debug, Clone)]
 pub struct UiTrackMeterDto {

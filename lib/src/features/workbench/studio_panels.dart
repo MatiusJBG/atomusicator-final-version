@@ -111,9 +111,67 @@ class StudioFeedback extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            ref
+                .watch(recoverableJobsProvider)
+                .when(
+                  loading: () => const SizedBox.shrink(),
+                  error:
+                      (error, _) =>
+                          ref.watch(nativeEngineStatusProvider).hasValue
+                              ? Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text(
+                                      'Recovery history could not be read.',
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        () => ref.invalidate(
+                                          recoverableJobsProvider,
+                                        ),
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
+                              )
+                              : const SizedBox.shrink(),
+                  data:
+                      (jobs) => Column(
+                        children: [
+                          for (final saved in jobs)
+                            Row(
+                              children: [
+                                const Icon(Icons.restore, size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Interrupted separation: ${saved.sourcePath.split(RegExp(r'[/\\]')).last}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      () => ref
+                                          .read(studioProvider.notifier)
+                                          .resumeSavedJob(saved.id),
+                                  child: const Text('Resume'),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      () => ref
+                                          .read(studioProvider.notifier)
+                                          .discardSavedJob(saved.id),
+                                  child: const Text('Discard'),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                ),
             if (state.busy) ...[
               LinearProgressIndicator(
-                value: job?.status == 'running' ? job!.progress : null,
+                value: jobIsActive(job?.status) ? job!.progress : null,
               ),
               Row(
                 children: [
@@ -122,7 +180,7 @@ class StudioFeedback extends ConsumerWidget {
                   ),
                   TextButton(
                     onPressed:
-                        job?.status == 'running'
+                        job?.status == native.UiJobStatus.running
                             ? () => ref.read(studioProvider.notifier).cancel()
                             : null,
                     child: const Text('Cancel'),
@@ -188,10 +246,11 @@ class StudioFeedback extends ConsumerWidget {
                   ],
                 ),
               ),
-            if (job?.status == 'cancelled')
+            if (job?.status == native.UiJobStatus.cancelled)
               const Text('Operation cancelled. Previous session retained.'),
-            if (job?.status == 'completed' && job?.outputDirectory != null)
-              SelectableText('Exported to ${job!.outputDirectory}'),
+            if (job?.status == native.UiJobStatus.completed &&
+                job?.outputDirectory != null)
+              SelectableText('Saved to ${job!.outputDirectory}'),
           ],
         ),
       ),

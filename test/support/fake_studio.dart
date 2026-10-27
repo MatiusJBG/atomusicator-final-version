@@ -1,8 +1,25 @@
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:atomusicator/src/rust_bridge/api.dart';
 
 class FakeStudio implements StudioGateway {
+  @override
+  Future<List<UiRecoverableJobDto>> recoverableJobs() async => recoveryItems;
+  List<UiRecoverableJobDto> recoveryItems = [];
+  @override
+  Future<String> resume(String id) async {
+    calls.add('resume:$id');
+    return 'retry';
+  }
+
+  @override
+  Future<void> discard(String id) async {
+    calls.add('discard:$id');
+  }
+
+  Completer<UiPlaybackDto>? pendingPlayback;
+  bool failMaster = false;
   bool fail = false, cancelled = false;
   String failureMessage = "bad codec";
   final calls = <String>[];
@@ -32,7 +49,7 @@ class FakeStudio implements StudioGateway {
   @override
   Future<UiJobDto> job(String id) async => UiJobDto(
     id: id,
-    status: cancelled ? 'cancelled' : 'completed',
+    status: cancelled ? UiJobStatus.cancelled : UiJobStatus.completed,
     progress: 1,
     message: 'done',
     session: cancelled ? null : session,
@@ -74,7 +91,8 @@ class FakeStudio implements StudioGateway {
     failure: null,
   );
   @override
-  Future<UiPlaybackDto> playback() async => playbackValue;
+  Future<UiPlaybackDto> playback() async =>
+      pendingPlayback == null ? playbackValue : pendingPlayback!.future;
   @override
   Future<void> play() async {
     calls.add('play');
@@ -97,6 +115,7 @@ class FakeStudio implements StudioGateway {
 
   @override
   Future<void> master(double gain) async {
+    if (failMaster) throw StateError('master failed');
     calls.add('master:$gain');
   }
 

@@ -25,6 +25,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  UiJobFailure dco_decode_box_autoadd_ui_job_failure(dynamic raw);
+
+  @protected
   UiPlaybackFailure dco_decode_box_autoadd_ui_playback_failure(dynamic raw);
 
   @protected
@@ -49,6 +52,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<UiRecoverableJobDto> dco_decode_list_ui_recoverable_job_dto(dynamic raw);
+
+  @protected
   List<UiStemTrackDto> dco_decode_list_ui_stem_track_dto(dynamic raw);
 
   @protected
@@ -56,6 +62,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  UiJobFailure? dco_decode_opt_box_autoadd_ui_job_failure(dynamic raw);
 
   @protected
   UiPlaybackFailure? dco_decode_opt_box_autoadd_ui_playback_failure(
@@ -78,10 +87,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiJobDto dco_decode_ui_job_dto(dynamic raw);
 
   @protected
+  UiJobFailure dco_decode_ui_job_failure(dynamic raw);
+
+  @protected
+  UiJobStatus dco_decode_ui_job_status(dynamic raw);
+
+  @protected
   UiPlaybackDto dco_decode_ui_playback_dto(dynamic raw);
 
   @protected
   UiPlaybackFailure dco_decode_ui_playback_failure(dynamic raw);
+
+  @protected
+  UiRecoverableJobDto dco_decode_ui_recoverable_job_dto(dynamic raw);
 
   @protected
   UiSessionDto dco_decode_ui_session_dto(dynamic raw);
@@ -100,6 +118,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  UiJobFailure sse_decode_box_autoadd_ui_job_failure(
+    SseDeserializer deserializer,
+  );
 
   @protected
   UiPlaybackFailure sse_decode_box_autoadd_ui_playback_failure(
@@ -130,6 +153,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<UiRecoverableJobDto> sse_decode_list_ui_recoverable_job_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<UiStemTrackDto> sse_decode_list_ui_stem_track_dto(
     SseDeserializer deserializer,
   );
@@ -141,6 +169,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  UiJobFailure? sse_decode_opt_box_autoadd_ui_job_failure(
+    SseDeserializer deserializer,
+  );
 
   @protected
   UiPlaybackFailure? sse_decode_opt_box_autoadd_ui_playback_failure(
@@ -165,10 +198,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiJobDto sse_decode_ui_job_dto(SseDeserializer deserializer);
 
   @protected
+  UiJobFailure sse_decode_ui_job_failure(SseDeserializer deserializer);
+
+  @protected
+  UiJobStatus sse_decode_ui_job_status(SseDeserializer deserializer);
+
+  @protected
   UiPlaybackDto sse_decode_ui_playback_dto(SseDeserializer deserializer);
 
   @protected
   UiPlaybackFailure sse_decode_ui_playback_failure(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UiRecoverableJobDto sse_decode_ui_recoverable_job_dto(
     SseDeserializer deserializer,
   );
 
@@ -189,6 +233,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_ui_job_failure(
+    UiJobFailure self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_ui_playback_failure(
@@ -227,6 +277,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_ui_recoverable_job_dto(
+    List<UiRecoverableJobDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_ui_stem_track_dto(
     List<UiStemTrackDto> self,
     SseSerializer serializer,
@@ -240,6 +296,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_ui_job_failure(
+    UiJobFailure? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_ui_playback_failure(
@@ -266,11 +328,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_ui_job_dto(UiJobDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_ui_job_failure(UiJobFailure self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ui_job_status(UiJobStatus self, SseSerializer serializer);
+
+  @protected
   void sse_encode_ui_playback_dto(UiPlaybackDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_ui_playback_failure(
     UiPlaybackFailure self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ui_recoverable_job_dto(
+    UiRecoverableJobDto self,
     SseSerializer serializer,
   );
 

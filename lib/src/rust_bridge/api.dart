@@ -6,7 +6,16 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+Future<List<UiRecoverableJobDto>> recoverableJobs() =>
+    RustLib.instance.api.crateApiRecoverableJobs();
+
+Future<String> resumeJob({required String jobId}) =>
+    RustLib.instance.api.crateApiResumeJob(jobId: jobId);
+
+Future<void> discardJob({required String jobId}) =>
+    RustLib.instance.api.crateApiDiscardJob(jobId: jobId);
 
 Future<String> startSeparation({
   required String sourcePath,
@@ -98,7 +107,9 @@ Future<List<String>> supportedStems() =>
 
 class UiJobDto {
   final String id;
-  final String status;
+  final UiJobStatus status;
+  final String? retryOf;
+  final UiJobFailure? failure;
   final double progress;
   final String message;
   final UiSessionDto? session;
@@ -107,6 +118,8 @@ class UiJobDto {
   const UiJobDto({
     required this.id,
     required this.status,
+    this.retryOf,
+    this.failure,
     required this.progress,
     required this.message,
     this.session,
@@ -117,6 +130,8 @@ class UiJobDto {
   int get hashCode =>
       id.hashCode ^
       status.hashCode ^
+      retryOf.hashCode ^
+      failure.hashCode ^
       progress.hashCode ^
       message.hashCode ^
       session.hashCode ^
@@ -129,10 +144,34 @@ class UiJobDto {
           runtimeType == other.runtimeType &&
           id == other.id &&
           status == other.status &&
+          retryOf == other.retryOf &&
+          failure == other.failure &&
           progress == other.progress &&
           message == other.message &&
           session == other.session &&
           outputDirectory == other.outputDirectory;
+}
+
+enum UiJobFailure {
+  cancelled,
+  sourceUnavailable,
+  invalidArtifact,
+  insufficientResources,
+  storage,
+  deviceUnavailable,
+  processing,
+  interrupted,
+}
+
+enum UiJobStatus {
+  queued,
+  running,
+  cancelling,
+  committing,
+  cancelled,
+  failed,
+  recoverable,
+  completed,
 }
 
 class UiPlaybackDto {
@@ -171,6 +210,37 @@ class UiPlaybackDto {
 }
 
 enum UiPlaybackFailure { deviceUnavailable }
+
+class UiRecoverableJobDto {
+  final String id;
+  final String sourcePath;
+  final String message;
+  final String? outputDirectory;
+
+  const UiRecoverableJobDto({
+    required this.id,
+    required this.sourcePath,
+    required this.message,
+    this.outputDirectory,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      sourcePath.hashCode ^
+      message.hashCode ^
+      outputDirectory.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiRecoverableJobDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sourcePath == other.sourcePath &&
+          message == other.message &&
+          outputDirectory == other.outputDirectory;
+}
 
 class UiSessionDto {
   final String id;

@@ -62,7 +62,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.8.0';
 
   @override
-  int get rustContentHash => 1773426056;
+  int get rustContentHash => 1747314208;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -77,6 +77,8 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiCancelJob({required String jobId});
 
+  Future<void> crateApiDiscardJob({required String jobId});
+
   Future<String> crateApiGetEngineVersion();
 
   Future<UiJobDto> crateApiJobStatus({required String jobId});
@@ -90,6 +92,10 @@ abstract class RustLibApi extends BaseApi {
   Future<UiPlaybackDto> crateApiPlaybackStatus();
 
   Future<String> crateApiProjectsDirectory();
+
+  Future<List<UiRecoverableJobDto>> crateApiRecoverableJobs();
+
+  Future<String> crateApiResumeJob({required String jobId});
 
   Future<void> crateApiSeek({required double positionSeconds});
 
@@ -194,6 +200,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "cancel_job", argNames: ["jobId"]);
 
   @override
+  Future<void> crateApiDiscardJob({required String jobId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(jobId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiDiscardJobConstMeta,
+        argValues: [jobId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiDiscardJobConstMeta =>
+      const TaskConstMeta(debugName: "discard_job", argNames: ["jobId"]);
+
+  @override
   Future<String> crateApiGetEngineVersion() {
     return handler.executeNormal(
       NormalTask(
@@ -202,7 +236,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 4,
             port: port_,
           );
         },
@@ -230,7 +264,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 5,
             port: port_,
           );
         },
@@ -258,7 +292,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -287,7 +321,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -314,7 +348,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -341,7 +375,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 9,
             port: port_,
           );
         },
@@ -368,7 +402,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 10,
             port: port_,
           );
         },
@@ -387,6 +421,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "projects_directory", argNames: []);
 
   @override
+  Future<List<UiRecoverableJobDto>> crateApiRecoverableJobs() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_ui_recoverable_job_dto,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiRecoverableJobsConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRecoverableJobsConstMeta =>
+      const TaskConstMeta(debugName: "recoverable_jobs", argNames: []);
+
+  @override
+  Future<String> crateApiResumeJob({required String jobId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(jobId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiResumeJobConstMeta,
+        argValues: [jobId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiResumeJobConstMeta =>
+      const TaskConstMeta(debugName: "resume_job", argNames: ["jobId"]);
+
+  @override
   Future<void> crateApiSeek({required double positionSeconds}) {
     return handler.executeNormal(
       NormalTask(
@@ -396,7 +485,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 13,
             port: port_,
           );
         },
@@ -424,7 +513,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 14,
             port: port_,
           );
         },
@@ -452,7 +541,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 15,
             port: port_,
           );
         },
@@ -493,7 +582,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 16,
             port: port_,
           );
         },
@@ -537,7 +626,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 17,
             port: port_,
           );
         },
@@ -587,7 +676,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 18,
             port: port_,
           );
         },
@@ -621,7 +710,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 19,
             port: port_,
           );
         },
@@ -650,7 +739,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 20,
             port: port_,
           );
         },
@@ -677,7 +766,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 21,
             port: port_,
           );
         },
@@ -705,6 +794,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  UiJobFailure dco_decode_box_autoadd_ui_job_failure(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_ui_job_failure(raw);
   }
 
   @protected
@@ -756,6 +851,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<UiRecoverableJobDto> dco_decode_list_ui_recoverable_job_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_ui_recoverable_job_dto)
+        .toList();
+  }
+
+  @protected
   List<UiStemTrackDto> dco_decode_list_ui_stem_track_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_ui_stem_track_dto).toList();
@@ -771,6 +876,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  UiJobFailure? dco_decode_opt_box_autoadd_ui_job_failure(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_ui_job_failure(raw);
   }
 
   @protected
@@ -809,16 +920,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiJobDto dco_decode_ui_job_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return UiJobDto(
       id: dco_decode_String(arr[0]),
-      status: dco_decode_String(arr[1]),
-      progress: dco_decode_f_32(arr[2]),
-      message: dco_decode_String(arr[3]),
-      session: dco_decode_opt_box_autoadd_ui_session_dto(arr[4]),
-      outputDirectory: dco_decode_opt_String(arr[5]),
+      status: dco_decode_ui_job_status(arr[1]),
+      retryOf: dco_decode_opt_String(arr[2]),
+      failure: dco_decode_opt_box_autoadd_ui_job_failure(arr[3]),
+      progress: dco_decode_f_32(arr[4]),
+      message: dco_decode_String(arr[5]),
+      session: dco_decode_opt_box_autoadd_ui_session_dto(arr[6]),
+      outputDirectory: dco_decode_opt_String(arr[7]),
     );
+  }
+
+  @protected
+  UiJobFailure dco_decode_ui_job_failure(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UiJobFailure.values[raw as int];
+  }
+
+  @protected
+  UiJobStatus dco_decode_ui_job_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UiJobStatus.values[raw as int];
   }
 
   @protected
@@ -840,6 +965,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiPlaybackFailure dco_decode_ui_playback_failure(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return UiPlaybackFailure.values[raw as int];
+  }
+
+  @protected
+  UiRecoverableJobDto dco_decode_ui_recoverable_job_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return UiRecoverableJobDto(
+      id: dco_decode_String(arr[0]),
+      sourcePath: dco_decode_String(arr[1]),
+      message: dco_decode_String(arr[2]),
+      outputDirectory: dco_decode_opt_String(arr[3]),
+    );
   }
 
   @protected
@@ -905,6 +1044,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UiJobFailure sse_decode_box_autoadd_ui_job_failure(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_ui_job_failure(deserializer));
+  }
+
+  @protected
   UiPlaybackFailure sse_decode_box_autoadd_ui_playback_failure(
     SseDeserializer deserializer,
   ) {
@@ -965,6 +1112,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<UiRecoverableJobDto> sse_decode_list_ui_recoverable_job_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <UiRecoverableJobDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_ui_recoverable_job_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<UiStemTrackDto> sse_decode_list_ui_stem_track_dto(
     SseDeserializer deserializer,
   ) {
@@ -998,6 +1159,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  UiJobFailure? sse_decode_opt_box_autoadd_ui_job_failure(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_ui_job_failure(deserializer));
     } else {
       return null;
     }
@@ -1051,7 +1225,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiJobDto sse_decode_ui_job_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_id = sse_decode_String(deserializer);
-    var var_status = sse_decode_String(deserializer);
+    var var_status = sse_decode_ui_job_status(deserializer);
+    var var_retryOf = sse_decode_opt_String(deserializer);
+    var var_failure = sse_decode_opt_box_autoadd_ui_job_failure(deserializer);
     var var_progress = sse_decode_f_32(deserializer);
     var var_message = sse_decode_String(deserializer);
     var var_session = sse_decode_opt_box_autoadd_ui_session_dto(deserializer);
@@ -1059,11 +1235,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return UiJobDto(
       id: var_id,
       status: var_status,
+      retryOf: var_retryOf,
+      failure: var_failure,
       progress: var_progress,
       message: var_message,
       session: var_session,
       outputDirectory: var_outputDirectory,
     );
+  }
+
+  @protected
+  UiJobFailure sse_decode_ui_job_failure(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return UiJobFailure.values[inner];
+  }
+
+  @protected
+  UiJobStatus sse_decode_ui_job_status(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return UiJobStatus.values[inner];
   }
 
   @protected
@@ -1092,6 +1284,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return UiPlaybackFailure.values[inner];
+  }
+
+  @protected
+  UiRecoverableJobDto sse_decode_ui_recoverable_job_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_sourcePath = sse_decode_String(deserializer);
+    var var_message = sse_decode_String(deserializer);
+    var var_outputDirectory = sse_decode_opt_String(deserializer);
+    return UiRecoverableJobDto(
+      id: var_id,
+      sourcePath: var_sourcePath,
+      message: var_message,
+      outputDirectory: var_outputDirectory,
+    );
   }
 
   @protected
@@ -1153,6 +1362,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_ui_job_failure(
+    UiJobFailure self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_ui_job_failure(self, serializer);
   }
 
   @protected
@@ -1221,6 +1439,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_ui_recoverable_job_dto(
+    List<UiRecoverableJobDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_ui_recoverable_job_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_ui_stem_track_dto(
     List<UiStemTrackDto> self,
     SseSerializer serializer,
@@ -1251,6 +1481,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_ui_job_failure(
+    UiJobFailure? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_ui_job_failure(self, serializer);
     }
   }
 
@@ -1302,11 +1545,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_ui_job_dto(UiJobDto self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.id, serializer);
-    sse_encode_String(self.status, serializer);
+    sse_encode_ui_job_status(self.status, serializer);
+    sse_encode_opt_String(self.retryOf, serializer);
+    sse_encode_opt_box_autoadd_ui_job_failure(self.failure, serializer);
     sse_encode_f_32(self.progress, serializer);
     sse_encode_String(self.message, serializer);
     sse_encode_opt_box_autoadd_ui_session_dto(self.session, serializer);
     sse_encode_opt_String(self.outputDirectory, serializer);
+  }
+
+  @protected
+  void sse_encode_ui_job_failure(UiJobFailure self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_ui_job_status(UiJobStatus self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -1329,6 +1586,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_ui_recoverable_job_dto(
+    UiRecoverableJobDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.sourcePath, serializer);
+    sse_encode_String(self.message, serializer);
+    sse_encode_opt_String(self.outputDirectory, serializer);
   }
 
   @protected

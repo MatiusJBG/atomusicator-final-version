@@ -90,8 +90,17 @@ void main() {
           final deadline = DateTime.now().add(const Duration(seconds: 90));
           while (DateTime.now().isBefore(deadline)) {
             final job = await native.jobStatus(jobId: id);
-            if (job.status != 'running') {
-              expect(job.status, 'completed', reason: job.message);
+            if (!const {
+              native.UiJobStatus.queued,
+              native.UiJobStatus.running,
+              native.UiJobStatus.cancelling,
+              native.UiJobStatus.committing,
+            }.contains(job.status)) {
+              expect(
+                job.status,
+                native.UiJobStatus.completed,
+                reason: job.message,
+              );
               return job;
             }
             await Future<void>.delayed(const Duration(milliseconds: 50));
