@@ -10,6 +10,62 @@ use atomusicator_domain::{
 
 use crate::CancellationToken;
 
+/// Random-access, interleaved float audio. Implementations perform I/O outside realtime callbacks.
+pub trait AudioBlockSource: Send + Sync {
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn metadata(&self) -> AudioAssetMetadata;
+    fn peak(&self) -> f32;
+    fn content_hash(&self) -> &str;
+    /// Returns complete frames read; fills the remainder of the destination with silence.
+    fn read_frames(&self, start: u64, destination: &mut [f32]) -> Result<usize, DomainError>;
+}
+pub trait AudioBlockWriter {
+    fn write(&mut self, samples: &[f32]) -> Result<(), DomainError>;
+    fn finish(self: Box<Self>) -> Result<std::sync::Arc<dyn AudioBlockSource>, DomainError>;
+}
+pub trait AudioBlockStore: Send + Sync {
+    fn create(
+        &self,
+        stage: &str,
+        metadata: AudioAssetMetadata,
+    ) -> Result<Box<dyn AudioBlockWriter>, DomainError>;
+    fn cached(
+        &self,
+        _stage: &str,
+        _signature: &str,
+        _parents: &[std::sync::Arc<dyn AudioBlockSource>],
+        _cancel: &CancellationToken,
+    ) -> Result<Option<std::sync::Arc<dyn AudioBlockSource>>, DomainError> {
+        Ok(None)
+    }
+    fn remember(
+        &self,
+        _stage: &str,
+        _signature: &str,
+        _parents: &[std::sync::Arc<dyn AudioBlockSource>],
+        _artifact: &std::sync::Arc<dyn AudioBlockSource>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub enum InferenceStage {
+    VocalBus,
+    LeadVocal,
+    Drums,
+    Bass,
+}
+pub trait BlockStemInferencePort: Send + Sync {
+    fn stage_identity(&self, stage: InferenceStage) -> String;
+    fn infer_blocks(
+        &self,
+        stage: InferenceStage,
+        source: &dyn AudioBlockSource,
+        target: &mut dyn AudioBlockWriter,
+        cancel: &CancellationToken,
+    ) -> Result<(), DomainError>;
+}
+
 pub trait AudioDecoderPort: Send + Sync {
     fn probe_metadata(&self, path: &Path) -> Result<AudioAssetMetadata, DomainError>;
     fn decode_to_f32(&self, path: &Path) -> Result<AudioBufferF32, DomainError>;
