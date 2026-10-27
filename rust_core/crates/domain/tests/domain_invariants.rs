@@ -64,9 +64,16 @@ fn deserialization_preserves_audio_and_pitch_invariants() {
     );
     assert!(
         serde_json::from_str::<AudioBufferF32>(
-            r#"{"format":{"sample_rate_hz":48000,"channels":1},"samples":[NaN]}"#
+            r#"{"format":{"sample_rate_hz":48000,"channels":2},"samples":[0.1]}"#
         )
         .is_err()
+    );
+
+    let audio = AudioBufferF32::new(AudioFormat::new(48_000, 1).unwrap(), vec![0.1, -0.1]).unwrap();
+    let encoded = serde_json::to_string(&audio).unwrap();
+    assert_eq!(
+        serde_json::from_str::<AudioBufferF32>(&encoded).unwrap(),
+        audio
     );
 }
 
