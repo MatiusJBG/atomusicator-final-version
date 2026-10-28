@@ -34,7 +34,7 @@ class WorkbenchController extends Notifier<WorkbenchState> {
     final added = sources.where((file) => knownPaths.add(_pathKey(file.path)));
     state = WorkbenchState(
       sources: List.unmodifiable([...state.sources, ...added]),
-      selectedPath: state.selectedSource?.path ?? sources.first.path,
+      selectedPath: sources.first.path,
     );
   }
 
