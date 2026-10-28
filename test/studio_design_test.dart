@@ -131,6 +131,15 @@ void main() {
       await tester.tap(find.byTooltip('Export stems').first);
       await tester.pumpAndSettle();
       expect(find.textContaining('exceed 0 dBFS'), findsOneWidget);
+      await tester.tap(find.text('24 bits'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('32-bit float').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('exceed 0 dBFS'), findsNothing);
+      await tester.tap(find.text('FLAC'));
+      await tester.pumpAndSettle();
+      expect(find.text('24 bits'), findsOneWidget);
+      expect(find.textContaining('exceed 0 dBFS'), findsOneWidget);
       await tester.ensureVisible(find.text('Normalize loudness'));
       await tester.tap(find.text('Normalize loudness'));
       await tester.pumpAndSettle();

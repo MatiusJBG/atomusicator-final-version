@@ -137,6 +137,21 @@ void main() {
           File('${exported.outputDirectory}/bass.flac').existsSync(),
           isTrue,
         );
+        final floatExport = await finish(
+          await native.startExport(
+            destination: directory.path,
+            selectedStems: ['bass'],
+            format: 'wav',
+            sampleRate: 44100,
+            channels: 2,
+            bitDepth: 32,
+            normalize: false,
+          ),
+        );
+        expect(
+          File('${floatExport.outputDirectory}/bass.wav').lengthSync(),
+          greaterThan(1000),
+        );
         await native.stop();
       } finally {
         RustLib.dispose();

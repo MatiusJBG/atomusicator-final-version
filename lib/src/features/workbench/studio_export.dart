@@ -80,7 +80,11 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                       child: _FormatOption(
                         value: value,
                         selected: format == value,
-                        onTap: () => setState(() => format = value),
+                        onTap:
+                            () => setState(() {
+                              format = value;
+                              if (format != 'wav' && bits == 32) bits = 24;
+                            }),
                       ),
                     ),
                   ],
@@ -106,6 +110,12 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                       options:
                           format == 'mp3'
                               ? const {320: '320 kbps'}
+                              : format == 'wav'
+                              ? const {
+                                16: '16 bits',
+                                24: '24 bits',
+                                32: '32-bit float',
+                              }
                               : const {16: '16 bits', 24: '24 bits'},
                       onChanged:
                           format == 'mp3'
@@ -227,11 +237,13 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                 value: normalize,
                 onChanged: (v) => setState(() => normalize = v ?? false),
               ),
-              if (exceedsFullScale && !normalize)
+              if (exceedsFullScale &&
+                  !normalize &&
+                  !(format == 'wav' && bits == 32))
                 const Padding(
                   padding: EdgeInsets.only(bottom: 10),
                   child: Text(
-                    'Selected stems exceed 0 dBFS. Fixed-point exports may clip; enable normalization to reduce peaks.',
+                    'Selected stems exceed 0 dBFS. Choose 32-bit float WAV to preserve levels, or enable normalization for fixed-point export.',
                     style: TextStyle(fontSize: 11, color: AppColors.amber),
                   ),
                 ),

@@ -76,10 +76,10 @@ impl ExportOptions {
         if !matches!(format, "wav" | "flac" | "mp3")
             || !matches!(sample_rate, 44100 | 48000)
             || !matches!(channels, 1 | 2)
-            || !matches!(bit_depth, 16 | 24)
+            || !(matches!(bit_depth, 16 | 24) || format == "wav" && bit_depth == 32)
         {
             return Err(io_error(
-                "export requires WAV/FLAC/MP3, 44100/48000 Hz, mono/stereo and 16/24 bits",
+                "export requires WAV/FLAC/MP3, 44100/48000 Hz, mono/stereo and 16/24 bits (32-bit float is supported for WAV)",
             ));
         }
         Ok(Self {
@@ -260,7 +260,11 @@ impl AudioTools {
             "-c:a".into(),
         ]);
         match options.format.as_str() {
-            "wav" => args.push(format!("pcm_s{}le", options.bit_depth).into()),
+            "wav" => args.push(if options.bit_depth == 32 {
+                "pcm_f32le".into()
+            } else {
+                format!("pcm_s{}le", options.bit_depth).into()
+            }),
             "flac" => args.extend([
                 "flac".into(),
                 "-sample_fmt".into(),
