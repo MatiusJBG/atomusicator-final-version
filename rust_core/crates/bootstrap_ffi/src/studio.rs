@@ -278,7 +278,7 @@ impl Studio {
             download_allowed,
         };
         self.start_request(request, retry_of, move |backend,id,cancel| {
-            let _resources=backend.resources.reserve_separation().map_err(crate::jobs::JobFailure::from_domain)?;
+            let _resources=backend.resources.reserve_separation(&backend.sessions).map_err(crate::jobs::JobFailure::from_domain)?;
             let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
             if expected_hash.is_some_and(|expected| expected != source_hash) {
                 return Err("Source content changed since the interrupted attempt; start a new separation".into());

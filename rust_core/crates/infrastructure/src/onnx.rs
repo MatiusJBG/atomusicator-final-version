@@ -137,6 +137,43 @@ impl OrtSessionPool {
     pub fn provider_order(&self) -> &[ExecutionProviderKind] {
         &self.provider_order
     }
+
+    /// Release idle ORT allocations under pressure. Live leases remain counted
+    /// and cannot be evicted to pretend that another heavyweight model fits.
+    pub fn trim_idle_and_resize(&self, capacity: usize) -> Result<(), InfrastructureError> {
+        let capacity = NonZeroUsize::new(capacity).ok_or_else(|| {
+            InfrastructureError::InvalidManifest(
+                "ONNX session pool capacity must be positive".into(),
+            )
+        })?;
+        let mut sessions = self.sessions.lock().map_err(|_| {
+            InfrastructureError::OnnxRuntime("session pool lock was poisoned".into())
+        })?;
+        let live = sessions
+            .iter()
+            .filter(|(_, session)| Arc::strong_count(session) > 1)
+            .count();
+        if live > capacity.get() {
+            return Err(InfrastructureError::SessionCapacityBusy);
+        }
+        let idle: Vec<_> = sessions
+            .iter()
+            .filter(|(_, session)| Arc::strong_count(session) == 1)
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in idle {
+            sessions.pop(&path);
+        }
+        sessions.resize(capacity);
+        Ok(())
+    }
+
+    pub fn capacity(&self) -> Result<usize, InfrastructureError> {
+        self.sessions
+            .lock()
+            .map(|sessions| sessions.cap().get())
+            .map_err(|_| InfrastructureError::OnnxRuntime("session pool lock was poisoned".into()))
+    }
     pub fn intra_threads(&self) -> usize {
         self.intra_threads
     }

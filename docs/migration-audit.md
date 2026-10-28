@@ -115,6 +115,14 @@ El producto y su paquete siguen sin Python.
 Las cuotas de caché son de retención, no límites sobre artefactos activos. Los
 presupuestos de RAM son estimaciones conservadoras de admisión, no un límite de
 RSS impuesto por Windows ni contabilidad exacta del allocator de ONNX Runtime.
+La admisión CPU permite una ruta compacta cuando no quedan los 3 GiB libres
+estimados para retener dos sesiones: libera modelos ONNX inactivos, limita su
+caché a una sesión y vuelve a consultar la memoria del sistema. Exige al menos
+2 GiB disponibles después de reservar 512 MiB para el sistema; no cambia modelos,
+precisión, FFT ni hilos de inferencia. La caché reducida permanece así durante
+la vida del pool. No elimina sesiones prestadas ni permite trabajos simultáneos.
+La regresión con los cuatro modelos reales compara esta ruta con el baseline de
+dos sesiones y exige error máximo por muestra `<=1e-6` en los cinco stems.
 El espacio libre se verifica antes de trabajar y el proceso FFmpeg conserva un
 margen de seguridad. Los cachés históricos en proyectos anteriores se preservan;
 los nuevos renders de pitch se guardan en la caché nativa central.
