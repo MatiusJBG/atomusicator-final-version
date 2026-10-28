@@ -414,6 +414,16 @@ impl RealtimePlaybackPort for CpalRealtimeMixer {
                 "formant-preserving pitch shifting is not implemented by the realtime playback-rate processor".into(),
             ));
         }
+        if semitones != 0.0
+            && self
+                .session
+                .lock()
+                .map_err(|_| DomainError::DspFailure("audio session state was poisoned".into()))?
+                .as_ref()
+                .is_some_and(|s| matches!(s.playback, PlaybackSession::Streaming(_)))
+        {
+            return Err(DomainError::DspFailure("Use the offline pitch job for disk-backed sessions; changing playback rate would alter tempo".into()));
+        }
         self.pitch_ratio
             .store(2.0f32.powf(semitones / 12.0).to_bits(), Ordering::Relaxed);
         Ok(())
@@ -850,9 +860,12 @@ fn aligned_mix<T: Sample + FromSample<f32>>(
         let solo = controls.iter().any(|t| t.solo.load(Ordering::Relaxed));
         for frame in output.chunks_exact_mut(channels) {
             let Ok(source) = consumer.pop() else {
+                // Observe producer abandonment before its finish flag. The queue's
+                // release/acquire ordering then makes a normal EOF visible here.
+                let abandoned = consumer.is_abandoned();
                 if finished.load(Ordering::Acquire) {
                     controls.transport.playing.store(false, Ordering::Release);
-                } else if consumer.is_abandoned() {
+                } else if abandoned {
                     controls
                         .transport
                         .source_failed
@@ -1140,6 +1153,49 @@ mod tests {
             .store(true, Ordering::Release);
         mixer.load_session(stems(0.1)).unwrap();
         assert!(!mixer.source_failed());
+    }
+
+    #[test]
+    fn normal_aligned_eof_is_not_reported_as_a_read_failure() {
+        let (producer, mut consumer) = rtrb::RingBuffer::new(4);
+        let finished = AtomicBool::new(true);
+        drop(producer);
+        let controls = MixerControls::new();
+        let mut output = [1.0f32; 4];
+        aligned_mix(
+            &mut output,
+            2,
+            &mut consumer,
+            &controls,
+            &finished,
+            &AtomicBool::new(false),
+        );
+        assert!(!controls.transport.playing.load(Ordering::Acquire));
+        assert!(!controls.transport.source_failed.load(Ordering::Acquire));
+        assert_eq!(output, [0.0; 4]);
+    }
+
+    #[test]
+    fn disk_backed_pitch_cannot_silently_ignore_a_playback_rate_request() {
+        let root = crate::audio_tools::TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let paths = stems(0.1)
+            .into_iter()
+            .map(|stem| {
+                let path = root.0.join(format!("{:?}.wav", stem.kind));
+                super::super::wav_codec::write_wav_f32(&path, &stem.audio).unwrap();
+                (stem.kind, path)
+            })
+            .collect();
+        let mixer = CpalRealtimeMixer::new().unwrap();
+        mixer.load_streaming_session(paths).unwrap();
+        assert!(
+            mixer
+                .set_pitch_semitones(2.0, false)
+                .unwrap_err()
+                .to_string()
+                .contains("offline pitch")
+        );
+        assert!(mixer.set_pitch_semitones(0.0, false).is_ok());
     }
 
     fn stems(value: f32) -> Vec<Stem> {
