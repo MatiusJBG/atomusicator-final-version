@@ -27,7 +27,7 @@ impl Drop for ChildOwner {
 }
 #[test]
 fn terminating_the_owner_preserves_source_and_recovers_pre_and_post_commit() {
-    for boundary in ["before", "after"] {
+    for boundary in ["decode", "before", "after"] {
         let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
@@ -74,7 +74,9 @@ fn terminating_the_owner_preserves_source_and_recovers_pre_and_post_commit() {
             &JobJournal::hash_source(&source, &CancellationToken::default()).unwrap()
         );
         let published = root.0.join("projects/attempt");
-        if boundary == "before" {
+        if boundary == "decode" {
+            assert!(!published.exists());
+        } else if boundary == "before" {
             assert!(!published.exists());
             let staging = recovered[0].staging_directory.as_ref().unwrap();
             assert!(staging.exists());
@@ -91,6 +93,12 @@ fn terminating_the_owner_preserves_source_and_recovers_pre_and_post_commit() {
             journal.cleanup_staging(&recovered[0]).unwrap();
             assert!(published.join("session.json").exists());
         }
+        let work = recovered[0].work_directory.as_ref().unwrap();
+        journal.cleanup_staging(&recovered[0]).unwrap();
+        assert!(
+            !work.exists(),
+            "decoded work must be cleaned even after a publication crash"
+        );
         journal.discard("attempt").unwrap();
         assert!(journal.recoverable().unwrap().is_empty());
     }
@@ -125,6 +133,13 @@ fn journal_child_fixture() {
     record.lifecycle.start().unwrap();
     record.output_directory = Some(projects.join("attempt"));
     journal.save(&mut record).unwrap();
+    let work = TemporaryDirectory::for_job(&projects, "attempt").unwrap();
+    record.work_directory = Some(work.0.clone());
+    journal.save(&mut record).unwrap();
+    fs::write(work.0.join("decoded.f32"), b"owned decoded spool").unwrap();
+    if boundary == "decode" {
+        park(&root);
+    }
     let record = RefCell::new(record);
     let store = FloatSpoolStore::new(root.join("spools"));
     let mut writer = store

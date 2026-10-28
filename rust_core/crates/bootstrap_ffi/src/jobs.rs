@@ -198,6 +198,15 @@ impl JobRegistry {
         job.record.staging_directory = Some(path);
         self.journal.save(&mut job.record).map_err(err)
     }
+    pub fn work_directory(&self, id: &str, path: std::path::PathBuf) -> Result<(), String> {
+        let mut guard = self.active.lock().map_err(err)?;
+        let job = guard
+            .as_mut()
+            .filter(|j| j.dto.id == id)
+            .ok_or("job not found")?;
+        job.record.work_directory = Some(path);
+        self.journal.save(&mut job.record).map_err(err)
+    }
     pub fn begin_commit(&self, id: &str) -> Result<(), String> {
         let mut guard = self.active.lock().map_err(err)?;
         let job = guard

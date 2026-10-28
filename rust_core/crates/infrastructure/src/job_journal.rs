@@ -35,6 +35,8 @@ pub struct JournalRecord {
     pub output_directory: Option<PathBuf>,
     #[serde(default)]
     pub staging_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub work_directory: Option<PathBuf>,
     pub failure: Option<atomusicator_domain::jobs::FailureKind>,
     pub discarded: bool,
 }
@@ -97,6 +99,7 @@ impl JobJournal {
             message: "Queued".into(),
             output_directory: None,
             staging_directory: None,
+            work_directory: None,
             failure: None,
             discarded: false,
         };
@@ -219,13 +222,21 @@ impl JobJournal {
         self.save(&mut record)
     }
     pub fn cleanup_staging(&self, record: &JournalRecord) -> Result<(), DomainError> {
-        let Some(path) = record
-            .staging_directory
-            .as_ref()
-            .filter(|path| path.exists())
-        else {
-            return Ok(());
-        };
+        for path in [&record.work_directory, &record.staging_directory]
+            .into_iter()
+            .flatten()
+        {
+            if path.exists() {
+                self.cleanup_owned_directory(record, path)?;
+            }
+        }
+        Ok(())
+    }
+    fn cleanup_owned_directory(
+        &self,
+        record: &JournalRecord,
+        path: &Path,
+    ) -> Result<(), DomainError> {
         let JobRequest::Separation { projects, .. } = &record.request else {
             return Err(failure("unexpected staging owner"));
         };

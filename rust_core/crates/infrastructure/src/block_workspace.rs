@@ -44,15 +44,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
     if stems.len() != 5 || stems.values().any(|s| s.metadata() != metadata) {
         return Err(DomainError::AudioAlignmentMismatch);
     }
-    let stage = TemporaryDirectory::new(&root)?;
-    let mut owner = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(stage.0.join(".job-owner"))
-        .map_err(failure)?;
-    owner.write_all(id.as_bytes()).map_err(failure)?;
-    owner.sync_all().map_err(failure)?;
-    drop(owner);
+    let stage = TemporaryDirectory::for_job(&root, id)?;
     (hooks.staged)(&stage.0).map_err(failure)?;
     let outputs = stage.0.join("outputs");
     fs::create_dir(&outputs).map_err(failure)?;

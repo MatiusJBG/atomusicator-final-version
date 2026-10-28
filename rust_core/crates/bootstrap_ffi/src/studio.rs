@@ -270,6 +270,8 @@ impl Studio {
         if !source.is_file() {
             return Err("source audio does not exist".into());
         }
+        let projects =
+            WorkspacePathPolicy::validate_projects_destination(&projects).map_err(err)?;
         let request = atomusicator_infrastructure::job_journal::JobRequest::Separation {
             source: source.clone(),
             projects: projects.clone(),
@@ -305,7 +307,8 @@ impl Studio {
             }
             check_cancel(cancel)?;
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
-            let work = TemporaryDirectory::new(&std::env::temp_dir()).map_err(err)?;
+            let work = TemporaryDirectory::for_job(&projects,id).map_err(err)?;
+            backend.jobs.work_directory(id,work.0.clone())?;
             let audio = Arc::new(AudioTools::discover().map_err(err)?
                 .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?);
             use atomusicator_application::ports::AudioBlockSource;

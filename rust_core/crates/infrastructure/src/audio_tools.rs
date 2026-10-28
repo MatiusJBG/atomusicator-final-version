@@ -27,6 +27,24 @@ pub fn unique_id() -> String {
 
 pub struct TemporaryDirectory(pub PathBuf);
 impl TemporaryDirectory {
+    pub fn for_job(parent: &Path, id: &str) -> Result<Self, DomainError> {
+        if id.is_empty()
+            || id.len() > 160
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err(io_error("invalid temporary job owner"));
+        }
+        let directory = Self::new(parent)?;
+        let mut marker = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(directory.0.join(".job-owner"))
+            .map_err(io_error)?;
+        use std::io::Write;
+        marker.write_all(id.as_bytes()).map_err(io_error)?;
+        marker.sync_all().map_err(io_error)?;
+        Ok(directory)
+    }
     pub fn new(parent: &Path) -> Result<Self, DomainError> {
         let path = parent.join(format!(".atomusicator-{}", unique_id()));
         fs::create_dir_all(&path).map_err(io_error)?;
@@ -144,6 +162,7 @@ impl AudioTools {
                 "pcm_f32le".into(),
                 output.as_os_str().into(),
             ],
+            &output,
             cancel,
         )?;
         let audio = read_wav_f32(&output)?;
@@ -173,6 +192,7 @@ impl AudioTools {
                 "f32le".into(),
                 target.as_os_str().into(),
             ],
+            target,
             cancel,
         )?;
         crate::storage::float_spool::FloatSpool::inspect_raw(
@@ -207,6 +227,7 @@ impl AudioTools {
                 "pcm_f32le".into(),
                 target.as_os_str().into(),
             ],
+            target,
             cancel,
         )?;
         let original = wav_metadata(source)?;
@@ -255,11 +276,12 @@ impl AudioTools {
             _ => return Err(io_error("unsupported export format")),
         }
         args.push(target.as_os_str().into());
-        self.run(&args, cancel)
+        self.run(&args, target, cancel)
     }
     fn run(
         &self,
         args: &[std::ffi::OsString],
+        output: &Path,
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
         if cancel.is_cancelled() {
@@ -298,7 +320,13 @@ impl AudioTools {
         })?;
         let start = Instant::now();
         loop {
-            let remaining = match fs4::available_space(&log.0) {
+            let output_parent = output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let remaining = match fs4::available_space(&log.0).and_then(|logs| {
+                fs4::available_space(output_parent).map(|destination| logs.min(destination))
+            }) {
                 Ok(available) => available,
                 Err(error) => {
                     let _ = child.kill();
