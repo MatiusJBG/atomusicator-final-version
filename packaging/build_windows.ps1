@@ -13,6 +13,9 @@ $rustManifest = Join-Path $repoRoot 'rust_core\Cargo.toml'
 $rustReleaseDirectory = $null
 $installerDefinition = Join-Path $PSScriptRoot 'Atomusicator.iss'
 $installerOutput = Join-Path $PSScriptRoot 'dist'
+$versionLine = Select-String -LiteralPath (Join-Path $repoRoot 'pubspec.yaml') -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+\d+)?\s*$'
+if (-not $versionLine) { throw 'Could not read the application version from pubspec.yaml.' }
+$appVersion = $versionLine.Matches[0].Groups[1].Value
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
@@ -84,6 +87,19 @@ foreach ($required in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'
 }
 
 # Record exactly what is distributed, without including the manifest in itself.
+$pitchVendor = Join-Path $repoRoot 'rust_core\crates\infrastructure\native\vendor'
+$pitchLicenses = Join-Path $releaseDirectory 'licenses\signalsmith'
+New-Item -ItemType Directory -Path $pitchLicenses -Force | Out-Null
+foreach ($entry in @(
+    @{source='STRETCH-LICENSE.txt'; target='STRETCH-LICENSE.txt'},
+    @{source='signalsmith-linear\LICENSE.txt'; target='LINEAR-LICENSE.txt'},
+    @{source='PROVENANCE.json'; target='PROVENANCE.json'}
+)) {
+    Copy-Item -LiteralPath (Join-Path $pitchVendor $entry.source) -Destination (Join-Path $pitchLicenses $entry.target) -Force
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $releaseDirectory -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $releaseDirectory -Force
+
 $releaseRoot = [System.IO.Path]::GetFullPath($releaseDirectory)
 $manifest = Get-ChildItem -LiteralPath $releaseRoot -File -Recurse |
     Where-Object { $_.Name -ne 'release-manifest.json' } |
@@ -119,7 +135,7 @@ if (-not $SkipInstaller) {
     if (-not $compiler) { throw 'Inno Setup 6 was not found. Install it or pass -SkipInstaller to prepare the release folder only.' }
 
     New-Item -ItemType Directory -Path $installerOutput -Force | Out-Null
-    & $compiler.Source "/DAppVersion=0.6.0" "/DReleaseDir=$releaseDirectory" "/DOutputDir=$installerOutput" $installerDefinition
+    & $compiler.Source "/DAppVersion=$appVersion" "/DReleaseDir=$releaseDirectory" "/DOutputDir=$installerOutput" $installerDefinition
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
 }
 
