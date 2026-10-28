@@ -202,43 +202,15 @@ class StudioTransport extends ConsumerWidget {
   }
 }
 
-class PitchControls extends ConsumerStatefulWidget {
+class PitchControls extends ConsumerWidget {
   const PitchControls({super.key, this.compact = false});
   final bool compact;
   @override
-  ConsumerState<PitchControls> createState() => _PitchControlsState();
-}
-
-class _PitchControlsState extends ConsumerState<PitchControls> {
-  double semitones = 0;
-  bool formants = true;
-  bool applying = false;
-  @override
-  void initState() {
-    super.initState();
-    semitones =
-        ref.read(studioProvider).session?.pitchSemitones.toDouble() ?? 0;
-    ref.listenManual(studioProvider.select((s) => s.busy), (previous, next) {
-      if (previous == true && !next && mounted) {
-        setState(() => applying = false);
-      }
-    });
-    ref.listenManual(
-      studioProvider.select((s) => (s.session?.id, s.session?.pitchSemitones)),
-      (previous, next) {
-        if (mounted && next != previous) {
-          setState(() => semitones = next.$2?.toDouble() ?? 0);
-        }
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
-    final enabled = state.session != null && !state.busy;
-    final processing = applying && state.busy;
-    final progress = state.job?.progress.clamp(0.0, 1.0) ?? 0;
+    final semitones = state.requestedPitch;
+    final formants = state.requestedFormants;
+    final enabled = state.session != null && state.livePitch != null;
     final controls = Row(
       children: [
         Container(
@@ -255,12 +227,14 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
                 visualDensity: VisualDensity.compact,
                 onPressed:
                     enabled && semitones > -12
-                        ? () => setState(() => semitones--)
+                        ? () => ref
+                            .read(studioProvider.notifier)
+                            .applyPitch(semitones - 1, formants)
                         : null,
                 icon: const Icon(Icons.remove, size: 14),
               ),
               Text(
-                'Pitch: ${semitones > 0 ? '+' : ''}${semitones.round()} st',
+                'Pitch: ${semitones > 0 ? '+' : ''}$semitones st',
                 style: const TextStyle(fontSize: 11),
               ),
               IconButton(
@@ -268,7 +242,9 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
                 visualDensity: VisualDensity.compact,
                 onPressed:
                     enabled && semitones < 12
-                        ? () => setState(() => semitones++)
+                        ? () => ref
+                            .read(studioProvider.notifier)
+                            .applyPitch(semitones + 1, formants)
                         : null,
                 icon: const Icon(Icons.add, size: 14),
               ),
@@ -282,7 +258,12 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
             scale: .7,
             child: Switch(
               value: formants,
-              onChanged: enabled ? (v) => setState(() => formants = v) : null,
+              onChanged:
+                  enabled
+                      ? (v) => ref
+                          .read(studioProvider.notifier)
+                          .applyPitch(semitones, v)
+                      : null,
             ),
           ),
         ),
@@ -291,22 +272,18 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
           style: TextStyle(fontSize: 10, color: AppColors.muted),
         ),
         const Spacer(),
-        OutlinedButton.icon(
+        const Text(
+          'Live',
+          style: TextStyle(fontSize: 10, color: AppColors.muted),
+        ),
+        IconButton(
+          tooltip: 'Reset pitch',
           onPressed:
               enabled
-                  ? () {
-                    setState(() => applying = true);
-                    ref
-                        .read(studioProvider.notifier)
-                        .applyPitch(semitones.round(), formants);
-                  }
+                  ? () =>
+                      ref.read(studioProvider.notifier).applyPitch(0, formants)
                   : null,
-          icon: Icon(processing ? Icons.hourglass_top : Icons.check, size: 16),
-          label: Text(
-            processing
-                ? 'Applying… ${(progress * 100).round()}%'
-                : 'Apply pitch',
-          ),
+          icon: const Icon(Icons.restart_alt, size: 16),
         ),
       ],
     );
@@ -314,7 +291,7 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!widget.compact) ...[
+        if (!compact) ...[
           const Row(
             children: [
               Icon(Icons.tune, size: 16),
@@ -333,7 +310,7 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
           const SizedBox(height: 10),
         ],
         controls,
-        if (!widget.compact)
+        if (!compact)
           SizedBox(
             height: 26,
             child: Row(
@@ -344,14 +321,18 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
                 ),
                 Expanded(
                   child: Slider(
-                    value: semitones,
+                    value: semitones.toDouble(),
                     min: -12,
                     max: 12,
                     divisions: 24,
                     semanticFormatterCallback:
                         (v) => 'Pitch ${v.round()} semitones',
                     onChanged:
-                        enabled ? (v) => setState(() => semitones = v) : null,
+                        enabled
+                            ? (v) => ref
+                                .read(studioProvider.notifier)
+                                .applyPitch(v.round(), formants)
+                            : null,
                   ),
                 ),
                 const Text(
@@ -361,15 +342,6 @@ class _PitchControlsState extends ConsumerState<PitchControls> {
               ],
             ),
           ),
-        if (processing) ...[
-          const SizedBox(height: 6),
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 6),
-          const Text(
-            'Preserving original stems.',
-            style: TextStyle(fontSize: 10, color: AppColors.muted),
-          ),
-        ],
       ],
     );
   }
@@ -379,7 +351,7 @@ class PitchDialog extends StatelessWidget {
   const PitchDialog({super.key});
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Apply pitch'),
+    title: const Text('Live pitch'),
     content: const SizedBox(width: 570, child: PitchControls()),
     actions: [
       TextButton(

@@ -178,7 +178,7 @@ void main() {
     container.dispose();
   });
 
-  testWidgets('pitch dock applies selected semitones and preserves formants', (
+  testWidgets('pitch dock updates live without an apply button or busy job', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -189,9 +189,9 @@ void main() {
     final container = await mount(tester, gateway);
     await tester.tap(find.byTooltip('Raise pitch'));
     await tester.pump();
-    await tester.tap(find.text('Apply pitch'));
-    await tester.pump();
-    expect(gateway.calls, contains('pitch:1:true'));
+    expect(find.text('Apply pitch'), findsNothing);
+    expect(gateway.calls, contains('live-pitch:1:true'));
+    expect(container.read(studioProvider).busy, isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
     container.dispose();
   });
