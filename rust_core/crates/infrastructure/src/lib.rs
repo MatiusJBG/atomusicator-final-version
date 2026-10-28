@@ -20,3 +20,4 @@ pub mod session_workspace;
 pub mod storage;
 pub mod use_case_adapters;
 pub mod waveform;
+pub mod waveform_index;
