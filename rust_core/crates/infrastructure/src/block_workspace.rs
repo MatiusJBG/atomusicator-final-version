@@ -2,6 +2,7 @@
 use crate::{
     audio_io::wav_codec::write_block_wav,
     audio_tools::TemporaryDirectory,
+    session_reader::stem_key,
     session_workspace::WorkspaceSession,
     storage::{checksum::file_hash, paths::WorkspacePathPolicy},
 };
@@ -87,15 +88,6 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
         id: id.into(),
         directory: target,
     })
-}
-fn stem_key(kind: StemType) -> &'static str {
-    match kind {
-        StemType::LeadVocal => "lead_vocal",
-        StemType::BackingVocals => "backing_vocals",
-        StemType::Drums => "drums",
-        StemType::Bass => "bass",
-        StemType::Instrumental => "instrumental",
-    }
 }
 fn failure(e: impl std::fmt::Display) -> DomainError {
     DomainError::WorkspaceFailure(e.to_string())
