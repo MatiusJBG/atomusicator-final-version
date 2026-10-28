@@ -15,7 +15,7 @@ Flutter aprobadas con la DLL/FFmpeg configurados y render local adicional de una
 sesión real mediante la DLL empaquetada. Se comprobaron 940×650 y 1440×900,
 controles fijos al desplazar/zoom, pitch con formantes y selección efectiva de
 exportación. Release Windows recompilado; instalador y las puertas restantes de
-la migración conservan su estado pendiente. Los renders y referencias visuales
+la migración conservaban su estado pendiente en esa actualización visual; el cierre técnico posterior se registra abajo. Los renders y referencias visuales
 permanecen locales. No se modificó el DSP ni se añadieron dependencias Python.
 
 Fecha: 27 de octubre de 2026. Rama única: `feature/complete-python-migration`.
@@ -53,7 +53,7 @@ La caché antigua también estaba mal localizada: Python usa
 | Mezcla | Ganancia, mute/solo, panorama, master | Controles internos sin conexión | Controles conectados; master antes de clipping y medidor master basado en las muestras mezcladas |
 | Formas de onda/zoom | Ondas y desplazamiento común | Cuadrícula decorativa | Picos reales desde Rust, playhead y búsqueda sobre la onda, regla temporal y zoom común 100–400 % |
 | Pitch | ±12, Rubber Band, tempo constante, formantes | Ajuste de velocidad que altera duración | Render offline Rubber Band con tempo 1.0 y formantes opcionales; usa originales, publica lote completo y mantiene posición/mezcla; 0 restaura originales |
-| Exportación | WAV/FLAC/MP3, selección y opciones | Solo puerto WAV | Lote transaccional de stems seleccionados, 44.1/48 kHz, mono/estéreo, WAV/FLAC 16/24 bits, MP3 320 kbps, loudnorm opcional y pitch activo |
+| Exportación | WAV/FLAC/MP3, selección y opciones | Solo puerto WAV | Lote transaccional de stems seleccionados, 44.1/48 kHz, mono/estéreo, WAV 16/24 bits o float32, FLAC 16/24 bits, MP3 320 kbps, loudnorm opcional y pitch activo |
 | Proyectos | Carpeta configurable y QSettings | Política de rutas | Selector de carpeta escribible y preferencia JSON persistida en AppData; adopción no destructiva de carpetas antiguas |
 | Puente | No aplica | Metadatos solamente | API generada con FRB **2.8.0**, trabajos, sesiones, transporte y mezcla; audio PCM permanece en Rust |
 | Distribución | FFmpeg/FFprobe incluidos | Script sin herramientas de conversión | Preparador PowerShell con hashes de archivo/ZIP y licencias, paquete Flutter + DLL Rust + ONNX Runtime + FFmpeg/Rubber Band |
@@ -86,103 +86,171 @@ La exportación toma cada archivo del stem con su pitch activo; ganancia de
 escucha, mute/solo, panorama y master no cambian los archivos exportados, igual
 que en la aplicación Python.
 
-## Pendientes concretos, por prioridad
+## Cierre implementado: trabajos, audio largo y recuperación
 
-1. **Memoria y streaming para canciones largas.** El flujo conectado carga los
-   cinco stems en memoria para garantizar búsqueda y sincronización. Existe un
-   lector por ring buffers, pero requiere búsqueda coordinada, prebuffer y
-   conversión de frecuencia de calidad fuera del callback antes de conectarlo al producto.
-   Los underruns comunes, el último frame, el avance diferido y el fin común
-   ya tienen correcciones verificadas. No se declara
-   migrada la reproducción de memoria acotada ni la inferencia por archivo completo
-   con consumo de memoria constante.
-2. **Comparación musical y rendimiento.** Medir calidad de voz/coros, transitorios,
-   SDR/null tests y tiempos/RAM sobre el mismo conjunto de audio licenciado usado
-   por Python, con duración larga y límites de bloques. Se añadieron un corpus
-   instrumental CC BY 4.0 y una canción local de 225.5 s, procesada completa con
-   dos estrategias. La canción no tiene referencias vocales originales. El loop
-   muestra separación de batería insuficiente. No se atribuyen mejoras de calidad, velocidad o
-   latencia de hardware sin esas mediciones.
-3. **GPU y política de recursos.** El escritorio usa CPU explícita, máximo seis
-   hilos intra-op, un hilo inter-op, ejecución secuencial y spinning desactivado.
-   El runtime y pool se conservan entre trabajos; la admisión cuenta sesiones
-   todavía en uso, no solo entradas del LRU. Faltan presupuesto por bytes,
-   medición de la política adaptativa y ramas paralelas. DirectML/CUDA siguen
-   sin calificar; las pruebas no certifican aceleración GPU efectiva.
-   La política CPU es parte de la paridad; GPU es una mejora calificada por
-   proveedor, no un requisito para cerrar una migración CPU completa.
-4. **Recuperación parcial y reanudación.** Los checkpoints exitosos se reutilizan,
-   pero un trabajo fallido conserva la sesión anterior y no publica stems parciales.
-   Python puede conservar resultados parciales de una rama fallida. Falta una
-   representación explícita y una UI de recuperación para esos casos.
-5. **Hardware y estados del flujo.** Hay medidores individuales en vivo, caché
-   verificable de lotes de pitch y propagación tipada del fallo de salida hasta
-   Flutter. Faltan desconexión/reconexión física y estados tipados de trabajos
-   con su recuperación. Cancelar una inferencia
-   espera a que termine la llamada ONNX en curso; no se interrumpe su kernel.
-6. **Instalador completo.** La carpeta release compila con herramientas incluidas.
-   Compilar/verificar el instalador requiere Inno Setup y una instalación limpia
-   de Windows; no se considera comprobado por haber compilado solo la app.
+El escritorio ejecuta la ruta serial por bloques. No vuelve a materializar la
+canción ni los cinco stems completos para separar o reproducir. Se conserva el
+adaptador en memoria como referencia de regresión; no es la ruta del estudio.
+El producto y su paquete siguen sin Python.
 
-La carpeta personalizada de QSettings ya se adopta mediante el registro Windows,
-con prioridad del ajuste nativo y sin Qt/Python. También se corrigió la validación
-repetida de rutas locales canónicas `\\?\C:\...`. Los lotes de pitch se reutilizan
-por contenido original, especificación y huella del ejecutable FFmpeg; se verifican
-hashes de salida y se descartan lotes incompletos. Guardar toda la edición de
-mezcla/posición o restaurar automáticamente el último pitch siguen siendo mejoras
-opcionales, no requisitos demostrados de paridad.
-
-`native-v1` conserva los parámetros actuales del producto.
-`context-candidate-v1` permite evaluar contexto vocal completo sin VAD/gate,
-exclusivamente en el banco de pruebas. No se promovió como mejora de calidad.
-
-El plan de implementación se conserva localmente en una carpeta excluida de Git.
-Organiza la paridad obligatoria, la validación de calidad/rendimiento y las mejoras
-opcionales. Se continuará en esta feature con commits independientes. No se
-abrió PR, no se fusionaron ramas y no se añadieron workflows de Actions.
-
-## Verificación reproducible
-
-Resultados locales de esta ejecución:
-
-| Verificación | Resultado |
+| Responsabilidad | Implementación y garantía comprobada |
 |---|---|
-| Python de referencia, auditoría anterior | 74 pruebas aprobadas entonces; no se volvió a ejecutar Python en esta implementación |
-| Rust workspace con `--include-ignored --test-threads=1` | 79 pruebas aprobadas; se ejecutaron también modelos reales, admisión con sesiones vivas y FFmpeg |
-| `cargo fmt --check` y Clippy con `-D warnings` | Aprobados |
-| `flutter analyze` | Sin observaciones |
-| `flutter test` con DLL/FFmpeg release configurados | 8 pruebas aprobadas, incluidos medidores, recuperación de dispositivo y smoke FFI; sin omisiones |
-| Integración local de audio proporcionado | Dos separaciones completas, cinco WAV alineados por versión, reapertura y seek mediante la DLL empaquetada; prueba adicional local aprobada |
-| Pantalla Flutter | Sesión vacía y cargada; 940×650/1440×900, mezcla, transporte, zoom y error largo sin desbordamiento |
-| Preparador de audio y análisis sintáctico PowerShell | Aprobados; binarios cotejados con el manifiesto |
-| `build_windows.ps1 -SkipInstaller` | Flutter release y Rust release compilados; DLL y herramientas copiadas al paquete |
-| DLL empaquetada frente al build Rust | SHA-256 idéntico |
-| Instalador Inno Setup / instalación limpia | No ejecutados en esta revisión |
+| Perfil DSP | `domain/quality.rs`: parámetros y modelos congelados, normalización, inversión, ventanas, VAD y gate versionados; se conserva `native-v1` |
+| Trabajos | Máquina de estados tipada; `JobRegistry` separa ejecución/cancelación de Studio; límites legales de confirmación y fallos tipados |
+| Diario | Revisiones inmutables con comprobación de versión; lease entre procesos desde la primera revisión; historial de reintentos y fuentes por SHA-256 |
+| Recuperación | Reutiliza etapas completas verificadas por contenido y dependencias; invalida descendientes incompatibles; descartar solo limpia staging con propietario y ruta validados |
+| Publicación | Cinco WAV y manifiesto completos antes del único rename de carpeta; cancelar antes no publica, cancelar después conserva la confirmación |
+| Sesiones | Lector independiente valida cinco stems únicos, alineación, estado completo, rutas canónicas y checksums nuevos; admite JSON histórico sin checksums |
+| Salida dañada | Recuperar verifica antes de abrir; si el resultado publicado está dañado y existe el original, crea otra sesión desde etapas válidas; conserva la carpeta dañada |
+| PCM temporal | Spools float de 64 bits, pico/hash incremental, lectores por bloques, comprobación de finitud y longitud; no depende de RIFF para intermedios |
+| MDX | Acumulación rolling de una ventana; mantiene rejilla, normalización global por llamada, orden float, Hann, padding y cola del perfil congelado |
+| Residuales | Operaciones y reconstrucción por bloques, tolerancia del dominio `1e-5`; manifiestos de caché incluyen padres, modelos, runtime y hilos |
+| Ondas | Índice min/max multinivel en disco: menos de 1 MiB por stem, buffers acotados y lectura por rango/nivel; zoom Flutter pide 1000–4000 buckets |
+| Reproducción | Un productor y reloj para cinco pistas, cola SPSC acotada, prebuffer, generaciones por seek; WAV y resampling fuera del callback |
+| Resampling | Sinc de 64 taps y 1024 fases compartidas; pruebas 44.1/48 kHz, mono, alineación, banda pasante y rechazo fuera de banda |
+| Pitch | Lotes verificables con lease mientras sesión/exportación los usa; caché central de 2 GiB para retención inactiva; 0 restaura originales |
+| Recursos | Reservas RAII de CPU/memoria, observación de memoria disponible y admisión de disco; retención de spools de 4 GiB sin eliminar lectores activos |
+| Flutter | Estados tipados, recuperación/reintento/descarte, protección frente a polling/seek tardíos y lecturas de ondas de sesiones/pitch anteriores |
 
-Pruebas rápidas sin modelos ni dispositivo:
+Las cuotas de caché son de retención, no límites sobre artefactos activos. Los
+presupuestos de RAM son estimaciones conservadoras de admisión, no un límite de
+RSS impuesto por Windows ni contabilidad exacta del allocator de ONNX Runtime.
+El espacio libre se verifica antes de trabajar y el proceso FFmpeg conserva un
+margen de seguridad. Los cachés históricos en proyectos anteriores se preservan;
+los nuevos renders de pitch se guardan en la caché nativa central.
+
+Las salidas float conservan headroom aunque superen 1.0. La escucha limita la
+salida final y el medidor informa el pico anterior al clipping. Exportar a WAV float32 sin
+normalización conserva headroom y niveles; la conversión a PCM entero puede saturar. El diálogo
+informa cuando los stems seleccionados superan 0 dBFS, ofrece float32 para conservarlos y explica que loudnorm,
+si se selecciona, actúa por archivo y puede cambiar balances relativos. No se
+normalizan stems silenciosamente.
+
+Los WAV finales siguen limitados por RIFF a aproximadamente 4 GiB por archivo;
+no se declara soporte RF64/BW64. El formato temporal sí usa tamaños y posiciones
+u64. La cancelación espera la llamada ONNX en curso, pero impide publicar antes
+del punto de confirmación. Las revisiones comprobadas incluyen terminación real de proceso durante
+decodificación y antes/después de publicar; no equivalen a una certificación frente a pérdida eléctrica del disco.
+
+## Diferencias históricas conservadas
+
+| Aspecto | Referencia Python inspeccionada | Decisión nativa |
+|---|---|---|
+| Preprocesamiento y normalización | `native_mdx.py` conserva los de audio-separator | Pico global de entrada por llamada y residuales exactos; no se promete igualdad bit a bit con Python |
+| KARA | La salida `Vocals` se presenta como voz principal, `Instrumental` como coros | Predicción primaria KARA invertida explícitamente para voz principal; mismos cuatro modelos revisados |
+| Contexto vocal | El orquestador inspeccionado entrega la rama vocal a su separador | Perfil congelado con VAD de 8 s y gate; el candidato de contexto completo sigue experimental |
+| Batería y bajo | Bajo consume el residual de batería | Se conserva la dependencia y se comprueba reconstrucción |
+| Ramas | Admite dos workers para voz e instrumentos | Serial; no se habilita paralelismo de ramas sin calificación de recursos y rendimiento |
+| Fallos parciales | Puede devolver `PartialSeparationError` con stems disponibles | Conserva sesión previa y etapas verificadas; ofrece recuperación; solo muestra sesión final con cinco pistas completas |
+
+El candidato no se promovió. La igualdad de suma no demuestra asignación musical
+correcta y la regresión frente al motor nativo congelado no sustituye la
+comparación perceptual con Python ni referencias vocales independientes.
+
+## Evidencia CPU de esta ejecución
+
+Una separación completa del FLAC local de 225.5 s mediante la API de escritorio:
+9,944,550 frames, cinco pistas, 418.34 s de proceso y pico RSS muestreado de
+1,460,228,096 bytes (1.36 GiB). Las cinco salidas coinciden muestra por muestra
+con el baseline nativo anterior. Error máximo de reconstrucción: `2.98e-7`.
+La medición corresponde al proceso nativo; excluye shell Flutter y codecs hijos.
+Se ejecutó sin otras compilaciones ni inferencias controladas por este trabajo.
+No se compara su tiempo con ejecuciones anteriores contaminadas por otras cargas.
+
+Matriz serial de un fragmento local de 24 s, dos pasadas por configuración,
+caché de etapas nueva en cada pasada y mismo perfil/modelos:
+
+| Hilos intra-op | Pasada 1, s | Pasada 2, s |
+|---:|---:|---:|
+| 1 | 182.79 | 183.85 |
+| 2 | 113.25 | 112.46 |
+| 4 | 70.33 | 71.01 |
+| 6 | 61.98 | 63.38 |
+
+Las ocho salidas coinciden muestra por muestra entre configuraciones y cumplen
+reconstrucción `<=1e-5`. Se mantiene máximo seis hilos, inter-op uno, ejecución
+secuencial y sin spinning. Es la mejor configuración serial medida aquí; no un
+óptimo universal ni una justificación para abrir dos ramas simultáneas.
+
+El kernel real Main FFT/overlap-add recorrió 5, 30 y 60 minutos con fuente
+virtual no silenciosa y sink contador, sin modelos ONNX. Emitió exactamente
+13,230,000 / 79,380,000 / 158,760,000 frames; el mayor bloque escrito mantuvo
+169,728 frames en las tres duraciones. Pico RSS: 41,979,904 / 41,099,264 /
+40,857,600 bytes, respectivamente; memoria privada en torno a 35 MiB. La prueba
+recorre todas sus ventanas y no materializa PCM completo. Su alcance excluye
+inferencia neuronal, archivos finales y GUI; no sustituye una campaña de una
+hora con modelos reales. Los JSON locales conservan mediciones y alcance.
+
+## Distribución Windows
+
+Inno Setup 6.7.3 produjo un instalador real. Se incluyeron runtimes MSVC locales,
+DLL Rust/ONNX y FFmpeg/Rubber Band, junto con manifiesto SHA-256 de archivos.
+La distribución calificada es CPU: se excluyen DLL de proveedores GPU no
+calificados. El build falla si faltan las tres DLL MSVC esenciales.
+
+La prueba de instalador usa AppId aleatorio, ruta con espacios/Unicode y modo
+usuario; no altera instalaciones existentes. Verifica instalación, arranque,
+actualización de versión declarada 0.5.9→0.6.0 con el mismo payload actual y
+desinstalación, conservando fixtures de proyectos y AppData. Esto no certifica
+actualización desde todos los binarios históricos de producción.
+
+La carpeta release arranca con PATH limitado a Windows, verifica hashes y
+filtro Rubber Band. La prueba CPAL real, con master a cero, comprueba reloj,
+pausa, búsquedas repetidas y EOF de la sesión larga. No acredita escucha audible
+ni desconexión/reconexión física. La política de runtimes locales corresponde a
+la [distribución Windows de Flutter](https://docs.flutter.dev/platform-integration/windows/building).
+
+## Validación y puertas todavía abiertas
+
+| Verificación | Resultado registrado |
+|---|---|
+| Rust workspace, incluidos modelos y FFmpeg | 114 pruebas aprobadas; se ejecutaron también las opcionales de modelos/FFmpeg y el proceso hijo real |
+| Formato Rust y Clippy `-D warnings` | Aprobados; sin warnings |
+| Flutter analyze / tests con DLL real | 18 pruebas y análisis aprobados con DLL/FFmpeg empaquetados; render local adicional de sesión real aprobado |
+| Regresiones inducidas | Ondas sin mínimos correctos, limpieza sin lease y reanudación de publicación corrupta hacen fallar sus pruebas; código restaurado y pruebas aprobadas |
+| Pitch | 0, ±1, ±7 y ±12, con/sin formantes: frecuencia y duración; originales, caché y cinco pistas comprobados por pruebas de integración |
+| Exportación | 48 combinaciones de formato/profundidad/canales/frecuencia/normalización inspeccionadas con FFprobe; cuantización PCM y headroom float32 >1 comprobados |
+| Playback | Alineación, underrun, EOF, seek/generaciones y fallo de productor; ruta de driver real comprobada sin salida audible |
+| Paquete / instalador | Build e instalador reales, 33 archivos verificados, arranque PATH reducido e instalación/actualización/desinstalación aisladas aprobados |
+
+Permanecen abiertas las siguientes puertas del cierre completo:
+
+- Corpus diverso con al menos doce fragmentos independientes, referencias reales
+  de voz/coros y escucha comparada. El FLAC disponible no contiene esas referencias;
+  repetirlo no amplía la diversidad musical. El loop instrumental disponible tuvo
+  separación de batería insuficiente y no permite atribuir mejoras vocales.
+- Campaña completa de aplicación/modelos en canciones de 30/60 minutos, con
+  inferencia y reproducción simultáneas, cancelación/reanudación y registro de
+  underruns. La prueba del kernel largo y la canción completa de 225.5 s tienen
+  alcances distintos; no se presentan como esa campaña completa.
+- Desconexión y reconexión física del dispositivo y escucha prolongada.
+- Instalación y flujo musical en Windows limpio. Sandbox está deshabilitado en
+  este equipo; un PATH reducido y una instalación aislada en el host no sustituyen
+  esa máquina. Tampoco se certifica pérdida eléctrica, disco realmente lleno ni
+  todas las combinaciones de permisos por las pruebas de publicación simuladas.
+
+GPU sigue opcional y sin calificar. Las puertas anteriores no se marcan completas
+por contar commits o pruebas. Los planes, audios, pesos y evidencia privada están
+excluidos de Git; esta auditoría registra contratos y resultados verificables.
+
+## Reproducción de comprobaciones
 
 ```powershell
+$env:ATOMUSICATOR_FFMPEG = (Resolve-Path build/ffmpeg-runtime/bin/ffmpeg.exe).Path
 cargo fmt --manifest-path rust_core/Cargo.toml --all -- --check
 cargo clippy --manifest-path rust_core/Cargo.toml --workspace --all-targets -- -D warnings
-cargo test --manifest-path rust_core/Cargo.toml --workspace
+cargo test --manifest-path rust_core/Cargo.toml --workspace -- --include-ignored --test-threads=1
+./packaging/build_windows.ps1
+$release = (Resolve-Path build/windows/x64/runner/Release).Path
+$env:ATOMUSICATOR_NATIVE_LIBRARY = Join-Path $release 'atomusicator_bootstrap_ffi.dll'
 flutter analyze
 flutter test
+./packaging/validate_windows_release.ps1 -ReleaseDirectory $release -Launch
+./packaging/test_windows_installer.ps1 -ReleaseDirectory $release -InnoCompiler build/toolchain/inno/ISCC.exe
 ```
 
-Pruebas reales, con los cuatro modelos ya presentes en la caché:
-
-```powershell
-./packaging/prepare_audio_tools.ps1
-$env:ATOMUSICATOR_FFMPEG = (Resolve-Path build/ffmpeg-runtime/bin/ffmpeg.exe).Path
-cargo test --manifest-path rust_core/Cargo.toml --workspace -- --include-ignored --test-threads=1
-./packaging/build_windows.ps1 -SkipInstaller
-$release = (Resolve-Path build/windows/x64/runner/Release).Path
-$env:PATH = "$release;$env:PATH"
-$env:ATOMUSICATOR_NATIVE_LIBRARY = Join-Path $release 'atomusicator_bootstrap_ffi.dll'
-flutter test test/native_bridge_smoke_test.dart
-```
-
-El smoke FFI usa sesiones/audio sintéticos en una carpeta temporal y cruza los
-bindings generados hasta la DLL compilada; comprueba reapertura, controles,
-búsqueda, pitch y exportación. No reproduce grabaciones del usuario. Los modelos
-y los artefactos de build no se incorporan a Git.
+Los modelos locales deben coincidir con el manifiesto. Regenerar bindings con
+FRB 2.8.0. Las pruebas opcionales nunca descargan modelos. Los runners
+`desktop_bench`, `desktop_playback_check`, `cpu_thread_bench` y
+`mdx_memory_bench` documentan sus argumentos y alcance; sus entradas/salidas
+permanecen locales. El proyecto no necesita el repositorio Python para ejecutarse.

@@ -65,18 +65,32 @@ master gain and a real master meter. Waveforms contain native audio peaks and
 share a timeline with 100–400% zoom. Offline pitch uses FFmpeg Rubber Band,
 preserves tempo, optionally preserves formants, and never overwrites original
 stems. Export supports selected WAV/FLAC/MP3 stems, 44.1/48 kHz, mono/stereo,
-16/24-bit WAV/FLAC, 320 kbps MP3 and optional loudness normalization.
+16/24-bit PCM WAV, 32-bit float WAV, 16/24-bit FLAC, 320 kbps MP3 and optional
+loudness normalization. Float WAV preserves stem headroom and relative levels
+without normalization. The export dialog reports measured peaks above 0 dBFS
+and explains that per-file loudness normalization can change stem balances.
 
 Separation, pitch and export run as cancellable background jobs. Results are
-published as complete batches. The current connected playback path holds stems
-in memory; bounded streaming, adaptive GPU/resource policy, partial recovery,
-historical QSettings preferences and musical quality benchmarks remain pending.
-See the audit for the precise differences from Python. No quality or performance
-equivalence is implied by a successful reconstruction test.
+published as complete batches. Decode, MDX overlap-add, residual processing and
+playback use bounded blocks backed by files. One playback producer shares clock,
+seek generation and filtered resampling across all five stems. Multilevel peak
+indexes supply waveform detail as the timeline zooms.
+
+Typed job states and a durable journal offer resume/discard after interruption.
+Compatible verified stages are reused; damaged final bundles can be rebuilt from
+the original. Owned decode/publication staging is cleaned without deleting
+originals or confirmed sessions. Pitch and stage caches retain active readers.
+Native preferences adopt historical QSettings projects without Python or Qt.
+
+CPU uses conservative resource admission and serial inference; accelerators stay
+unqualified. Independent musical-quality evaluation, a full long-duration model
+campaign, physical device reconnection and clean-Windows qualification remain
+open. See the audit for measured evidence and precise differences from Python.
+Reconstruction alone does not establish extraction quality.
 
 ## Windows packaging
 
-On a Windows development machine with Flutter, Rust, the Visual Studio C++
+On a Windows development machine with PowerShell 7, Flutter, Rust, the Visual Studio C++
 build tools, and Inno Setup 6 installed, run this from any working directory:
 
 ```powershell
@@ -85,11 +99,16 @@ build tools, and Inno Setup 6 installed, run this from any working directory:
 
 The script first prepares hash-verified FFmpeg/FFprobe with Rubber Band (no
 Python build dependency), then resolves all project paths from its own location, builds the Flutter
-release and Rust FFI library, places the bridge and ONNX Runtime DLLs beside
+release and Rust FFI library, places the bridge, CPU ONNX Runtime and app-local MSVC DLLs beside
 `atomusicator.exe`, then creates `packaging\dist\Atomusicator-Setup-0.6.0.exe`.
 To build the app folder without compiling the installer, pass
 `-SkipInstaller`. The installer output directory is generated locally and is
 not part of the source changes.
+The release includes a SHA-256 file manifest. Validate it and exercise startup with
+`packaging/validate_windows_release.ps1 -ReleaseDirectory '<release-folder>' -Launch`.
+`packaging/test_windows_installer.ps1` accepts `-ReleaseDirectory` and `-InnoCompiler`
+to test an isolated current-user installation, installer version upgrade and
+uninstall with user-data fixtures. These host checks do not replace clean-Windows testing.
 
 An existing verified runtime can be reused with
 `-FfmpegRuntimeDirectory '<directory containing bin, LICENSE and README.txt>'`.
