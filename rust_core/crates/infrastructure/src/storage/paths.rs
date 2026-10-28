@@ -32,7 +32,13 @@ impl WorkspacePathPolicy {
     /// Constructor for deterministic tests and callers with an explicit OS data directory.
     pub fn from_local_data_dir(local_data_dir: impl Into<PathBuf>) -> Self {
         let local_data_dir = local_data_dir.into();
-        let legacy_root = local_data_dir.join(LEGACY_APP_DIRECTORY_NAME);
+        let flat_legacy = local_data_dir.join(LEGACY_APP_DIRECTORY_NAME);
+        let nested_legacy = flat_legacy.join(LEGACY_APP_DIRECTORY_NAME);
+        let legacy_root = if nested_legacy.is_dir() {
+            nested_legacy
+        } else {
+            flat_legacy
+        };
         Self {
             app_data_root: local_data_dir.join(APP_DIRECTORY_NAME),
             legacy_data_root: legacy_root.is_dir().then_some(legacy_root),
@@ -86,7 +92,11 @@ impl WorkspacePathPolicy {
     /// Creates and probes the selected project directory before it is used for persistence.
     pub fn validate_projects_destination(path: &Path) -> Result<PathBuf, InfrastructureError> {
         let raw = path.to_string_lossy();
-        if raw.starts_with(r"\\") || raw.starts_with("//") {
+        #[cfg(windows)]
+        let extended_local = matches!(path.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_)));
+        #[cfg(not(windows))]
+        let extended_local = false;
+        if (raw.starts_with(r"\\") || raw.starts_with("//")) && !extended_local {
             return Err(InfrastructureError::InvalidManifest(
                 "UNC network paths cannot be used as a session workspace".into(),
             ));

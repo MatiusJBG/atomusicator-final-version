@@ -7,10 +7,27 @@ use crate::{
 
 /// Coordinates the three model inferences and exact residual subtractions.
 /// Model selection and runtime details remain behind `StemInferencePort`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VocalPolicy {
+    #[default]
+    CompatibilityV1,
+    /// Evaluation only; not qualified for promotion to the desktop default.
+    ContextPreservingCandidateV1,
+}
+impl VocalPolicy {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::CompatibilityV1 => "native-v1",
+            Self::ContextPreservingCandidateV1 => "context-candidate-v1",
+        }
+    }
+}
+
 pub struct SeparateFiveStemsUseCase<I, P, G> {
     inference: I,
     progress: P,
     bleed_gate: G,
+    vocal_policy: VocalPolicy,
 }
 
 impl<I, P, G> SeparateFiveStemsUseCase<I, P, G>
@@ -24,7 +41,13 @@ where
             inference,
             progress,
             bleed_gate,
+            vocal_policy: VocalPolicy::default(),
         }
+    }
+
+    pub fn with_vocal_policy(mut self, policy: VocalPolicy) -> Self {
+        self.vocal_policy = policy;
+        self
     }
 
     pub fn execute(
@@ -38,8 +61,17 @@ where
         self.progress.report(1, 3, "Separating vocal stems");
         check_alignment(mix, &vocal_bus)?;
 
-        let (lead, backing, active_vocal_bus) =
-            infer_vocals_with_vad(&self.inference, &self.bleed_gate, &vocal_bus, cancel)?;
+        let (lead, backing, active_vocal_bus) = match self.vocal_policy {
+            VocalPolicy::CompatibilityV1 => {
+                infer_vocals_with_vad(&self.inference, &self.bleed_gate, &vocal_bus, cancel)?
+            }
+            VocalPolicy::ContextPreservingCandidateV1 => {
+                let lead = self.inference.infer_lead_vocal(&vocal_bus, cancel)?;
+                check_alignment(&vocal_bus, &lead)?;
+                let backing = subtract(&vocal_bus, &lead)?;
+                (lead, backing, vocal_bus)
+            }
+        };
 
         self.progress.report(2, 3, "Separating rhythm stems");
         check_cancelled(cancel)?;
@@ -51,6 +83,7 @@ where
         check_alignment(mix, &bass)?;
         let instrumental = subtract(&instrumental_master, &add(&drums, &bass)?)?;
 
+        check_cancelled(cancel)?;
         self.progress.report(3, 3, "Validating reconstruction");
         SeparationResult::try_new(
             mix,

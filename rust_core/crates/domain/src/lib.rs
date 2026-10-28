@@ -1,5 +1,8 @@
 //! Pure audio and session domain types with serialization support.
 
+pub mod jobs;
+pub mod quality;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -56,6 +59,12 @@ pub enum DomainError {
     AudioDecodeFailure(String),
     #[error("audio export failed: {0}")]
     AudioExportFailure(String),
+    #[error("insufficient {resource}: requested {requested}, available {available}")]
+    InsufficientResources {
+        resource: String,
+        requested: u64,
+        available: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -273,7 +282,7 @@ impl SeparationResult {
                 .map(|kind| by_kind[kind].audio.samples()[index])
                 .sum();
             let deviation = (reconstructed - original_sample).abs();
-            if deviation > 1.0e-5 {
+            if deviation > quality::RECONSTRUCTION_TOLERANCE {
                 return Err(DomainError::ReconstructionMismatch {
                     frame: index,
                     deviation,

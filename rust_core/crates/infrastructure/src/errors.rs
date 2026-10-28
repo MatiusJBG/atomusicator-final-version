@@ -28,6 +28,8 @@ pub enum InfrastructureError {
     InvalidCache(String),
     #[error("ONNX Runtime error: {0}")]
     OnnxRuntime(String),
+    #[error("all admitted ONNX sessions are in use; retry after an inference finishes")]
+    SessionCapacityBusy,
     #[error("domain data could not be represented: {0}")]
     Domain(String),
 }

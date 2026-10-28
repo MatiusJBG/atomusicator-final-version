@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "exit_code": 0,
+  "elapsed_seconds": 41.0924257,
+  "sampled_peak_rss_bytes": 1460920320,
+  "rss_sampling_ms": 100,
+  "cpu_seconds": 148.609375
+}

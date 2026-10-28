@@ -3,7 +3,7 @@ name = "atomusicator-infrastructure"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 atomusicator-domain = { path = "../domain" }
@@ -30,6 +30,8 @@ rtrb.workspace = true
 cpal.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "=0.59.0", features = ["Win32_System_SystemInformation", "Win32_Foundation"] }
+windows-registry = "=0.6.1"
 ort = { workspace = true, features = ["directml", "cuda"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

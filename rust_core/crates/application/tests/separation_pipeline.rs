@@ -126,3 +126,45 @@ fn vad_skips_quiet_chunks_and_routes_their_energy_to_the_instrumental_residual()
         mix.samples()
     );
 }
+
+#[test]
+fn context_candidate_preserves_quiet_vocals_without_the_compatibility_gate() {
+    use atomusicator_application::use_cases::separate_five_stems::VocalPolicy;
+    struct ForbiddenGate;
+    impl SpectralBleedGatePort for ForbiddenGate {
+        fn rebalance(
+            &self,
+            _: &AudioBufferF32,
+            _: &AudioBufferF32,
+        ) -> Result<(AudioBufferF32, AudioBufferF32), DomainError> {
+            panic!("context candidate must not apply an unqualified bleed gate");
+        }
+    }
+    let format = AudioFormat::new(48000, 1).unwrap();
+    let lead_calls = Arc::new(AtomicUsize::new(0));
+    let inference = MockInference {
+        vocal_bus: audio(format, &[0.000001; 4]),
+        lead: audio(format, &[0.0000006; 4]),
+        drums: audio(format, &[0.0; 4]),
+        bass: audio(format, &[0.0; 4]),
+        lead_calls: Arc::clone(&lead_calls),
+    };
+    let pipeline = SeparateFiveStemsUseCase::new(inference, NoopProgress, ForbiddenGate)
+        .with_vocal_policy(VocalPolicy::ContextPreservingCandidateV1);
+    let result = pipeline
+        .execute(&audio(format, &[0.1; 4]), &CancellationToken::default())
+        .unwrap();
+    assert_eq!(lead_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        result.stem(StemType::LeadVocal).audio.samples(),
+        &[0.0000006; 4]
+    );
+    assert!(
+        result
+            .stem(StemType::BackingVocals)
+            .audio
+            .samples()
+            .iter()
+            .all(|sample| *sample > 0.0)
+    );
+}
