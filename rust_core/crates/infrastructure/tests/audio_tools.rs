@@ -33,31 +33,36 @@ fn ffmpeg_pitch_preserves_duration_and_export_supports_all_legacy_formats() {
     )
     .unwrap();
     write_wav_f32(&source, &original).unwrap();
-    for preserve in [false, true] {
-        let target = directory.0.join(format!("pitch-{preserve}.wav"));
+    for (preserve, semitones) in [false, true].into_iter().flat_map(|preserve| {
+        [-12.0, -7.0, -1.0, 0.0, 1.0, 7.0, 12.0]
+            .into_iter()
+            .map(move |s| (preserve, s))
+    }) {
+        let target = directory
+            .0
+            .join(format!("pitch-{preserve}-{semitones}.wav"));
         tools
             .pitch(
                 &source,
                 &target,
-                PitchShiftSpec::try_new(12.0, preserve).unwrap(),
+                PitchShiftSpec::try_new(semitones, preserve).unwrap(),
                 &CancellationToken::default(),
             )
             .unwrap();
         let shifted = read_wav_f32(&target).unwrap();
         assert_eq!(shifted.frames(), original.frames());
-        let crossings = shifted
-            .samples()
-            .as_chunks::<2>()
-            .0
+        let crossings = shifted.samples().as_chunks::<2>().0[4410..39690]
             .iter()
             .map(|f| f[0])
             .collect::<Vec<_>>()
             .windows(2)
             .filter(|p| p[0] <= 0.0 && p[1] > 0.0)
             .count();
+        let expected = 440.0 * 2.0f64.powf(f64::from(semitones) / 12.0);
+        let measured = crossings as f64 / 0.8;
         assert!(
-            (830..920).contains(&crossings),
-            "expected octave up, got {crossings} crossings"
+            (measured - expected).abs() / expected < 0.02,
+            "pitch {semitones} preserve={preserve}: expected {expected} Hz, measured {measured} Hz"
         );
     }
     for format in ["wav", "flac", "mp3"] {
