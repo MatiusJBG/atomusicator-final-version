@@ -149,6 +149,7 @@ dependencies = [
  "apodize",
  "atomusicator-application",
  "atomusicator-domain",
+ "cc",
  "cpal",
  "directories",
  "fs4",
