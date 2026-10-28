@@ -28,6 +28,14 @@ fn provider_order_requires_cpu_fallback() {
 fn provider_pool_rejects_zero_capacity() {
     assert!(OrtSessionPool::new(0).is_err());
 }
+#[test]
+fn benchmark_cpu_threads_are_explicit_positive_and_bounded() {
+    assert!(OrtSessionPool::with_cpu_threads(2, 0).is_err());
+    assert!(OrtSessionPool::with_cpu_threads(2, 7).is_err());
+    let pool = OrtSessionPool::with_cpu_threads(2, 1).unwrap();
+    assert_eq!(pool.intra_threads(), 1);
+    assert_eq!(pool.provider_order(), &[ExecutionProviderKind::Cpu]);
+}
 
 #[test]
 fn default_runtime_requires_cpu_until_accelerators_are_qualified() {

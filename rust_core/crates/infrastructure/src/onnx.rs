@@ -66,6 +66,22 @@ impl OrtSessionPool {
         Ok(pool)
     }
 
+    /// Explicit CPU configuration for controlled measurements; production keeps its default policy.
+    pub fn with_cpu_threads(
+        capacity: usize,
+        intra_threads: usize,
+    ) -> Result<Self, InfrastructureError> {
+        let logical = std::thread::available_parallelism().map_or(1, usize::from);
+        if intra_threads == 0 || intra_threads > logical.min(6) {
+            return Err(InfrastructureError::InvalidManifest(
+                "CPU intra threads must be between one and min(logical CPUs, six)".into(),
+            ));
+        }
+        let mut pool = Self::new(capacity)?;
+        pool.intra_threads = intra_threads;
+        Ok(pool)
+    }
+
     pub fn load_session(
         &self,
         model_path: &Path,

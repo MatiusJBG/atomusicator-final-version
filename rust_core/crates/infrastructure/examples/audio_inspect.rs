@@ -55,10 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let reconstructed = AudioBufferF32::new(source.format(), sum)?;
     let reconstruction = compare_audio(&source, &reconstructed)?;
-    let reconstruction_passed = reconstruction
-        .channels
-        .iter()
-        .all(|channel| channel.max_abs_error <= 1e-4);
+    let reconstruction_passed = reconstruction.channels.iter().all(|channel| {
+        channel.max_abs_error <= f64::from(atomusicator_domain::quality::RECONSTRUCTION_TOLERANCE)
+    });
     let report = serde_json::json!({"schema_version":1,"evaluation":"local diagnostics without ground truth; no perceptual quality claim","frames":source.frames(),"sample_rate_hz":source.format().sample_rate_hz,"duration_seconds":source.frames() as f64/f64::from(source.format().sample_rate_hz),"mix":signal_statistics(&source)?,"stems":stems,"reconstruction":reconstruction,"reconstruction_passed":reconstruction_passed});
     fs::write(&args[3], serde_json::to_vec_pretty(&report)?)?;
     if !reconstruction_passed {
