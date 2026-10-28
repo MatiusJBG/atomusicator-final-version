@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/fake_studio.dart';
 
 class FiveStemStudio extends FakeStudio {
+  double positivePeak = 0.6;
   @override
   UiSessionDto get session => UiSessionDto(
     id: 'five',
@@ -27,7 +28,7 @@ class FiveStemStudio extends FakeStudio {
           channels: 2,
           durationSeconds: 203,
           peaks: Float32List.fromList(
-            List.generate(800, (i) => i.isEven ? -0.4 : 0.6),
+            List.generate(800, (i) => i.isEven ? -0.4 : positivePeak),
           ),
         ),
     ],
@@ -113,6 +114,29 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(find.byTooltip('Play'), findsOneWidget);
       }
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+    },
+  );
+
+  testWidgets(
+    'export explains measured float headroom and explicit per-stem normalization',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1440, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gateway = FiveStemStudio()..positivePeak = 1.2;
+      final container = await mount(tester, gateway);
+      await tester.tap(find.byTooltip('Export stems').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('exceed 0 dBFS'), findsOneWidget);
+      await tester.ensureVisible(find.text('Normalize loudness'));
+      await tester.tap(find.text('Normalize loudness'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('exceed 0 dBFS'), findsNothing);
+      expect(find.textContaining('relative stem levels'), findsOneWidget);
+      expect(gateway.calls.where((c) => c.startsWith('export:')), isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
     },

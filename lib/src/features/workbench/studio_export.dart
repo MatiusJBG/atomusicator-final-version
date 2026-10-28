@@ -40,6 +40,11 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
             )
             .map((t) => t.stemType)
             .toList();
+    final exceedsFullScale = tracks.any(
+      (track) =>
+          exported.contains(track.stemType) &&
+          track.peaks.any((sample) => sample.abs() > 1),
+    );
     return AlertDialog(
       insetPadding: const EdgeInsets.all(24),
       contentPadding: const EdgeInsets.fromLTRB(28, 8, 28, 20),
@@ -222,6 +227,22 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                 value: normalize,
                 onChanged: (v) => setState(() => normalize = v ?? false),
               ),
+              if (exceedsFullScale && !normalize)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Selected stems exceed 0 dBFS. Fixed-point exports may clip; enable normalization to reduce peaks.',
+                    style: TextStyle(fontSize: 11, color: AppColors.amber),
+                  ),
+                ),
+              if (normalize)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Loudness normalization processes each file separately and can change relative stem levels.',
+                    style: TextStyle(fontSize: 11, color: AppColors.muted),
+                  ),
+                ),
               const Text(
                 'Applied pitch is included. Listening gain, pan and master do not affect export.',
                 style: TextStyle(fontSize: 11, color: AppColors.muted),
