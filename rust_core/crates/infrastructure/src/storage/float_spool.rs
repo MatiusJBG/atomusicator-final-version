@@ -233,8 +233,13 @@ impl AudioBlockStore for FloatSpoolStore {
             .frame_count
             .checked_mul(u64::from(metadata.format.channels) * 4)
             .ok_or_else(|| failure("spool size overflow"))?;
-        if fs4::available_space(&self.directory).map_err(failure)? < bytes {
-            return Err(failure("insufficient disk space for audio spool"));
+        let available = fs4::available_space(&self.directory).map_err(failure)?;
+        if available < bytes {
+            return Err(DomainError::InsufficientResources {
+                resource: "audio spool disk bytes".into(),
+                requested: bytes,
+                available,
+            });
         }
         let pending = self.directory.join(format!(
             "{stage}-{}.pending",

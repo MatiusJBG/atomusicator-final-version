@@ -3,6 +3,23 @@ use atomusicator_application::{
     ports::{AudioBlockSource, AudioBlockStore},
 };
 use atomusicator_domain::{AudioAssetMetadata, AudioFormat};
+#[test]
+fn impossible_spool_reservation_is_typed_and_never_creates_an_audio_file() {
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::new(root.0.clone());
+    let result = store.create(
+        "too-large",
+        AudioAssetMetadata {
+            format: AudioFormat::new(44100, 2).unwrap(),
+            frame_count: 1u64 << 60,
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(atomusicator_domain::DomainError::InsufficientResources { .. })
+    ));
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 0);
+}
 use atomusicator_infrastructure::{
     audio_tools::TemporaryDirectory,
     storage::float_spool::{FloatSpool, FloatSpoolStore},

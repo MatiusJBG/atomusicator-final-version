@@ -120,20 +120,24 @@ pub fn write_wav_f32(path: &Path, audio: &AudioBufferF32) -> Result<(), DomainEr
         .map_err(|error| DomainError::AudioExportFailure(error.to_string()))
 }
 
+pub fn validate_block_wav_size(metadata: AudioAssetMetadata) -> Result<(), DomainError> {
+    let bytes = metadata
+        .frame_count
+        .checked_mul(u64::from(metadata.format.channels) * 4)
+        .ok_or_else(|| DomainError::AudioExportFailure("WAV size overflow".into()))?;
+    if bytes > u64::from(u32::MAX) - 128 {
+        return Err(DomainError::AudioExportFailure("Float WAV exceeds the RIFF limit; split this source into sessions shorter than 3 hours".into()));
+    }
+    Ok(())
+}
 pub fn write_block_wav(
     path: &Path,
     source: &dyn atomusicator_application::ports::AudioBlockSource,
     cancel: &atomusicator_application::CancellationToken,
 ) -> Result<(), DomainError> {
     let metadata = source.metadata();
+    validate_block_wav_size(metadata)?;
     let channels = usize::from(metadata.format.channels);
-    let bytes = metadata
-        .frame_count
-        .checked_mul(channels as u64 * 4)
-        .ok_or_else(|| DomainError::AudioExportFailure("WAV size overflow".into()))?;
-    if bytes > u64::from(u32::MAX) - 128 {
-        return Err(DomainError::AudioExportFailure("Float WAV exceeds the RIFF limit; split this source into sessions shorter than 3 hours".into()));
-    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| DomainError::AudioExportFailure(e.to_string()))?;
