@@ -1,8 +1,10 @@
+import 'package:flutter/services.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/audio_file_import.dart';
 import '../../../core/di/workbench_providers.dart';
 import '../../../core/di/studio_controller.dart';
 import '../../../core/di/native_engine_provider.dart';
@@ -19,7 +21,8 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
   bool _dragging = false;
   Future<void> _importAudio() async {
     final selection = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
+      type: FileType.custom,
+      allowedExtensions: AudioFileImport.extensions,
       allowMultiple: true,
       withData: false,
     );
@@ -36,14 +39,8 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
   }
 
   void _addAudio(List<SelectedAudioFile> files) {
-    const extensions = {'wav', 'mp3', 'flac', 'm4a'};
     final accepted =
-        files
-            .where(
-              (file) =>
-                  extensions.contains(file.name.split('.').last.toLowerCase()),
-            )
-            .toList();
+        files.where((file) => AudioFileImport.accepts(file.name)).toList();
     if (accepted.isNotEmpty) {
       ref.read(workbenchProvider.notifier).addSources(accepted);
     }
@@ -57,6 +54,74 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
 
   @override
   Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+            _pasteAudio,
+      },
+      child: Focus(
+        autofocus: true,
+        child: DropTarget(
+          onDragEntered: (_) => setState(() => _dragging = true),
+          onDragExited: (_) => setState(() => _dragging = false),
+          onDragDone: (details) {
+            setState(() => _dragging = false);
+            _addPaths(details.files.map((file) => file.path));
+          },
+          child: _buildWorkbench(context),
+        ),
+      ),
+    );
+  }
+
+  void _addPaths(Iterable<String> paths) => _addAudio([
+    for (final path in paths)
+      if (path.isNotEmpty)
+        SelectedAudioFile(
+          path: path,
+          name: path.split(RegExp(r'[/\\]')).last,
+          sizeBytes: 0,
+        ),
+  ]);
+
+  Future<void> _pasteAudio() async {
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    try {
+      final paths = await AudioFileImport.clipboardPaths();
+      if (!mounted) return;
+      if (paths.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Copy audio files in Explorer, then paste them here.',
+            ),
+          ),
+        );
+      } else {
+        _addPaths(paths);
+      }
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not read copied files: ${error.message ?? error.code}',
+          ),
+        ),
+      );
+    } on MissingPluginException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'File paste is available in the updated Windows app. Use Import audio.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildWorkbench(BuildContext context) {
     final sources = ref.watch(workbenchProvider).sources;
     final studio = ref.watch(studioProvider);
     final status = ref.watch(nativeEngineStatusProvider);
@@ -91,42 +156,20 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
                                 const SizedBox(height: 12),
                               ],
                               Expanded(
-                                child: DropTarget(
-                                  onDragEntered:
-                                      (_) => setState(() => _dragging = true),
-                                  onDragExited:
-                                      (_) => setState(() => _dragging = false),
-                                  onDragDone: (details) {
-                                    setState(() => _dragging = false);
-                                    _addAudio([
-                                      for (final file in details.files)
-                                        if (file.path.isNotEmpty)
-                                          SelectedAudioFile(
-                                            path: file.path,
-                                            name:
-                                                file.path
-                                                    .split(RegExp(r'[/\\]'))
-                                                    .last,
-                                            sizeBytes: 0,
-                                          ),
-                                    ]);
-                                  },
-                                  child:
-                                      studio.session != null
-                                          ? const StudioTracks()
-                                          : _TrackCanvas(
-                                            sources: sources,
-                                            onImport: _importAudio,
-                                            onRemove:
-                                                ref
-                                                    .read(
-                                                      workbenchProvider
-                                                          .notifier,
-                                                    )
-                                                    .removeSource,
-                                            dragging: _dragging,
-                                          ),
-                                ),
+                                child:
+                                    studio.session != null
+                                        ? const StudioTracks()
+                                        : _TrackCanvas(
+                                          sources: sources,
+                                          onImport: _importAudio,
+                                          onRemove:
+                                              ref
+                                                  .read(
+                                                    workbenchProvider.notifier,
+                                                  )
+                                                  .removeSource,
+                                          dragging: _dragging,
+                                        ),
                               ),
                               SizedBox(
                                 height: 32,

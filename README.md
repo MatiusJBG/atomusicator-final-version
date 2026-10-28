@@ -54,7 +54,10 @@ generation still completes. Keep the Rust and Dart runtimes pinned to 2.8.0.
 
 ## Migration status
 
-The workbench imports WAV/MP3/FLAC/M4A, selects a source, separates five stems
+The workbench imports WAV/MP3/FLAC/M4A through the file picker or by dropping
+files anywhere in the workbench. On Windows, copy files in Explorer and press
+Ctrl+V in the workbench to import them. The first file in each import becomes
+the selected source. The workbench separates five stems
 using the four reviewed legacy MDX profiles, and reopens native or Python
 sessions. Models are SHA-256 verified; missing models require download consent.
 Existing models under the nested `Separador Vocal/Separador Vocal/models`
