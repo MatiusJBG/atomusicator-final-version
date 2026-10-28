@@ -32,10 +32,12 @@ struct Transport {
 struct MixerControls {
     tracks: [TrackControl; TRACK_COUNT],
     transport: Transport,
+    pitch: Arc<crate::live_pitch_control::LivePitchControl>,
 }
 impl MixerControls {
     fn new() -> Self {
         Self {
+            pitch: Arc::new(crate::live_pitch_control::LivePitchControl::default()),
             tracks: std::array::from_fn(|_| TrackControl::new()),
             transport: Transport {
                 generation: AtomicU64::new(0),
@@ -119,6 +121,9 @@ pub struct CpalRealtimeMixer {
 }
 
 impl CpalRealtimeMixer {
+    pub fn live_pitch(&self) -> &crate::live_pitch_control::LivePitchControl {
+        &self.controls.pitch
+    }
     pub fn new() -> Result<Self, DomainError> {
         let (commands, receiver) = mpsc::channel();
         let worker = thread::Builder::new()
@@ -316,6 +321,7 @@ impl CpalRealtimeMixer {
             }
         }
         self.stop()?;
+        self.controls.pitch.reset_session()?;
         *self
             .session
             .lock()
@@ -750,16 +756,18 @@ fn build_aligned_stream(
     }
     let position = f64::from_bits(controls.transport.position.load(Ordering::Acquire));
     let generation = controls.transport.generation.load(Ordering::Acquire);
+    controls.transport.playing.store(false, Ordering::Release);
+    controls.pitch.begin_output_probe();
     let files = paths
         .iter()
         .map(|(_, path)| path.clone())
         .collect::<Vec<_>>();
-    let prepared = super::aligned::AlignedStream::open(
+    let prepared = super::aligned::AlignedStream::open_pitched(
         &files,
         position,
         supported.sample_rate().0,
         generation,
-        8192,
+        Arc::clone(&controls.pitch),
     )
     .map_err(|e| e.to_string())?;
     let super::aligned::AlignedStream {
@@ -817,10 +825,16 @@ fn aligned_typed_stream<T: SizedSample + FromSample<f32>>(
     failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let errors = Arc::clone(&controls);
+    let probe = Arc::clone(&controls.pitch);
+    let priming_finished = Arc::clone(&finished);
+    let priming_failed = Arc::clone(&failed);
     let stream = device
         .build_output_stream(
             config,
             move |output: &mut [T], _| {
+                controls
+                    .pitch
+                    .observe_output_buffer(output.len() / channels);
                 aligned_mix(
                     output,
                     channels,
@@ -835,6 +849,25 @@ fn aligned_typed_stream<T: SizedSample + FromSample<f32>>(
         )
         .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !probe.output_primed() && !priming_finished.load(Ordering::Acquire) {
+        if priming_failed.load(Ordering::Acquire) {
+            return Err("Pitch processing failed during playback preparation".into());
+        }
+        if probe.queue_target() > super::pitch_stream::OUTPUT_CAPACITY {
+            return Err("Device buffer exceeds the bounded interactive audio capacity".into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Audio output did not become ready for interactive playback".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    if priming_failed.load(Ordering::Acquire) {
+        return Err("Pitch processing failed during playback preparation".into());
+    }
+    if probe.queue_target() > super::pitch_stream::OUTPUT_CAPACITY {
+        return Err("Device buffer exceeds the bounded interactive audio capacity".into());
+    }
     Ok(stream)
 }
 fn aligned_mix<T: Sample + FromSample<f32>>(
@@ -877,6 +910,7 @@ fn aligned_mix<T: Sample + FromSample<f32>>(
             if source.generation != generation {
                 continue;
             }
+            controls.pitch.mark_applied(source.pitch_revision);
             let mut mixed = [0.0f32; 2];
             for (index, samples) in source.samples.iter().enumerate() {
                 let control = &controls[index];
@@ -1100,6 +1134,7 @@ mod tests {
         assert!(controls.transport.playing.load(Ordering::Acquire));
         producer
             .push(super::super::aligned::AlignedFrame {
+                pitch_revision: 0,
                 generation: 1,
                 position_seconds: 99.0,
                 samples: [[0.9; 2]; 5],
@@ -1110,6 +1145,7 @@ mod tests {
         assert_eq!(controls.transport.position.load(Ordering::Acquire), 0);
         producer
             .push(super::super::aligned::AlignedFrame {
+                pitch_revision: 0,
                 generation: 2,
                 position_seconds: 0.01,
                 samples: [[0.1; 2]; 5],

@@ -9,6 +9,8 @@ pub mod dsp;
 pub mod errors;
 pub mod job_journal;
 pub mod live_pitch;
+pub mod live_pitch_control;
+pub mod live_pitch_store;
 pub mod mdx;
 pub mod mdx_bounded;
 pub mod model_downloader;
