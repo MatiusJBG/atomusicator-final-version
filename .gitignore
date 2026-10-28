@@ -17,6 +17,7 @@
 .swiftpm/
 migrate_working_dir/
 /implementation-plans/
+/packaging/dist/
 
 # Local audio, sessions, exports, and downloaded model artifacts
 /models/

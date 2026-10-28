@@ -10,9 +10,15 @@
 
 #define AppName "Atomusicator"
 #define AppExeName "atomusicator.exe"
+#ifndef InstallerAppId
+  #define InstallerAppId "{{4D328E01-9A7D-49E9-B5D8-9EAF45BE7078}"
+#endif
+#ifndef InstallerCompression
+  #define InstallerCompression "lzma2"
+#endif
 
 [Setup]
-AppId={{4D328E01-9A7D-49E9-B5D8-9EAF45BE7078}
+AppId={#InstallerAppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={autopf}\{#AppName}
@@ -20,10 +26,11 @@ DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 OutputDir={#OutputDir}
 OutputBaseFilename=Atomusicator-Setup-{#AppVersion}
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64os
+ArchitecturesInstallIn64BitMode=x64os
 PrivilegesRequired=admin
-Compression=lzma2
+PrivilegesRequiredOverridesAllowed=commandline
+Compression={#InstallerCompression}
 SolidCompression=yes
 WizardStyle=modern
 

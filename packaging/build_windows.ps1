@@ -1,7 +1,9 @@
+#requires -Version 7.0
 [CmdletBinding()]
 param(
     [switch]$SkipInstaller,
-    [string]$FfmpegRuntimeDirectory
+    [string]$FfmpegRuntimeDirectory,
+    [string]$InnoCompiler
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,21 +61,52 @@ $audioTools = Join-Path $releaseDirectory 'audio-tools'
 New-Item -ItemType Directory -Path $audioTools -Force | Out-Null
 Copy-Item -Path (Join-Path $repoRoot 'build\ffmpeg-runtime\*') -Destination $audioTools -Recurse -Force
 
-# ONNX Runtime and its optional execution-provider DLLs are emitted beside the
-# Rust cdylib by ort's copy-dylibs feature. Copy only those known runtime files.
+# This distribution qualifies CPU only. Do not ship unqualified GPU runtimes.
 $runtimeLibraries = Get-ChildItem -LiteralPath $rustReleaseDirectory -File |
-    Where-Object { $_.Name -match '^(onnxruntime(.*)?|DirectML)\.dll$' }
+    Where-Object { $_.Name -in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll') }
 if (-not ($runtimeLibraries | Where-Object { $_.Name -eq 'onnxruntime.dll' })) {
     throw "onnxruntime.dll was not produced in $rustReleaseDirectory."
 }
 foreach ($library in $runtimeLibraries) {
     Copy-Item -LiteralPath $library.FullName -Destination $releaseDirectory -Force
 }
+foreach ($unqualified in @('onnxruntime_providers_cuda.dll', 'onnxruntime_providers_tensorrt.dll', 'onnxruntime_providers_dml.dll', 'DirectML.dll')) {
+    $staleRuntime = Join-Path $releaseDirectory $unqualified
+    if (Test-Path -LiteralPath $staleRuntime -PathType Leaf) {
+        Remove-Item -LiteralPath $staleRuntime -Force
+    }
+}
+
+foreach ($required in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseDirectory $required) -PathType Leaf)) {
+        throw "The app-local Visual C++ runtime is incomplete: $required. Check the Visual Studio redistributable installation."
+    }
+}
+
+# Record exactly what is distributed, without including the manifest in itself.
+$releaseRoot = [System.IO.Path]::GetFullPath($releaseDirectory)
+$manifest = Get-ChildItem -LiteralPath $releaseRoot -File -Recurse |
+    Where-Object { $_.Name -ne 'release-manifest.json' } |
+    Sort-Object FullName | ForEach-Object {
+        [ordered]@{
+            path = [System.IO.Path]::GetRelativePath($releaseRoot, $_.FullName)
+            bytes = $_.Length
+            sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+[ordered]@{ schema_version = 1; files = @($manifest) } |
+    ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json') -Encoding utf8
 
 if (-not $SkipInstaller) {
-    $compiler = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+    $compiler = $null
+    if ($InnoCompiler) {
+        $compiler = [pscustomobject]@{ Source = (Resolve-Path -LiteralPath $InnoCompiler).Path }
+    } else {
+        $compiler = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+    }
     if (-not $compiler) {
         foreach ($candidate in @(
+            (Join-Path $repoRoot 'build\toolchain\inno\ISCC.exe'),
             (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
             (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
         )) {
