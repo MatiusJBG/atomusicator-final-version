@@ -53,7 +53,29 @@ fn main() {
     let control = Arc::new(LivePitchControl::default());
     control.begin_output_probe();
     let prepared =
-        AlignedStream::open_pitched(&vec![source; 5], 0.0, rate, 1, control.clone()).unwrap();
+        AlignedStream::open_pitched(&vec![source.clone(); 5], 0.0, rate, 1, control.clone())
+            .unwrap();
+    let export_load = std::env::args().any(|arg| arg == "--export-load");
+    let export_cancel = atomusicator_application::CancellationToken::default();
+    let export_worker = export_load.then(|| {
+        let cancel = export_cancel.clone();
+        let target = root.0.join("own-export-load.wav");
+        std::thread::spawn(move || {
+            let spec = PitchShiftSpec::try_new(7.0, true).unwrap();
+            let mut completed = 0;
+            while !cancel.is_cancelled() {
+                match atomusicator_infrastructure::live_pitch::render_file(
+                    &source, &target, spec, &cancel,
+                ) {
+                    Ok(()) => completed += 1,
+                    Err(atomusicator_domain::DomainError::SeparationCancelled) => break,
+                    Err(error) => panic!("export load failed: {error}"),
+                }
+                std::fs::remove_file(&target).unwrap();
+            }
+            completed
+        })
+    });
     let mut consumer = prepared.consumer;
     let _producer = prepared.producer;
     let playing = Arc::new(AtomicBool::new(false));
@@ -154,8 +176,13 @@ fn main() {
     }
     playing.store(false, Ordering::Release);
     drop(stream);
+    export_cancel.cancel();
+    let completed_exports = export_worker.map_or(0, |worker| worker.join().unwrap());
     changes.sort_by(f64::total_cmp);
     let p95 = changes[changes.len() * 95 / 100];
+    println!(
+        "{{\"concurrent_pitch_render_export\":{export_load},\"completed_exports\":{completed_exports}}}"
+    );
     println!(
         "{{\"scope\":\"muted native output with driver-estimated presentation\",\"acoustic_latency_measured\":false,\"sample_rate\":{rate},\"callback_frames\":{},\"queue_target_frames\":{},\"changes\":{},\"p50_ms\":{},\"p95_ms\":{p95},\"max_ms\":{},\"underrun_frames\":{},\"capture_overflows\":{},\"driver_errors\":{}}}",
         control.output_buffer_frames(),

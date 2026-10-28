@@ -28,17 +28,28 @@ fn main() -> Result<(), String> {
         let mut pitch = api::live_pitch_status()?;
         for (semitones, formants) in [(12, true), (-12, true), (7, false), (0, true)] {
             let before = api::playback_status()?.position_seconds;
-            pitch = api::set_live_pitch(session.id.clone(), pitch.epoch, pitch.revision + 1, semitones, formants)?;
+            pitch = api::set_live_pitch(
+                session.id.clone(),
+                pitch.epoch,
+                pitch.revision + 1,
+                semitones,
+                formants,
+            )?;
             api::play()?;
             let started = Instant::now();
             std::thread::sleep(Duration::from_millis(450));
             let status = api::playback_status()?;
             if status.failure.is_some() || !status.playing {
-                return Err(format!("live pitch interrupted playback: {:?}", status.failure));
+                return Err(format!(
+                    "live pitch interrupted playback: {:?}",
+                    status.failure
+                ));
             }
             let advanced = status.position_seconds - before;
             if (advanced - started.elapsed().as_secs_f64()).abs() > 0.10 {
-                return Err(format!("pitch changed the playback clock: advanced {advanced}"));
+                return Err(format!(
+                    "pitch changed the playback clock: advanced {advanced}"
+                ));
             }
             if api::live_pitch_status()?.applied_revision != pitch.revision {
                 return Err("pitch revision was not consumed by the callback".into());
