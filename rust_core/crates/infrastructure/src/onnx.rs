@@ -27,6 +27,7 @@ pub enum ExecutionProviderKind {
 pub struct OrtSessionPool {
     sessions: Mutex<LruCache<PathBuf, Arc<Mutex<Session>>>>,
     provider_order: Vec<ExecutionProviderKind>,
+    intra_threads: usize,
 }
 
 impl OrtSessionPool {
@@ -36,17 +37,18 @@ impl OrtSessionPool {
                 "ONNX session pool capacity must be positive".into(),
             )
         })?;
-        let mut provider_order = Vec::new();
-        #[cfg(target_os = "windows")]
-        provider_order.extend([ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cuda]);
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        provider_order.push(ExecutionProviderKind::CoreMl);
-        #[cfg(target_os = "linux")]
-        provider_order.push(ExecutionProviderKind::Cuda);
-        provider_order.push(ExecutionProviderKind::Cpu);
+        // Detection is not qualification. Accelerators require explicit opt-in.
+        let provider_order = vec![ExecutionProviderKind::Cpu];
+        let logical_cpus = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1);
+        let intra_threads =
+            atomusicator_application::compute_policy::ComputeBudget::interactive(logical_cpus)
+                .threads_per_inference();
         Ok(Self {
             sessions: Mutex::new(LruCache::new(capacity)),
             provider_order,
+            intra_threads,
         })
     }
 
@@ -64,6 +66,22 @@ impl OrtSessionPool {
         Ok(pool)
     }
 
+    /// Explicit CPU configuration for controlled measurements; production keeps its default policy.
+    pub fn with_cpu_threads(
+        capacity: usize,
+        intra_threads: usize,
+    ) -> Result<Self, InfrastructureError> {
+        let logical = std::thread::available_parallelism().map_or(1, usize::from);
+        if intra_threads == 0 || intra_threads > logical.min(6) {
+            return Err(InfrastructureError::InvalidManifest(
+                "CPU intra threads must be between one and min(logical CPUs, six)".into(),
+            ));
+        }
+        let mut pool = Self::new(capacity)?;
+        pool.intra_threads = intra_threads;
+        Ok(pool)
+    }
+
     pub fn load_session(
         &self,
         model_path: &Path,
@@ -71,14 +89,22 @@ impl OrtSessionPool {
         let canonical_path = model_path
             .canonicalize()
             .map_err(|error| InfrastructureError::io(model_path, error))?;
-        if let Some(session) = self
-            .sessions
-            .lock()
-            .map_err(|_| InfrastructureError::OnnxRuntime("session pool lock was poisoned".into()))?
-            .get(&canonical_path)
-            .cloned()
-        {
+        // Serialize admission as well as lookup: concurrent misses must not load
+        // duplicate heavyweight models. No session lease is retained by runners.
+        let mut sessions = self.sessions.lock().map_err(|_| {
+            InfrastructureError::OnnxRuntime("session pool lock was poisoned".into())
+        })?;
+        if let Some(session) = sessions.get(&canonical_path).cloned() {
             return Ok(session);
+        }
+        if sessions.len() == sessions.cap().get() {
+            let evictable = sessions
+                .iter()
+                .rev()
+                .find(|(_, session)| Arc::strong_count(session) == 1)
+                .map(|(path, _)| path.clone())
+                .ok_or(InfrastructureError::SessionCapacityBusy)?;
+            sessions.pop(&evictable);
         }
 
         let providers = self
@@ -88,22 +114,31 @@ impl OrtSessionPool {
             .map(provider_dispatch)
             .collect::<Vec<_>>();
         let session = SessionBuilder::new()
+            .and_then(|builder| builder.with_intra_threads(self.intra_threads))
+            .and_then(|builder| builder.with_inter_threads(1))
+            .and_then(|builder| builder.with_parallel_execution(false))
+            .and_then(|builder| builder.with_intra_op_spinning(false))
+            .and_then(|builder| builder.with_inter_op_spinning(false))
+            .and_then(|builder| {
+                builder.with_memory_pattern(
+                    !self
+                        .provider_order
+                        .contains(&ExecutionProviderKind::DirectMl),
+                )
+            })
             .and_then(|builder| builder.with_execution_providers(providers))
             .and_then(|builder| builder.commit_from_file(&canonical_path))
             .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
         let session = Arc::new(Mutex::new(session));
-        let mut sessions = self.sessions.lock().map_err(|_| {
-            InfrastructureError::OnnxRuntime("session pool lock was poisoned".into())
-        })?;
-        if let Some(existing) = sessions.get(&canonical_path).cloned() {
-            return Ok(existing);
-        }
         sessions.put(canonical_path, session.clone());
         Ok(session)
     }
 
     pub fn provider_order(&self) -> &[ExecutionProviderKind] {
         &self.provider_order
+    }
+    pub fn intra_threads(&self) -> usize {
+        self.intra_threads
     }
 }
 

@@ -21,6 +21,25 @@ pub struct ManifestModelManager {
 }
 
 impl ManifestModelManager {
+    pub async fn ensure_profile_ready_cancellable(
+        &self,
+        profile_id: &str,
+        cancel: &atomusicator_application::CancellationToken,
+    ) -> Result<VerifiedModelSpec, InfrastructureError> {
+        let pending = self.ensure_profile_ready(profile_id);
+        tokio::pin!(pending);
+        loop {
+            if cancel.is_cancelled() {
+                return Err(InfrastructureError::OnnxRuntime(
+                    "model preparation cancelled".into(),
+                ));
+            }
+            tokio::select! {
+                result=&mut pending=>return result,
+                _=tokio::time::sleep(std::time::Duration::from_millis(50))=>{}
+            }
+        }
+    }
     pub fn from_embedded_manifest(
         path_policy: WorkspacePathPolicy,
     ) -> Result<Self, InfrastructureError> {
@@ -67,10 +86,10 @@ impl ManifestModelManager {
             if !candidate.is_file() {
                 continue;
             }
-            if let Ok(actual_hash) = hash_file(&candidate).await {
-                if actual_hash.eq_ignore_ascii_case(&expected_hash) {
-                    return Ok(verified_spec(profile, candidate, expected_hash));
-                }
+            if let Ok(actual_hash) = hash_file(&candidate).await
+                && actual_hash.eq_ignore_ascii_case(&expected_hash)
+            {
+                return Ok(verified_spec(profile, candidate, expected_hash));
             }
         }
 

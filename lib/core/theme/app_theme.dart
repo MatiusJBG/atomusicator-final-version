@@ -1,23 +1,26 @@
 import 'package:flutter/material.dart';
 
 abstract final class AppColors {
-  static const canvas = Color(0xFF111B22);
-  static const panel = Color(0xFF19262E);
-  static const panelRaised = Color(0xFF20313A);
-  static const line = Color(0xFF30434B);
-  static const text = Color(0xFFE5ECE8);
-  static const muted = Color(0xFF91A5A9);
-  static const seaGlass = Color(0xFF72D7C3);
-  static const amber = Color(0xFFF0B46A);
-  static const coral = Color(0xFFE98172);
-  static const lavender = Color(0xFFB6A8DB);
-  static const blue = Color(0xFF82B9E7);
+  static const canvas = Color(0xFF0B0F14);
+  static const panel = Color(0xFF141B23);
+  static const panelRaised = Color(0xFF1C2731);
+  static const line = Color(0xFF26323E);
+  static const text = Color(0xFFE2E8EF);
+  static const muted = Color(0xFF94A6B5);
+  static const seaGlass = Color(0xFF22CDBB);
+  static const amber = Color(0xFFFFB000);
+  static const coral = Color(0xFFFF4163);
+  static const lavender = Color(0xFFA653F5);
+  static const blue = Color(0xFF3789FF);
+  static const green = Color(0xFF00C495);
+  static const playhead = Color(0xFFFFA147);
 }
 
 abstract final class AppTheme {
   static final dark = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    visualDensity: VisualDensity.compact,
     scaffoldBackgroundColor: AppColors.canvas,
     colorScheme: const ColorScheme.dark(
       primary: AppColors.seaGlass,
@@ -56,6 +59,7 @@ abstract final class AppTheme {
     ),
     iconTheme: const IconThemeData(color: AppColors.muted, size: 19),
     dividerColor: AppColors.line,
+    dividerTheme: const DividerThemeData(color: AppColors.line, thickness: 1),
     tooltipTheme: TooltipThemeData(
       decoration: BoxDecoration(
         color: AppColors.panelRaised,
@@ -70,7 +74,7 @@ abstract final class AppTheme {
         disabledBackgroundColor: AppColors.panelRaised,
         disabledForegroundColor: AppColors.muted,
         padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 13),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -78,7 +82,7 @@ abstract final class AppTheme {
         foregroundColor: AppColors.text,
         side: const BorderSide(color: AppColors.line),
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
@@ -93,6 +97,24 @@ abstract final class AppTheme {
       thumbColor: AppColors.text,
       overlayColor: AppColors.seaGlass.withValues(alpha: 0.12),
       trackHeight: 3,
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: AppColors.panel,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.line),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: AppColors.canvas,
+      isDense: true,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(5)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(5),
+        borderSide: const BorderSide(color: AppColors.line),
+      ),
     ),
   );
 }

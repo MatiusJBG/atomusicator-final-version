@@ -6,8 +6,106 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UiStemTrackDto`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+Future<List<UiRecoverableJobDto>> recoverableJobs() =>
+    RustLib.instance.api.crateApiRecoverableJobs();
+
+Future<Float32List> waveformPeaks({
+  required String sessionId,
+  required String stemType,
+  required String filePath,
+  required int maxBuckets,
+}) => RustLib.instance.api.crateApiWaveformPeaks(
+  sessionId: sessionId,
+  stemType: stemType,
+  filePath: filePath,
+  maxBuckets: maxBuckets,
+);
+
+Future<String> resumeJob({required String jobId}) =>
+    RustLib.instance.api.crateApiResumeJob(jobId: jobId);
+
+Future<void> discardJob({required String jobId}) =>
+    RustLib.instance.api.crateApiDiscardJob(jobId: jobId);
+
+Future<String> startSeparation({
+  required String sourcePath,
+  required bool allowModelDownload,
+}) => RustLib.instance.api.crateApiStartSeparation(
+  sourcePath: sourcePath,
+  allowModelDownload: allowModelDownload,
+);
+
+Future<UiJobDto> jobStatus({required String jobId}) =>
+    RustLib.instance.api.crateApiJobStatus(jobId: jobId);
+
+Future<void> cancelJob({required String jobId}) =>
+    RustLib.instance.api.crateApiCancelJob(jobId: jobId);
+
+Future<UiSessionDto> openAudioSession({required String directory}) =>
+    RustLib.instance.api.crateApiOpenAudioSession(directory: directory);
+
+Future<String> projectsDirectory() =>
+    RustLib.instance.api.crateApiProjectsDirectory();
+
+Future<void> setProjectsDirectory({required String directory}) =>
+    RustLib.instance.api.crateApiSetProjectsDirectory(directory: directory);
+
+Future<String> startPitch({
+  required int semitones,
+  required bool preserveFormants,
+}) => RustLib.instance.api.crateApiStartPitch(
+  semitones: semitones,
+  preserveFormants: preserveFormants,
+);
+
+Future<String> startExport({
+  required String destination,
+  required List<String> selectedStems,
+  required String format,
+  required int sampleRate,
+  required int channels,
+  required int bitDepth,
+  required bool normalize,
+}) => RustLib.instance.api.crateApiStartExport(
+  destination: destination,
+  selectedStems: selectedStems,
+  format: format,
+  sampleRate: sampleRate,
+  channels: channels,
+  bitDepth: bitDepth,
+  normalize: normalize,
+);
+
+Future<UiPlaybackDto> playbackStatus() =>
+    RustLib.instance.api.crateApiPlaybackStatus();
+
+Future<void> play() => RustLib.instance.api.crateApiPlay();
+
+Future<void> pause() => RustLib.instance.api.crateApiPause();
+
+Future<void> stop() => RustLib.instance.api.crateApiStop();
+
+Future<void> seek({required double positionSeconds}) =>
+    RustLib.instance.api.crateApiSeek(positionSeconds: positionSeconds);
+
+Future<void> setMaster({required double gain}) =>
+    RustLib.instance.api.crateApiSetMaster(gain: gain);
+
+Future<void> setTrack({
+  required String stemType,
+  required double gainDb,
+  required double pan,
+  required bool mute,
+  required bool solo,
+}) => RustLib.instance.api.crateApiSetTrack(
+  stemType: stemType,
+  gainDb: gainDb,
+  pan: pan,
+  mute: mute,
+  solo: solo,
+);
 
 /// Health check for the Rust core and its canonical five-stem contract.
 Future<String> getEngineVersion() =>
@@ -18,3 +116,237 @@ Future<String> applicationVersion() =>
 
 Future<List<String>> supportedStems() =>
     RustLib.instance.api.crateApiSupportedStems();
+
+class UiJobDto {
+  final String id;
+  final UiJobStatus status;
+  final String? retryOf;
+  final UiJobFailure? failure;
+  final double progress;
+  final String message;
+  final UiSessionDto? session;
+  final String? outputDirectory;
+
+  const UiJobDto({
+    required this.id,
+    required this.status,
+    this.retryOf,
+    this.failure,
+    required this.progress,
+    required this.message,
+    this.session,
+    this.outputDirectory,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      status.hashCode ^
+      retryOf.hashCode ^
+      failure.hashCode ^
+      progress.hashCode ^
+      message.hashCode ^
+      session.hashCode ^
+      outputDirectory.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiJobDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          status == other.status &&
+          retryOf == other.retryOf &&
+          failure == other.failure &&
+          progress == other.progress &&
+          message == other.message &&
+          session == other.session &&
+          outputDirectory == other.outputDirectory;
+}
+
+enum UiJobFailure {
+  cancelled,
+  sourceUnavailable,
+  invalidArtifact,
+  insufficientResources,
+  storage,
+  deviceUnavailable,
+  processing,
+  interrupted,
+}
+
+enum UiJobStatus {
+  queued,
+  running,
+  cancelling,
+  committing,
+  cancelled,
+  failed,
+  recoverable,
+  completed,
+}
+
+class UiPlaybackDto {
+  final bool playing;
+  final double positionSeconds;
+  final double peak;
+  final List<UiTrackMeterDto> trackMeters;
+  final UiPlaybackFailure? failure;
+
+  const UiPlaybackDto({
+    required this.playing,
+    required this.positionSeconds,
+    required this.peak,
+    required this.trackMeters,
+    this.failure,
+  });
+
+  @override
+  int get hashCode =>
+      playing.hashCode ^
+      positionSeconds.hashCode ^
+      peak.hashCode ^
+      trackMeters.hashCode ^
+      failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiPlaybackDto &&
+          runtimeType == other.runtimeType &&
+          playing == other.playing &&
+          positionSeconds == other.positionSeconds &&
+          peak == other.peak &&
+          trackMeters == other.trackMeters &&
+          failure == other.failure;
+}
+
+enum UiPlaybackFailure { deviceUnavailable, stemUnreadable }
+
+class UiRecoverableJobDto {
+  final String id;
+  final String sourcePath;
+  final String message;
+  final String? outputDirectory;
+
+  const UiRecoverableJobDto({
+    required this.id,
+    required this.sourcePath,
+    required this.message,
+    this.outputDirectory,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      sourcePath.hashCode ^
+      message.hashCode ^
+      outputDirectory.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiRecoverableJobDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sourcePath == other.sourcePath &&
+          message == other.message &&
+          outputDirectory == other.outputDirectory;
+}
+
+class UiSessionDto {
+  final String id;
+  final String directory;
+  final String name;
+  final List<UiStemTrackDto> tracks;
+  final int pitchSemitones;
+
+  const UiSessionDto({
+    required this.id,
+    required this.directory,
+    required this.name,
+    required this.tracks,
+    required this.pitchSemitones,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      directory.hashCode ^
+      name.hashCode ^
+      tracks.hashCode ^
+      pitchSemitones.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiSessionDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          directory == other.directory &&
+          name == other.name &&
+          tracks == other.tracks &&
+          pitchSemitones == other.pitchSemitones;
+}
+
+/// Flutter-facing description of one persisted stem track.
+class UiStemTrackDto {
+  final String stemType;
+  final String filePath;
+  final int sampleRate;
+  final int channels;
+  final double durationSeconds;
+
+  /// Interleaved min/max waveform buckets; PCM stays in the native engine.
+  final Float32List peaks;
+
+  const UiStemTrackDto({
+    required this.stemType,
+    required this.filePath,
+    required this.sampleRate,
+    required this.channels,
+    required this.durationSeconds,
+    required this.peaks,
+  });
+
+  @override
+  int get hashCode =>
+      stemType.hashCode ^
+      filePath.hashCode ^
+      sampleRate.hashCode ^
+      channels.hashCode ^
+      durationSeconds.hashCode ^
+      peaks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiStemTrackDto &&
+          runtimeType == other.runtimeType &&
+          stemType == other.stemType &&
+          filePath == other.filePath &&
+          sampleRate == other.sampleRate &&
+          channels == other.channels &&
+          durationSeconds == other.durationSeconds &&
+          peaks == other.peaks;
+}
+
+class UiTrackMeterDto {
+  final String stemType;
+
+  /// Post track gain/pan/mute/solo, before master gain and output clipping.
+  final double peak;
+
+  const UiTrackMeterDto({required this.stemType, required this.peak});
+
+  @override
+  int get hashCode => stemType.hashCode ^ peak.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiTrackMeterDto &&
+          runtimeType == other.runtimeType &&
+          stemType == other.stemType &&
+          peak == other.peak;
+}

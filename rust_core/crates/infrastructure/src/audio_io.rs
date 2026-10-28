@@ -1,3 +1,6 @@
+pub mod aligned;
+pub mod playback;
+pub mod streamer;
 pub mod wav_codec;
 
 use std::{

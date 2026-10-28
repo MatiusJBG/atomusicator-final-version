@@ -65,6 +65,23 @@ fn workspace_paths_use_portable_app_data_and_legacy_projects_when_present() {
 }
 
 #[test]
+fn workspace_adopts_the_actual_nested_python_cache_and_projects() {
+    let base = temp_dir("python-paths");
+    let legacy = base.join("Separador Vocal/Separador Vocal");
+    fs::create_dir_all(legacy.join("models")).unwrap();
+    fs::create_dir_all(legacy.join("projects")).unwrap();
+    let policy = WorkspacePathPolicy::from_local_data_dir(&base);
+    assert_eq!(policy.default_projects_dir(), legacy.join("projects"));
+    assert!(
+        policy
+            .model_candidates("model.onnx")
+            .unwrap()
+            .contains(&legacy.join("models/model.onnx"))
+    );
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn workspace_policy_rejects_unc_and_filesystem_roots() {
     assert!(
         WorkspacePathPolicy::validate_projects_destination(std::path::Path::new(
@@ -104,6 +121,34 @@ async fn manifest_registry_accepts_a_verified_legacy_model_without_network_acces
     assert_eq!(model.sha256_hash, expected);
 
     fs::remove_dir_all(base).unwrap();
+}
+
+#[tokio::test]
+async fn model_registry_rejects_unreviewed_profiles_before_using_cached_weights() {
+    let json = manifest("model.onnx", &"a".repeat(64)).replace("reviewed", "pending");
+    assert!(
+        ManifestModelManager::from_manifest_json(
+            &json,
+            WorkspacePathPolicy::from_local_data_dir(temp_dir("pending-license"))
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn manifest_preparation_can_be_cancelled_before_touching_the_network() {
+    let cancel = atomusicator_application::CancellationToken::default();
+    cancel.cancel();
+    let manager = ManifestModelManager::from_manifest_json(
+        &manifest("model.onnx", &"a".repeat(64)),
+        WorkspacePathPolicy::from_local_data_dir(temp_dir("cancelled-model")),
+    )
+    .unwrap();
+    let error = manager
+        .ensure_profile_ready_cancellable("test-profile", &cancel)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
 }
 
 #[tokio::test]

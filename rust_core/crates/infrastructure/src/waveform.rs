@@ -8,6 +8,44 @@ use sha2::{Digest, Sha256};
 type PeakList = Vec<(f32, f32)>;
 type PeakEntries = LruCache<[u8; 32], PeakList>;
 
+pub fn wav_peaks(
+    path: &std::path::Path,
+    max_buckets: usize,
+) -> Result<(atomusicator_domain::AudioAssetMetadata, Vec<f32>), atomusicator_domain::DomainError> {
+    let mut reader = crate::audio_io::wav_codec::WavBlockReader::open(path)?;
+    let metadata = reader.metadata();
+    let width = metadata
+        .frame_count
+        .div_ceil(max_buckets.max(1) as u64)
+        .max(1);
+    let count = metadata.frame_count.div_ceil(width) as usize;
+    let mut peaks = vec![(f32::INFINITY, f32::NEG_INFINITY); count];
+    let channels = usize::from(metadata.format.channels);
+    let mut buffer = vec![0.0; 65536 * channels];
+    for start in (0..metadata.frame_count).step_by(65536) {
+        let frames = reader.read_frames(start, &mut buffer)?;
+        if frames == 0 {
+            return Err(atomusicator_domain::DomainError::AudioDecodeFailure(
+                "truncated stem waveform".into(),
+            ));
+        }
+        for (frame, samples) in buffer[..frames * channels].chunks(channels).enumerate() {
+            let bucket = ((start + frame as u64) / width) as usize;
+            for sample in samples {
+                peaks[bucket].0 = peaks[bucket].0.min(*sample);
+                peaks[bucket].1 = peaks[bucket].1.max(*sample);
+            }
+        }
+    }
+    Ok((
+        metadata,
+        peaks
+            .into_iter()
+            .flat_map(|(min, max)| [min, max])
+            .collect(),
+    ))
+}
+
 /// Bounded waveform peak cache keyed by the exact PCM content and bucket size.
 pub struct WaveformPeakCache {
     entries: Mutex<PeakEntries>,

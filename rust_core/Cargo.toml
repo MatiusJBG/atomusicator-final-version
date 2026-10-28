@@ -11,7 +11,7 @@ members = [
 version = "0.6.0"
 edition = "2024"
 authors = ["Matias Benjamin Morales Aigaje"]
-license = "MIT"
+license-file = "../LICENSE"
 
 [workspace.dependencies]
 ort = { version = "=2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "download-binaries", "copy-dylibs"] }
@@ -24,7 +24,7 @@ symphonia = { version = "0.5", features = ["all"] }
 hound = "3.5"
 cpal = "0.15"
 rtrb = "0.3"
-tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "fs", "macros"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "fs", "macros", "time"] }
 rayon = "1.10"
 tokio-util = { version = "0.7", features = ["rt"] }
 serde = { version = "1.0", features = ["derive"] }
