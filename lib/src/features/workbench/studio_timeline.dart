@@ -410,6 +410,21 @@ class _TrackWave extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
+    final zoom = ref.watch(timelineZoomProvider);
+    final detail =
+        state.session == null
+            ? null
+            : ref
+                .watch(
+                  waveformDetailProvider((
+                    sessionId: state.session!.id,
+                    stemType: track.stemType,
+                    filePath: track.filePath,
+                    buckets: (1000 * zoom).round(),
+                  )),
+                )
+                .valueOrNull;
+    final peaks = detail != null && detail.isNotEmpty ? detail : track.peaks;
     final mix = state.tracks[track.stemType] ?? const MixTrackState();
     final soloActive = state.tracks.values.any((t) => t.solo);
     final audible = !mix.mute && (!soloActive || mix.solo);
@@ -442,7 +457,7 @@ class _TrackWave extends ConsumerWidget {
                   Positioned.fill(
                     child: CustomPaint(
                       painter: WaveformPainter(
-                        peaks: track.peaks,
+                        peaks: peaks,
                         color: color.withValues(alpha: audible ? .9 : .24),
                         progress:
                             state.duration > 0

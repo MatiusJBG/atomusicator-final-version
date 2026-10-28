@@ -85,6 +85,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final gateway = FiveStemStudio();
       final container = await mount(tester, gateway);
+      expect(gateway.waveformResolutions, contains(1000));
       final controls = find.byKey(const ValueKey('controls-lead_vocal'));
       final wave = find.byKey(const ValueKey('wave-lead_vocal'));
       expect(
@@ -95,6 +96,7 @@ void main() {
       final before = tester.getTopLeft(controls);
       container.read(timelineZoomProvider.notifier).state = 4;
       await tester.pump();
+      expect(gateway.waveformResolutions, contains(4000));
       await tester.drag(
         find.byKey(const ValueKey('wave-scroll')),
         const Offset(-240, 0),

@@ -25,6 +25,37 @@ void main() {
     );
   });
   tearDown(() => container.dispose());
+  test('late waveform detail cannot replace a reopened session', () async {
+    final controller = container.read(studioProvider.notifier);
+    await controller.open('/session');
+    final stale = Completer<List<double>>();
+    final current = Completer<List<double>>();
+    var requests = 0;
+    gateway.pendingWaveform =
+        () => requests++ == 0 ? stale.future : current.future;
+    const request = (
+      sessionId: 'session',
+      stemType: 'bass',
+      filePath: '/bass.wav',
+      buckets: 4000,
+    );
+    final subscription = container.listen(
+      waveformDetailProvider(request),
+      (_, _) {},
+    );
+    await Future<void>.delayed(Duration.zero);
+    await controller.open('/session');
+    final newest = container.read(waveformDetailProvider(request).future);
+    stale.complete(const [-0.9, 0.9]);
+    current.complete(const [-0.2, 0.2]);
+    expect(await newest, const [-0.2, 0.2]);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(waveformDetailProvider(request)).requireValue, const [
+      -0.2,
+      0.2,
+    ]);
+    subscription.close();
+  });
   test('a late playback poll cannot undo a seek', () async {
     final controller = container.read(studioProvider.notifier);
     await controller.open('/session');

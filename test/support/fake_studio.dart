@@ -4,6 +4,19 @@ import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:atomusicator/src/rust_bridge/api.dart';
 
 class FakeStudio implements StudioGateway {
+  final waveformResolutions = <int>[];
+  Future<List<double>> Function()? pendingWaveform;
+  @override
+  Future<List<double>> waveform(
+    String sessionId,
+    String stemType,
+    String filePath,
+    int buckets,
+  ) {
+    waveformResolutions.add(buckets);
+    return pendingWaveform?.call() ?? Future.value(const []);
+  }
+
   @override
   Future<List<UiRecoverableJobDto>> recoverableJobs() async => recoveryItems;
   List<UiRecoverableJobDto> recoveryItems = [];

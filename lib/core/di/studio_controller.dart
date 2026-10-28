@@ -4,6 +4,12 @@ import '../../src/rust_bridge/api.dart' as native;
 import 'native_engine_provider.dart';
 
 abstract class StudioGateway {
+  Future<List<double>> waveform(
+    String sessionId,
+    String stemType,
+    String filePath,
+    int buckets,
+  );
   Future<List<native.UiRecoverableJobDto>> recoverableJobs() async => [];
   Future<String> resume(String id) =>
       throw UnsupportedError('Recovery is unavailable');
@@ -33,6 +39,18 @@ abstract class StudioGateway {
 }
 
 class NativeStudioGateway implements StudioGateway {
+  @override
+  Future<List<double>> waveform(
+    String sessionId,
+    String stemType,
+    String filePath,
+    int buckets,
+  ) => native.waveformPeaks(
+    sessionId: sessionId,
+    stemType: stemType,
+    filePath: filePath,
+    maxBuckets: buckets,
+  );
   @override
   Future<List<native.UiRecoverableJobDto>> recoverableJobs() =>
       native.recoverableJobs();
@@ -177,6 +195,24 @@ final studioGatewayProvider = Provider<StudioGateway>(
 final studioProvider = NotifierProvider<StudioController, StudioState>(
   StudioController.new,
 );
+
+typedef WaveformRequest =
+    ({String sessionId, String stemType, String filePath, int buckets});
+final waveformDetailProvider = FutureProvider.autoDispose.family<
+  List<double>,
+  WaveformRequest
+>((ref, request) {
+  // Reopening/pitching the same session also invalidates outstanding detail reads.
+  ref.watch(studioProvider.select((state) => state.session));
+  return ref
+      .watch(studioGatewayProvider)
+      .waveform(
+        request.sessionId,
+        request.stemType,
+        request.filePath,
+        request.buckets,
+      );
+});
 
 bool jobIsActive(native.UiJobStatus? status) => switch (status) {
   native.UiJobStatus.queued ||
