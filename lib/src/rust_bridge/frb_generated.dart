@@ -62,7 +62,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.8.0';
 
   @override
-  int get rustContentHash => 1747314208;
+  int get rustContentHash => 1244749379;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -134,6 +134,13 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiStop();
 
   Future<List<String>> crateApiSupportedStems();
+
+  Future<Float32List> crateApiWaveformPeaks({
+    required String sessionId,
+    required String stemType,
+    required String filePath,
+    required int maxBuckets,
+  });
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -783,6 +790,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiSupportedStemsConstMeta =>
       const TaskConstMeta(debugName: "supported_stems", argNames: []);
+
+  @override
+  Future<Float32List> crateApiWaveformPeaks({
+    required String sessionId,
+    required String stemType,
+    required String filePath,
+    required int maxBuckets,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_String(stemType, serializer);
+          sse_encode_String(filePath, serializer);
+          sse_encode_u_32(maxBuckets, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 22,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_f_32_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiWaveformPeaksConstMeta,
+        argValues: [sessionId, stemType, filePath, maxBuckets],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiWaveformPeaksConstMeta => const TaskConstMeta(
+    debugName: "waveform_peaks",
+    argNames: ["sessionId", "stemType", "filePath", "maxBuckets"],
+  );
 
   @protected
   String dco_decode_String(dynamic raw) {

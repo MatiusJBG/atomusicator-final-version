@@ -21,6 +21,38 @@ fn originals(root: &std::path::Path) -> Vec<(StemType, PathBuf)> {
         .collect()
 }
 #[test]
+fn pruning_retains_live_pitch_batches_and_never_deletes_originals_or_unowned_folders() {
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let sources = originals(&root.0);
+    let render_root = root.0.join("renders");
+    let cache = PitchRenderCache::new(render_root.clone());
+    let batch = cache
+        .get_or_render(
+            &sources,
+            PitchShiftSpec::try_new(1.0, false).unwrap(),
+            "runtime",
+            &CancellationToken::default(),
+            |source, target| {
+                fs::copy(source, target).unwrap();
+                Ok(())
+            },
+        )
+        .unwrap();
+    let rendered = batch.paths[0].1.clone();
+    let directory = rendered.parent().unwrap().to_path_buf();
+    let unrelated = render_root.join(".invalid-user-notes");
+    fs::create_dir(&unrelated).unwrap();
+    fs::write(unrelated.join(".cache-key"), "a".repeat(64)).unwrap();
+    fs::write(unrelated.join("keep.txt"), b"user file").unwrap();
+    cache.prune(0).unwrap();
+    assert!(rendered.exists(), "a reader still owns this batch");
+    drop(batch);
+    cache.prune(0).unwrap();
+    assert!(!directory.exists(), "unleased cache can be evicted");
+    assert!(unrelated.join("keep.txt").exists());
+    assert!(sources.iter().all(|(_, path)| path.exists()));
+}
+#[test]
 fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
     let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
     let sources = originals(&root.0);
@@ -51,8 +83,8 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
             &mut render,
         )
         .unwrap();
-    assert_eq!(first, again);
-    fs::write(&first[0].1, b"corrupt").unwrap();
+    assert_eq!(first.paths, again.paths);
+    fs::write(&first.paths[0].1, b"corrupt").unwrap();
     let repaired = cache
         .get_or_render(
             &sources,
@@ -64,6 +96,7 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
         .unwrap();
     assert!(
         repaired
+            .paths
             .iter()
             .all(|(_, path)| fs::metadata(path).unwrap().len() > 7)
     );
@@ -76,7 +109,7 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
             &mut render,
         )
         .unwrap();
-    assert_ne!(repaired, other);
+    assert_ne!(repaired.paths, other.paths);
     let shifted = cache
         .get_or_render(
             &sources,
@@ -86,7 +119,7 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
             &mut render,
         )
         .unwrap();
-    assert_ne!(other, shifted);
+    assert_ne!(other.paths, shifted.paths);
     let formants = cache
         .get_or_render(
             &sources,
@@ -96,7 +129,7 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
             &mut render,
         )
         .unwrap();
-    assert_ne!(shifted, formants);
+    assert_ne!(shifted.paths, formants.paths);
     assert_eq!(calls, 25);
 }
 
@@ -121,7 +154,15 @@ fn cancellation_never_publishes_a_partial_batch_or_changes_originals() {
     );
     assert!(result.is_err());
     assert_eq!(fs::read(&sources[0].1).unwrap(), original);
-    assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_dir())
+            .count(),
+        0,
+        "no partial batch is published; coordination lock files are metadata"
+    );
 }
 
 #[test]

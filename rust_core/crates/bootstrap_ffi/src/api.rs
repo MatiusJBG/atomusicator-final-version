@@ -65,6 +65,14 @@ pub struct UiRecoverableJobDto {
 pub fn recoverable_jobs() -> Result<Vec<UiRecoverableJobDto>, String> {
     crate::studio::studio()?.recoverable()
 }
+pub fn waveform_peaks(
+    session_id: String,
+    stem_type: String,
+    file_path: String,
+    max_buckets: u32,
+) -> Result<Vec<f32>, String> {
+    crate::studio::studio()?.waveform_peaks(&session_id, &stem_type, &file_path, max_buckets)
+}
 pub fn resume_job(job_id: String) -> Result<String, String> {
     crate::studio::studio()?.resume(&job_id)
 }

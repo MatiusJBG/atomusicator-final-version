@@ -11,6 +11,18 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<List<UiRecoverableJobDto>> recoverableJobs() =>
     RustLib.instance.api.crateApiRecoverableJobs();
 
+Future<Float32List> waveformPeaks({
+  required String sessionId,
+  required String stemType,
+  required String filePath,
+  required int maxBuckets,
+}) => RustLib.instance.api.crateApiWaveformPeaks(
+  sessionId: sessionId,
+  stemType: stemType,
+  filePath: filePath,
+  maxBuckets: maxBuckets,
+);
+
 Future<String> resumeJob({required String jobId}) =>
     RustLib.instance.api.crateApiResumeJob(jobId: jobId);
 

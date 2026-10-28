@@ -73,6 +73,16 @@ void main() {
         );
         expect(session.tracks.length, 5);
         expect(session.tracks.first.peaks, isNotEmpty);
+        final track = session.tracks.first;
+        expect(
+          await native.waveformPeaks(
+            sessionId: session.id,
+            stemType: track.stemType,
+            filePath: track.filePath,
+            maxBuckets: 4000,
+          ),
+          isNotEmpty,
+        );
         await native.setTrack(
           stemType: 'bass',
           gainDb: -6,
