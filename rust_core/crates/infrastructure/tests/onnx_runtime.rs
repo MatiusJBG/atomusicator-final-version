@@ -31,7 +31,7 @@ fn provider_pool_rejects_zero_capacity() {
 #[test]
 fn benchmark_cpu_threads_are_explicit_positive_and_bounded() {
     assert!(OrtSessionPool::with_cpu_threads(2, 0).is_err());
-    assert!(OrtSessionPool::with_cpu_threads(2, 7).is_err());
+    assert!(OrtSessionPool::with_cpu_threads(2, 13).is_err());
     let pool = OrtSessionPool::with_cpu_threads(2, 1).unwrap();
     assert_eq!(pool.intra_threads(), 1);
     assert_eq!(pool.provider_order(), &[ExecutionProviderKind::Cpu]);
@@ -68,6 +68,14 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
         .collect::<Vec<_>>();
     let pool = OrtSessionPool::new(1).unwrap();
     let live = pool.load_session(&paths[0]).unwrap();
+    let diagnostics = pool.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].provider_effective.as_deref(),
+        Some("CPUExecutionProvider")
+    );
+    assert!(diagnostics[0].fallback_errors.is_empty());
+    assert!(diagnostics[0].initialization_seconds > 0.0);
     pool.trim_idle_and_resize(1).unwrap();
     assert_eq!(pool.capacity().unwrap(), 1);
     assert!(std::sync::Arc::ptr_eq(
