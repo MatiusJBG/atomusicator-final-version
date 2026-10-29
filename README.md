@@ -212,18 +212,10 @@ a clean OS test or proof of upgrading every historical production installer.
 
 The simplest complete local run is the prepared release executable. A bare
 `flutter run -d windows` does not place all native dependencies beside its debug
-executable. If using debug/hot reload, prepare a release first, build the debug
-runner, and copy its runtime dependencies:
+executable. Prepare the debug runtime before using debug/hot reload:
 
 ```powershell
-cargo build --locked --manifest-path rust_core/Cargo.toml -p atomusicator-bootstrap-ffi
-flutter build windows --debug
-$releaseDirectory = (Resolve-Path build/windows/x64/runner/Release).Path
-$debugDirectory = (Resolve-Path build/windows/x64/runner/Debug).Path
-Get-ChildItem -LiteralPath $releaseDirectory -Filter '*.dll' |
-    Where-Object Name -Match '^(atomusicator_bootstrap_ffi|onnxruntime.*|msvcp140|vcruntime140.*|concrt140)\.dll$' |
-    Copy-Item -Destination $debugDirectory -Force
-Copy-Item -LiteralPath "$releaseDirectory/audio-tools" -Destination $debugDirectory -Recurse -Force
+./packaging/build_windows.ps1 -SkipInstaller -PrepareDebug
 flutter run -d windows
 ```
 
@@ -278,6 +270,7 @@ See the audit for exact compatibility limits and measured evidence.
 | PowerShell rejects `#requires -Version 7.0` | Open `pwsh`, not Windows PowerShell 5.1 |
 | Flutter cannot find Visual Studio or Windows | Install Desktop development with C++, Windows SDK and CMake tools; rerun `flutter doctor -v` |
 | Missing native DLL / audio tools | Run `packaging/build_windows.ps1 -SkipInstaller`; launch the complete release folder |
+| `_createDevFS` / `PathAccessException` creating a directory in `%TEMP%`, alongside AppData access errors | An executable built in a Low-integrity workspace may inherit Low integrity. Rebuild with the updated Windows runner; it labels the application for normal Medium-integrity execution. `packaging/build_windows.ps1 -SkipInstaller -PrepareDebug` also prepares native DLLs and audio helpers. Restart the app; do not loosen TEMP/AppData permissions. See [Windows integrity diagnosis](docs/windows-integrity.md). |
 | Access denied in `Separador Vocal/.../projects/.atomusicator-write-probe-*` | Rebuild and restart the app. If the historical workspace is not writable, the backend validates `%LOCALAPPDATA%\Atomusicator\projects` and saves it as the new destination. Historical projects remain in place; a manually selected unwritable directory is still rejected. The native destination also requires write access. |
 | Model download denied / model unavailable | Grant download consent, check network and available disk; do not bypass SHA-256 checks |
 | FLAC invisible in the picker | Rebuild/use the updated app; it uses an explicit WAV/MP3/FLAC/M4A filter |

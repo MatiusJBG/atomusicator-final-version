@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipInstaller,
+    [switch]$PrepareDebug,
     [string]$FfmpegRuntimeDirectory,
     [string]$InnoCompiler
 )
@@ -149,6 +150,27 @@ if (-not $SkipInstaller) {
     $installerExecutable = Join-Path $installerOutput "Atomusicator-Setup-$appVersion.exe"
     & "$env:SystemRoot\System32\icacls.exe" $installerExecutable /setintegritylevel M | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not set normal integrity on the generated installer.' }
+}
+
+if ($PrepareDebug) {
+    Push-Location $repoRoot
+    try {
+        flutter build windows --debug
+        if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows debug build failed.' }
+    } finally { Pop-Location }
+    $debugDirectory = Join-Path $repoRoot 'build\windows\x64\runner\Debug'
+    Get-ChildItem -LiteralPath $releaseDirectory -File -Filter '*.dll' |
+        Where-Object Name -Match '^(atomusicator_bootstrap_ffi|onnxruntime.*|msvcp140.*|vcruntime140.*|concrt140)\.dll$' |
+        Copy-Item -Destination $debugDirectory -Force
+    $debugAudioTools = Join-Path $debugDirectory 'audio-tools'
+    New-Item -ItemType Directory -Path $debugAudioTools -Force | Out-Null
+    Copy-Item -Path (Join-Path $audioTools '*') -Destination $debugAudioTools -Recurse -Force
+    foreach ($name in @('atomusicator.exe', 'audio-tools\bin\ffmpeg.exe', 'audio-tools\bin\ffprobe.exe')) {
+        $executable = Join-Path $debugDirectory $name
+        & "$env:SystemRoot\System32\icacls.exe" $executable /setintegritylevel M | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not set normal integrity on $executable." }
+    }
+    Write-Host "Debug runtime prepared for flutter run: $debugDirectory"
 }
 
 Write-Host "Windows release files: $releaseDirectory"
