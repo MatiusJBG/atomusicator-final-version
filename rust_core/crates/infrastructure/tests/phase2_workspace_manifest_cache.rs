@@ -1,3 +1,4 @@
+use atomusicator_infrastructure::storage::legacy_import::PREVIOUS_APP_DIRECTORY;
 use std::{
     fs,
     path::PathBuf,
@@ -48,7 +49,7 @@ fn sample_buffer(samples: Vec<f32>) -> AudioBufferF32 {
 }
 
 #[test]
-fn workspace_paths_use_portable_app_data_and_legacy_projects_when_present() {
+fn workspace_paths_stay_in_atomusicator_when_historical_projects_exist() {
     let base = temp_dir("paths");
     let policy = WorkspacePathPolicy::from_local_data_dir(&base);
     assert_eq!(policy.app_data_root(), base.join("Atomusicator"));
@@ -57,21 +58,29 @@ fn workspace_paths_use_portable_app_data_and_legacy_projects_when_present() {
         base.join("Atomusicator/projects")
     );
 
-    let legacy_projects = base.join("Separador Vocal/projects");
+    let legacy_projects = base.join(PREVIOUS_APP_DIRECTORY).join("projects");
     fs::create_dir_all(&legacy_projects).unwrap();
     let policy = WorkspacePathPolicy::from_local_data_dir(&base);
-    assert_eq!(policy.default_projects_dir(), legacy_projects);
+    assert_eq!(
+        policy.default_projects_dir(),
+        base.join("Atomusicator/projects")
+    );
     fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
-fn workspace_adopts_the_actual_nested_python_cache_and_projects() {
+fn workspace_uses_atomusicator_and_discovers_nested_historical_models() {
     let base = temp_dir("python-paths");
-    let legacy = base.join("Separador Vocal/Separador Vocal");
+    let legacy = base
+        .join(PREVIOUS_APP_DIRECTORY)
+        .join(PREVIOUS_APP_DIRECTORY);
     fs::create_dir_all(legacy.join("models")).unwrap();
     fs::create_dir_all(legacy.join("projects")).unwrap();
     let policy = WorkspacePathPolicy::from_local_data_dir(&base);
-    assert_eq!(policy.default_projects_dir(), legacy.join("projects"));
+    assert_eq!(
+        policy.default_projects_dir(),
+        base.join("Atomusicator/projects")
+    );
     assert!(
         policy
             .model_candidates("model.onnx")
@@ -104,7 +113,7 @@ async fn manifest_registry_accepts_a_verified_legacy_model_without_network_acces
     let base = temp_dir("manifest-legacy");
     let bytes = b"verified test model";
     let expected = format!("{:x}", Sha256::digest(bytes));
-    let legacy_models = base.join("Separador Vocal/models");
+    let legacy_models = base.join(PREVIOUS_APP_DIRECTORY).join("models");
     fs::create_dir_all(&legacy_models).unwrap();
     fs::write(legacy_models.join("model.onnx"), bytes).unwrap();
     let manager = ManifestModelManager::from_manifest_json(
@@ -117,7 +126,10 @@ async fn manifest_registry_accepts_a_verified_legacy_model_without_network_acces
         .await
         .unwrap();
     assert_eq!(model.profile_id, "test-profile");
-    assert_eq!(model.local_path, legacy_models.join("model.onnx"));
+    assert_eq!(
+        model.local_path,
+        base.join("Atomusicator/models/model.onnx")
+    );
     assert_eq!(model.sha256_hash, expected);
 
     fs::remove_dir_all(base).unwrap();

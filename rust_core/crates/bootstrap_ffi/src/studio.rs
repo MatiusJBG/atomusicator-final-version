@@ -301,13 +301,9 @@ impl Studio {
             for (index, profile) in manager.manifest().models.iter().enumerate() {
                 check_cancel(cancel)?;
                 backend.report(id,index as f32 * 0.025,&format!("Verifying {}",profile.filename));
-                let mut local = None;
-                for candidate in policy.model_candidates(&profile.filename).map_err(err)? {
-                    if candidate.is_file() && runtime.block_on(ManifestModelManager::verify_model_file(&candidate))
-                        .map(|h|h == profile.sha256).unwrap_or(false) { local=Some(candidate); break; }
-                }
+                let local=runtime.block_on(manager.cached_profile(&profile.profile_id)).map_err(err)?;
                 let path = match local {
-                    Some(path) => path,
+                    Some(model) => model.local_path,
                     None if download_allowed => runtime.block_on(manager.ensure_profile_ready_cancellable(&profile.profile_id,cancel)).map_err(err)?.local_path,
                     None => return Err("Models are missing or corrupt. Authorize the verified model download and retry.".into()),
                 };

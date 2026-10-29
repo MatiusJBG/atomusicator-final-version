@@ -17,21 +17,18 @@ impl LegacyProjectsReader for NativeLegacyProjects {
     fn candidates(&self) -> Vec<PathBuf> {
         #[cfg(windows)]
         {
-            [
-                r"Software\Atomusicator\Atomusicator\projects",
-                r"Software\Separador Vocal\Separador Vocal\projects",
-            ]
-            .iter()
-            .filter_map(|key| {
-                windows_registry::CURRENT_USER
-                    .open(key)
-                    .ok()?
-                    .get_string("directory")
-                    .ok()
-            })
-            .filter(|value| !value.trim().is_empty())
-            .map(PathBuf::from)
-            .collect()
+            crate::storage::legacy_import::registry_keys()
+                .iter()
+                .filter_map(|key| {
+                    windows_registry::CURRENT_USER
+                        .open(key)
+                        .ok()?
+                        .get_string("directory")
+                        .ok()
+                })
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+                .collect()
         }
         #[cfg(not(windows))]
         {
@@ -49,35 +46,31 @@ impl<L: LegacyProjectsReader> ProjectsPreferences<L> {
         Self { policy, legacy }
     }
     pub fn load(&self) -> Result<PathBuf, InfrastructureError> {
+        self.policy.import_legacy_projects()?;
         let file = self.policy.app_data_root().join("settings.json");
         if let Some(saved) = fs::read(&file)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<PathBuf>(&bytes).ok())
+            && !self.policy.is_historical_projects_path(&saved)
             && let Ok(valid) = WorkspacePathPolicy::validate_projects_destination(&saved)
         {
             return Ok(valid);
         }
         for candidate in self.legacy.candidates() {
+            if self.policy.is_historical_projects_path(&candidate) {
+                continue;
+            }
             if let Ok(valid) = WorkspacePathPolicy::validate_projects_destination(&candidate) {
                 self.save(&valid)?;
                 return Ok(valid);
             }
         }
-        let preferred = self.policy.default_projects_dir();
-        match WorkspacePathPolicy::validate_projects_destination(&preferred) {
-            Ok(valid) => Ok(valid),
-            Err(error) if preferred != self.policy.native_projects_dir() => {
-                eprintln!(
-                    "Legacy projects workspace is unavailable; selecting the native workspace: {error}"
-                );
-                // Validate the fallback and persist the repair, so a rejected
-                // historical path is not selected again on every launch.
-                self.save(&self.policy.native_projects_dir())
-            }
-            Err(error) => Err(error),
-        }
+        self.save(&self.policy.native_projects_dir())
     }
     pub fn save(&self, path: &Path) -> Result<PathBuf, InfrastructureError> {
+        if self.policy.is_historical_projects_path(path) {
+            return Err(InfrastructureError::InvalidManifest("Historical application folders are read-only import sources; select an Atomusicator workspace".into()));
+        }
         let valid = WorkspacePathPolicy::validate_projects_destination(path)?;
         fs::create_dir_all(self.policy.app_data_root())
             .map_err(|e| InfrastructureError::io(self.policy.app_data_root(), e))?;
