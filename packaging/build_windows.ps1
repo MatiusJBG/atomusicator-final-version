@@ -100,6 +100,15 @@ foreach ($entry in @(
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $releaseDirectory -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $releaseDirectory -Force
 
+# Bundled helper EXEs can inherit a Low label from the build workspace too.
+# Medium is normal user integrity, not administrator elevation. Keep directory
+# permissions and the labels on TEMP/AppData untouched.
+foreach ($name in @('atomusicator.exe', 'audio-tools\bin\ffmpeg.exe', 'audio-tools\bin\ffprobe.exe')) {
+    $executable = Join-Path $releaseDirectory $name
+    & "$env:SystemRoot\System32\icacls.exe" $executable /setintegritylevel M | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not set normal integrity on $executable." }
+}
+
 $releaseRoot = [System.IO.Path]::GetFullPath($releaseDirectory)
 $manifest = Get-ChildItem -LiteralPath $releaseRoot -File -Recurse |
     Where-Object { $_.Name -ne 'release-manifest.json' } |
@@ -137,6 +146,9 @@ if (-not $SkipInstaller) {
     New-Item -ItemType Directory -Path $installerOutput -Force | Out-Null
     & $compiler.Source "/DAppVersion=$appVersion" "/DReleaseDir=$releaseDirectory" "/DOutputDir=$installerOutput" $installerDefinition
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+    $installerExecutable = Join-Path $installerOutput "Atomusicator-Setup-$appVersion.exe"
+    & "$env:SystemRoot\System32\icacls.exe" $installerExecutable /setintegritylevel M | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set normal integrity on the generated installer.' }
 }
 
 Write-Host "Windows release files: $releaseDirectory"
