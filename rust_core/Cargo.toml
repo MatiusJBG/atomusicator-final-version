@@ -38,3 +38,9 @@ fs4 = "0.12"
 flutter_rust_bridge = "=2.8.0"
 thiserror = "2.0"
 tracing = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
