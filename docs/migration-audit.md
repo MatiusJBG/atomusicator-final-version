@@ -19,7 +19,7 @@ la migración conservaban su estado pendiente en esa actualización visual; el c
 permanecen locales. No se modificó el DSP ni se añadieron dependencias Python.
 
 Fecha: 27 de octubre de 2026. Rama única: `feature/complete-python-migration`.
-Referencia: proyecto `Separador`, sus implementaciones y pruebas; contexto del
+Referencia: aplicación anterior, sus implementaciones y pruebas; contexto del
 chat **migracion fases** y documentos de fases 1–5. Base nueva: `origin/develop`
 en `f5b359d`. Referencia Python: `feature/atomusicator-performance` en
 `b1179ae7702a482327a228a738d03371f54ff7f0`. No se modificó su código.
@@ -34,8 +34,8 @@ El STFT genérico no sirve directamente para MDX: los modelos vocales usan FFT d
 de dos y fija el hop en la mitad de la FFT. Faltaba el adaptador neuronal.
 
 La caché antigua también estaba mal localizada: Python usa
-`%LOCALAPPDATA%/Separador Vocal/Separador Vocal`, y Rust solo buscaba un nivel
-`Separador Vocal`. Una prueba nueva reprodujo el fallo antes de corregirlo.
+un directorio histórico anidado, y Rust solo buscaba un nivel
+del directorio histórico. Una prueba nueva reprodujo el fallo antes de corregirlo.
 
 ## Capacidades y resultado de esta rama
 
