@@ -53,6 +53,8 @@ class WorkbenchController extends Notifier<WorkbenchState> {
     }
   }
 
+  void clearSources() => state = const WorkbenchState();
+
   String _pathKey(String path) {
     final normalized = path.replaceAll('\\', '/');
     return Platform.isWindows ? normalized.toLowerCase() : normalized;

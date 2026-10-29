@@ -104,7 +104,7 @@ void main() {
       );
       await tester.pump();
       expect(tester.getTopLeft(controls), before);
-      await tester.tap(find.byTooltip('Mute Lead vocal'));
+      await tester.tap(find.byTooltip('Silenciar Voz principal'));
       await tester.pump();
       expect(gateway.calls, contains('track:lead_vocal:true:false'));
       expect(tester.takeException(), isNull);
@@ -112,7 +112,7 @@ void main() {
         tester.view.physicalSize = size;
         await tester.pump();
         expect(tester.takeException(), isNull);
-        expect(find.byTooltip('Play'), findsOneWidget);
+        expect(find.byTooltip('Reproducir'), findsOneWidget);
       }
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
@@ -128,23 +128,25 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final gateway = FiveStemStudio()..positivePeak = 1.2;
       final container = await mount(tester, gateway);
-      await tester.tap(find.byTooltip('Export stems').first);
+      await tester.tap(find.text('Exportar stems').first);
       await tester.pumpAndSettle();
-      expect(find.textContaining('exceed 0 dBFS'), findsOneWidget);
+      expect(find.textContaining('superan 0 dBFS'), findsOneWidget);
+      await tester.tap(find.text('Opciones avanzadas'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('24 bits'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('32-bit float').last);
       await tester.pumpAndSettle();
-      expect(find.textContaining('exceed 0 dBFS'), findsNothing);
-      await tester.tap(find.text('FLAC'));
+      expect(find.textContaining('superan 0 dBFS'), findsNothing);
+      await tester.tap(find.text('FLAC 24-bit'));
       await tester.pumpAndSettle();
       expect(find.text('24 bits'), findsOneWidget);
-      expect(find.textContaining('exceed 0 dBFS'), findsOneWidget);
-      await tester.ensureVisible(find.text('Normalize loudness'));
-      await tester.tap(find.text('Normalize loudness'));
+      expect(find.textContaining('superan 0 dBFS'), findsOneWidget);
+      await tester.ensureVisible(find.text('Normalizar volumen'));
+      await tester.tap(find.text('Normalizar volumen'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('exceed 0 dBFS'), findsNothing);
-      expect(find.textContaining('relative stem levels'), findsOneWidget);
+      expect(find.textContaining('superan 0 dBFS'), findsNothing);
+      expect(find.textContaining('niveles relativos'), findsOneWidget);
       expect(gateway.calls.where((c) => c.startsWith('export:')), isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
@@ -168,8 +170,8 @@ void main() {
     ];
     final container = await mount(tester, gateway);
     await tester.pump();
-    expect(find.text('Interrupted separation: song.flac'), findsOneWidget);
-    await tester.tap(find.text('Resume'));
+    expect(find.text('Separación interrumpida: song.flac'), findsOneWidget);
+    await tester.tap(find.text('Reanudar'));
     await tester.pump();
     expect(gateway.calls, contains('resume:old-attempt'));
     expect(container.read(studioProvider).busy, isTrue);
@@ -187,7 +189,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final gateway = FiveStemStudio();
     final container = await mount(tester, gateway);
-    await tester.tap(find.byTooltip('Raise pitch'));
+    await tester.tap(find.byTooltip('Subir tono'));
     await tester.pump();
     expect(find.text('Apply pitch'), findsNothing);
     expect(gateway.calls, contains('live-pitch:1:true'));
@@ -204,9 +206,11 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final container = await mount(tester, FiveStemStudio());
-    await tester.tap(find.byTooltip('Export stems').first);
+    await tester.tap(find.text('Exportar stems').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('MP3'));
+    await tester.tap(find.text('MP3 320 kbps'));
+    await tester.pump();
+    await tester.tap(find.text('Opciones avanzadas'));
     await tester.pump();
     expect(find.text('320 kbps'), findsOneWidget);
     for (final key in stemNames.keys) {
@@ -239,11 +243,13 @@ void main() {
     await container
         .read(studioProvider.notifier)
         .setTrack('bass', const MixTrackState(mute: true));
-    await tester.tap(find.byTooltip('Export stems').first);
+    await tester.tap(find.text('Exportar stems').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Include muted tracks'));
+    await tester.tap(find.text('Opciones avanzadas'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Incluir pistas silenciadas'));
     await tester.pump();
-    expect(find.text('4 OF 5 SELECTED'), findsOneWidget);
+    expect(find.text('4 de 5'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const ValueKey('confirm-export')));
     await tester.tap(find.byKey(const ValueKey('confirm-export')));
     await tester.pumpAndSettle();

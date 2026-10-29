@@ -66,9 +66,14 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter.ttf
 
   assets:
     - assets/manifests/model_license_manifest.json
+    - assets/fonts/OFL.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:

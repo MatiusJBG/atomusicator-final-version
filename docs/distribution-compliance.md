@@ -16,6 +16,7 @@ legacy project and any design assets.
 | --- | --- | --- |
 | First-party Rust, Dart, Windows runner, assets | Owner identity in Cargo metadata; root proprietary notice | Confirm ownership and authorized user/distribution terms; align package metadata |
 | Flutter engine, Dart runtime, ICU, plugins and fonts | SDK/package licenses; generated Flutter `NOTICES.Z` in build output | Inventory exact shipped versions, extract readable notices, include copyright texts and engine/ICU/font notices |
+| Inter variable font | `assets/fonts/Inter.ttf` and complete `assets/fonts/OFL.txt`, sourced from the Google Fonts `ofl/inter` directory | Preserve the SIL Open Font License and upstream copyright notice in the shipped font/notice bundle |
 | Rust production dependencies, including transitive crates | `rust_core/Cargo.lock` and resolved Cargo metadata | Generate dependency SBOM and license inventory, include applicable texts/notices; examine exceptions, multiple-license choices and source obligations |
 | Symphonia and other file-copyleft dependencies | Exact crate source and licenses in the Cargo cache | Review the exact license and any modified covered files; provide required source without assuming all application code must change license |
 | ONNX Runtime and bundled native dependencies | CPU DLL in release output; upstream license sources | Identify exact native build/version, include its LICENSE and ThirdPartyNotices, match bytes to provenance |
