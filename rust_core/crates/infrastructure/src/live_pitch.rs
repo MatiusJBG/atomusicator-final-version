@@ -169,21 +169,8 @@ pub fn render_file(
     let mut processor = LivePitchProcessor::new(metadata.format.sample_rate_hz)?;
     processor.set_spec(spec);
     let delay = processor.latency_frames() as u64;
-    let wav = hound::WavSpec {
-        channels: metadata.format.channels,
-        sample_rate: metadata.format.sample_rate_hz,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let export_error = |e: hound::Error| DomainError::AudioExportFailure(e.to_string());
     // Never truncate a caller's existing file, including an original or alias.
-    let file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(target)
-        .map_err(|e| DomainError::AudioExportFailure(e.to_string()))?;
-    let mut writer =
-        hound::WavWriter::new(std::io::BufWriter::new(file), wav).map_err(export_error)?;
+    let mut writer = crate::audio_io::wav_stream::FloatWavWriter::create_new(target, metadata)?;
     let mut raw = [0.0f32; PITCH_BLOCK * 2];
     let mut input = [0.0f32; PITCH_BLOCK * 2];
     let mut output = [0.0f32; PITCH_BLOCK * 2];
@@ -199,18 +186,18 @@ pub fn render_file(
             input[i * 2 + 1] = raw[i * channels + channels - 1];
         }
         processor.process(&input, &mut output)?;
-        for offset in 0..PITCH_BLOCK {
-            if position + (offset as u64) < delay || written >= metadata.frame_count {
-                continue;
+        let first = delay.saturating_sub(position).min(PITCH_BLOCK as u64) as usize;
+        let count = (PITCH_BLOCK - first).min((metadata.frame_count - written) as usize);
+        if channels == 2 {
+            writer.write_samples(&output[first * 2..(first + count) * 2])?;
+        } else {
+            for index in 0..count {
+                raw[index] = output[(first + index) * 2];
             }
-            for channel in 0..channels {
-                writer
-                    .write_sample(output[offset * 2 + channel])
-                    .map_err(export_error)?;
-            }
-            written += 1;
+            writer.write_samples(&raw[..count])?;
         }
+        written += count as u64;
         position += PITCH_BLOCK as u64;
     }
-    writer.finalize().map_err(export_error)
+    writer.finish().map(|_| ())
 }

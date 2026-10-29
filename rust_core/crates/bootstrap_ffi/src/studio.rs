@@ -332,7 +332,8 @@ impl Studio {
             for destination in [&policy.stage_cache_dir(),&projects,&work.0] {
                 atomusicator_infrastructure::resource_probe::ensure_disk(destination,working_bytes).map_err(crate::jobs::JobFailure::from_domain)?;
             }
-            let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1"));
+            let retention=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::retention_from_env().map_err(err)?;
+            let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::with_retention(policy.stage_cache_dir().join("bounded-v1"),retention);
             let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
             let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store).with_rhythm_policy(rhythm_policy);
@@ -358,7 +359,7 @@ impl Studio {
                 }).map_err(crate::jobs::JobFailure::from_domain)?;
             let session = backend.load_directory(&published.directory)?;
             drop(result);
-            if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(4*1024*1024*1024) {
+            if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(retention) {
                 eprintln!("Nonfatal audio cache cleanup failure: {error}");
             }
             Ok(Some(session))

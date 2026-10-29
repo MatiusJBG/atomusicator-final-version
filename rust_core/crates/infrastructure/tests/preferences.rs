@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use atomusicator_infrastructure::storage::legacy_import::PREVIOUS_APP_DIRECTORY;
 use atomusicator_infrastructure::{
     audio_tools::TemporaryDirectory,

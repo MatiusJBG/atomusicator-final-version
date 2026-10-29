@@ -39,10 +39,28 @@ pub struct FloatSpool {
 }
 pub struct FloatSpoolStore {
     directory: PathBuf,
+    retention_bytes: u64,
 }
 impl FloatSpoolStore {
+    pub fn retention_from_env() -> Result<u64, DomainError> {
+        match std::env::var("ATOMUSICATOR_CACHE_RETAINED_BYTES") {
+            Ok(value) => value.trim().parse().map_err(|_| {
+                failure("ATOMUSICATOR_CACHE_RETAINED_BYTES must be an unsigned integer")
+            }),
+            Err(std::env::VarError::NotPresent) => Ok(4 * 1024 * 1024 * 1024),
+            Err(_) => Err(failure(
+                "ATOMUSICATOR_CACHE_RETAINED_BYTES must be valid text",
+            )),
+        }
+    }
     pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+        Self::with_retention(directory, 4 * 1024 * 1024 * 1024)
+    }
+    pub fn with_retention(directory: PathBuf, retention_bytes: u64) -> Self {
+        Self {
+            directory,
+            retention_bytes,
+        }
     }
     /// Reclaims old, unleased audio only. Active working artifacts may exceed the retained-cache quota.
     pub fn prune(&self, max_retained_bytes: u64) -> Result<u64, DomainError> {
@@ -228,7 +246,7 @@ impl AudioBlockStore for FloatSpoolStore {
             return Err(failure("invalid spool stage"));
         }
         fs::create_dir_all(&self.directory).map_err(failure)?;
-        self.prune(4 * 1024 * 1024 * 1024)?;
+        self.prune(self.retention_bytes)?;
         let bytes = metadata
             .frame_count
             .checked_mul(u64::from(metadata.format.channels) * 4)

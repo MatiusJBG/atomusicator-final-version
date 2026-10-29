@@ -279,6 +279,9 @@ impl AudioTools {
             "mp3" => args.extend(["libmp3lame".into(), "-b:a".into(), "320k".into()]),
             _ => return Err(io_error("unsupported export format")),
         }
+        if options.format == "wav" {
+            args.extend(["-rf64".into(), "auto".into()]);
+        }
         args.push(target.as_os_str().into());
         self.run(&args, target, cancel)
     }

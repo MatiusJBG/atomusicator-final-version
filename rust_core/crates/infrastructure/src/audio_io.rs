@@ -3,6 +3,7 @@ mod pitch_stream;
 pub mod playback;
 pub mod streamer;
 pub mod wav_codec;
+pub mod wav_stream;
 
 use std::{
     fs,
