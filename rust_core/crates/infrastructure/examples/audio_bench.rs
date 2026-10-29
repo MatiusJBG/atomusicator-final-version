@@ -5,7 +5,7 @@ use atomusicator_application::{
         AudioBlockSource, AudioBlockStore, AudioBlockWriter, SeparationProgressPort,
         SpectralBleedGatePort,
     },
-    use_cases::bounded_separation::BoundedSeparation,
+    use_cases::bounded_separation::{BoundedSeparation, RhythmPolicy},
 };
 use atomusicator_domain::{AudioAssetMetadata, AudioBufferF32, DomainError, StemType};
 use atomusicator_infrastructure::{
@@ -15,7 +15,7 @@ use atomusicator_infrastructure::{
     inference_diagnostics::InferenceDiagnostics,
     mdx::MdxInference,
     models::manifest_manager::ManifestModelManager,
-    onnx::OrtSessionPool,
+    onnx::{ExecutionProviderKind, OrtSessionPool},
     storage::{float_spool::FloatSpoolStore, paths::WorkspacePathPolicy},
     use_case_adapters::StftSpectralBleedGate,
 };
@@ -127,15 +127,37 @@ impl SpectralBleedGatePort for ObservedGate {
         Ok(out)
     }
 }
+fn quality_profile(
+    value: Option<&str>,
+) -> Result<atomusicator_domain::quality::SeparationProfile, Box<dyn std::error::Error>> {
+    use atomusicator_domain::quality::SeparationProfile;
+    match value {
+        None | Some("native-v1") => Ok(SeparationProfile::compatibility()),
+        Some("native-v2-original-mix-bass") => Ok(SeparationProfile::production()),
+        _ => Err("unsupported benchmark quality profile".into()),
+    }
+}
+fn benchmark_pool(
+    provider: &str,
+    threads: usize,
+) -> Result<OrtSessionPool, Box<dyn std::error::Error>> {
+    let order = match provider {
+        "cpu" => vec![ExecutionProviderKind::Cpu],
+        "directml" => vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
+        _ => return Err("provider must be cpu or directml".into()),
+    };
+    Ok(OrtSessionPool::with_cpu_threads(1, threads)?.using_provider_order(order)?)
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().collect();
-    if args.len() != 3 {
-        return Err("usage: audio_bench <corpus.json> <new-output-directory>".into());
+    if !(3..=5).contains(&args.len()) {
+        return Err("usage: audio_bench <corpus.json> <new-output-directory> [cpu|directml] [intra-threads]".into());
     }
     let path = Path::new(&args[1]);
     let corpus: Corpus = serde_json::from_slice(&fs::read(path)?)?;
-    if corpus.cases.is_empty() || corpus.profile.as_deref().is_some_and(|v| v != "native-v1") {
-        return Err("bounded benchmark requires cases and native-v1 profile".into());
+    let quality = quality_profile(corpus.profile.as_deref())?;
+    if corpus.cases.is_empty() {
+        return Err("bounded benchmark requires cases".into());
     }
     let parent = path.parent().unwrap_or(Path::new("."));
     let output = PathBuf::from(&args[2]);
@@ -156,7 +178,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let tools = AudioTools::discover()?;
-    let pool = Arc::new(OrtSessionPool::with_cpu_threads(1, 2)?);
+    let provider = args.get(3).and_then(|v| v.to_str()).unwrap_or("cpu");
+    let threads = args
+        .get(4)
+        .map(|v| {
+            v.to_str()
+                .ok_or("invalid thread argument")?
+                .parse::<usize>()
+                .map_err(|_| "invalid thread argument")
+        })
+        .transpose()?
+        .unwrap_or(2);
+    let pool = Arc::new(benchmark_pool(provider, threads)?);
     let mut reports = Vec::new();
     for case in corpus.cases {
         if case.id.is_empty()
@@ -196,7 +229,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 levels: levels.clone(),
                 artifacts: artifacts.clone(),
             },
-        );
+        )
+        .with_rhythm_policy(RhythmPolicy::from_profile(&quality)?);
         let infer = Instant::now();
         let stems = pipeline.execute(mix.clone(), &cancel)?;
         let inference_seconds = infer.elapsed().as_secs_f64();
@@ -278,11 +312,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let duration = metadata.frame_count as f64 / f64::from(metadata.format.sample_rate_hz);
         reports.push(serde_json::json!({"case_id":case.id,"source_sha256":hash,"license":case.license,"attribution":case.attribution,"frames":metadata.frame_count,"sample_rate":metadata.format.sample_rate_hz,"duration_seconds":duration,"decode_seconds":decode_seconds,"inference_seconds":inference_seconds,"processing_seconds":processing_seconds,"rtf":processing_seconds/duration,"metrics":metrics,"reconstruction":reconstruction,"wav_roundtrip":roundtrip,"wav_sha256":hashes,"stage_diagnostics":levels.report(),"rhythm_intermediates":rhythm,"output_directory":render}));
     }
-    let report = serde_json::json!({"schema_version":3,"pipeline":"BoundedSeparation/native-v1","stage_cache":"disabled; fresh artifacts","measurement_scope":"RTF includes decode, separation, diagnostic aggregation and WAV writing; excludes reference scoring","sdr_definition":"10 log10(reference energy / squared sample error); no BSS Eval filtering","si_sdr_definition":"zero-mean per-channel scalar projection; no time shift","stem_mapping":{"lead_vocal":"vocals","backing_vocals":"secondary","drums":"drums","bass":"bass","instrumental":"other"},"models":inventory,"onnx_runtime":ort::info(),"session_diagnostics":pool.diagnostics(),"intra_threads":pool.intra_threads(),"inter_threads":1,"cases":reports});
+    let report = serde_json::json!({"schema_version":3,"pipeline":format!("BoundedSeparation/{}",quality.id),"quality_profile":quality,"provider_requested":provider,"stage_cache":"disabled; fresh artifacts","measurement_scope":"RTF includes decode, separation, diagnostic aggregation and WAV writing; excludes reference scoring","sdr_definition":"10 log10(reference energy / squared sample error); no BSS Eval filtering","si_sdr_definition":"zero-mean per-channel scalar projection; no time shift","stem_mapping":{"lead_vocal":"vocals","backing_vocals":"secondary","drums":"drums","bass":"bass","instrumental":"other"},"models":inventory,"onnx_runtime":ort::info(),"session_diagnostics":pool.diagnostics(),"intra_threads":pool.intra_threads(),"inter_threads":1,"cases":reports});
     fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report)?,
     )?;
     println!("{}", output.join("report.json").display());
+    if provider == "directml"
+        && pool
+            .diagnostics()
+            .iter()
+            .any(|d| d.provider_registered != ExecutionProviderKind::DirectMl)
+    {
+        return Err(
+            "DirectML fell back to CPU; report saved, accelerator qualification failed".into(),
+        );
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn quality_profiles_and_providers_are_explicit() {
+        assert_eq!(super::quality_profile(None).unwrap().id, "native-v1");
+        assert_eq!(
+            super::quality_profile(Some("native-v2-original-mix-bass")).unwrap(),
+            atomusicator_domain::quality::SeparationProfile::production()
+        );
+        assert!(super::quality_profile(Some("latest")).is_err());
+        assert!(super::benchmark_pool("unknown", 2).is_err());
+    }
 }

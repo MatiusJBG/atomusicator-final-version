@@ -6,6 +6,7 @@ use atomusicator_infrastructure::{
     audio_evidence::{compare_audio, signal_statistics},
     audio_io::wav_codec::read_wav_f32,
     audio_tools::AudioTools,
+    job_journal::JobJournal,
 };
 use std::{
     collections::BTreeMap,
@@ -28,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = PathBuf::from(&args[2]);
     let mut sum = vec![0.0; source.samples().len()];
     let mut stems = BTreeMap::new();
+    let cancel = CancellationToken::default();
     for key in [
         "lead_vocal",
         "backing_vocals",
@@ -35,7 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "bass",
         "instrumental",
     ] {
-        let audio = read_wav_f32(&directory.join(format!("{key}.wav")))?;
+        let path = directory.join(format!("{key}.wav"));
+        let audio = read_wav_f32(&path)?;
         if audio.format() != source.format() || audio.frames() != source.frames() {
             return Err(DomainError::AudioAlignmentMismatch.into());
         }
@@ -49,8 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::json!({"seconds":frame as f64 / f64::from(audio.format().sample_rate_hz),"absolute_adjacent_step":steps})
         }).collect::<Vec<_>>();
         let mut diagnostic = serde_json::json!({"channels":signal_statistics(&audio)?,"eight_second_boundaries":boundaries});
+        diagnostic["sha256"] = JobJournal::hash_source(&path, &cancel)?.into();
         if args.len() == 5 {
-            let baseline = read_wav_f32(&Path::new(&args[4]).join(format!("{key}.wav")))?;
+            let baseline_path = Path::new(&args[4]).join(format!("{key}.wav"));
+            let baseline = read_wav_f32(&baseline_path)?;
+            diagnostic["baseline_sha256"] =
+                JobJournal::hash_source(&baseline_path, &cancel)?.into();
             diagnostic["difference_from_baseline_not_ground_truth"] =
                 serde_json::to_value(compare_audio(&baseline, &audio)?)?;
         }

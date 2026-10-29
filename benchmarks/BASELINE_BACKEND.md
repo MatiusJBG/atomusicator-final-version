@@ -99,3 +99,50 @@ an opt-in throughput profile on this host, not a universal optimal thread count
 or an end-to-end speedup claim. Warm outputs were bit identical within each
 configuration; cross-configuration hashes are not a musical parity test.
 Raw outputs and process-tree resource samples: ignored `local_audio/cpu-matrix-*`.
+
+## Full-track native-v2 CPU / DirectML comparison
+
+One user-supplied five-stem reference set, 11,521,125 stereo frames at 44.1 kHz
+(261.25 seconds), identical prepared mix and references, current production
+`native-v2-original-mix-bass` routing, same Release executable in isolated runtime
+folders, ORT 1.20.0, six intra-op threads and fresh stage storage. Providers ran
+sequentially. No other build or model benchmark ran concurrently.
+
+| Observation | CPU | DirectML |
+|---|---:|---:|
+| Processing seconds | 695.4870 | 131.0282 |
+| Processing RTF | 2.6622 | 0.5015 |
+| Sampled process-tree peak RSS, bytes | 1,466,617,856 | 2,020,016,128 |
+| Maximum observed sampler gap, ms | 1,548.63 | 780.90 |
+| Maximum reconstruction sample error | 1.788139e-7 | 1.788139e-7 |
+
+Processing includes decode, inference, diagnostic aggregation and WAV writing;
+reference scoring is excluded. These are one run per provider, not repeated-run
+medians or a general speed guarantee. RSS includes shared pages and excludes
+unmeasured VRAM. Requested 100 ms polling did not achieve that maximum interval;
+shorter peaks may be missed.
+
+CPU scores, arithmetic means of the two channel dB values:
+
+| Stem | SI-SDR, dB | SDR, dB |
+|---|---:|---:|
+| Lead vocal | 2.6025 | 3.4643 |
+| Backing vocals | -2.2378 | 2.0199 |
+| Drums | 3.6884 | 5.2342 |
+| Bass | 7.5215 | 7.8522 |
+| Instrumental | 2.5292 | 3.6017 |
+
+This independently executes the complete production routing; it confirms the
+previous bass counterfactual without reusing its unchanged stages. Across all
+five final WAV pairs, maximum CPU/DirectML sample error is 8.493662e-7 and maximum
+per-channel SI-SDR difference is 8.860079e-7 dB. All pass the 1e-4 PCM / 0.1 dB
+parity gates. The comparator verifies exact input/reference/model/WAV hashes,
+quality descriptors, node evidence and provider registration without fallback.
+Backing-vocal isolation remains a quality concern with this reference set.
+
+Detailed evidence remains local: `benchmarks/results/PROVIDER_PARITY_GROUND_TRUTH.json`,
+`local_audio/ground-truth-v2-{cpu6,directml6}/report.json`, resource samples and
+`local_audio/provider-full-runtime-manifest.json`. DirectML still requires adapter
+and VRAM admission, runtime-error fallback, batching and extended device/soak
+qualification before production enablement. This is one reference set and does
+not replace independent corpus diversity or listening review.

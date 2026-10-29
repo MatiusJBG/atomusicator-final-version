@@ -150,3 +150,42 @@ It does not identify that adapter independently, measure VRAM, prove full-song
 SI-SDR parity or certify batching. All four model declarations have a dynamic
 batch dimension, so batching remains a feasible experiment rather than a
 static-shape exclusion. Private raw traces and reports stay in ignored directories.
+
+### Full-track provider parity
+
+The corpus `profile` accepts `native-v1` (the historical default) or
+`native-v2-original-mix-bass` (current production routing). Select the same
+descriptor for both providers; never compare different algorithms as GPU parity.
+`audio_bench` additionally accepts `[cpu|directml] [intra-threads]`, defaulting
+to `cpu 2` for historical reproducibility. Each run requires a new output folder.
+
+Use two isolated runtime folders containing the **same Release executable** and
+their matching ONNX Runtime 1.20.0 DLLs. The CPU folder needs its CPU runtime and
+shared-provider DLL; the DirectML folder needs the pinned DirectML runtime and
+`DirectML.dll` from the preparation script. Retain each runtime's notices and
+record the executable/DLL hashes. Do not replace application installation DLLs.
+
+```powershell
+./benchmarks/Measure-NativeRun.ps1 -Executable local_audio/bin-cpu/audio_bench.exe -Arguments @('local_audio/corpus-v2.json','local_audio/cpu-run','cpu','6') -Report local_audio/cpu-resources.json
+./benchmarks/Measure-NativeRun.ps1 -Executable local_audio/bin-directml/audio_bench.exe -Arguments @('local_audio/corpus-v2.json','local_audio/directml-run','directml','6') -Report local_audio/directml-resources.json
+cargo build --locked --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example audio_inspect
+./rust_core/target/release/examples/audio_inspect.exe local_audio/mix.wav local_audio/directml-run/case-id/outputs local_audio/waveform-parity.json local_audio/cpu-run/case-id/outputs
+pwsh -File benchmarks/Compare-ProviderReports.ps1 -CpuReport local_audio/cpu-run/report.json -AcceleratorReport local_audio/directml-run/report.json -WaveformComparison local_audio/waveform-parity.json -WindowQualification local_audio/window-probe/provider-qualification.json -Output benchmarks/results/PROVIDER_PARITY.json
+```
+
+Run providers sequentially without concurrent builds or other benchmark jobs.
+The comparator validates input/reference/model identities, quality descriptors,
+alignment, actual-node window evidence, provider registration without fallback,
+and the exact WAV hashes recorded by the inspector. It requires maximum PCM
+error <=1e-4, per-channel SI-SDR difference <=0.1 dB and reconstruction <=1e-5.
+Undefined scores fail for separate review. A failed numerical comparison saves
+its report and exits with an error. Reports do not certify independent corpus
+diversity, VRAM admission, batching, device reconnection or a complete release.
+
+The inspector is an allocating diagnostic utility; its memory use is not the
+bounded production pipeline's RSS measurement. The fixture tests exercise these
+evidence gates without models or audio and run in backend CI:
+
+```powershell
+pwsh -File benchmarks/tests/provider-parity.ps1
+```

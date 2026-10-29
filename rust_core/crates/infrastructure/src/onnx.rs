@@ -153,14 +153,19 @@ impl OrtSessionPool {
         capacity: usize,
         provider_order: Vec<ExecutionProviderKind>,
     ) -> Result<Self, InfrastructureError> {
+        Self::new(capacity)?.using_provider_order(provider_order)
+    }
+    pub fn using_provider_order(
+        mut self,
+        provider_order: Vec<ExecutionProviderKind>,
+    ) -> Result<Self, InfrastructureError> {
         if provider_order.last() != Some(&ExecutionProviderKind::Cpu) {
             return Err(InfrastructureError::InvalidManifest(
                 "execution provider order must end with the CPU fallback".into(),
             ));
         }
-        let mut pool = Self::new(capacity)?;
-        pool.provider_order = provider_order;
-        Ok(pool)
+        self.provider_order = provider_order;
+        Ok(self)
     }
 
     /// Explicit CPU configuration for controlled measurements; production keeps its default policy.

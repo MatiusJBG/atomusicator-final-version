@@ -32,3 +32,7 @@ jobs:
         run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
       - name: Test backend
         run: cargo test --locked --workspace --all-features
+      - name: Test benchmark configuration
+        run: cargo test --locked -p atomusicator-infrastructure --example audio_bench
+      - name: Test provider qualification evidence
+        run: pwsh -NoProfile -File ../benchmarks/tests/provider-parity.ps1
