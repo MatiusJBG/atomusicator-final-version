@@ -117,7 +117,12 @@ fn import_project(source: &Path, target: &Path) -> Result<bool, InfrastructureEr
     // escape the session and preserve the five-stem/checksum contract.
     crate::session_reader::read_session_files(&source, &CancellationToken::default())
         .map_err(failure)?;
-    let stage = TemporaryDirectory::new(target).map_err(failure)?;
+    // Keep unpublished bundles outside the project-list directory, including
+    // when another application instance scans while an import is in progress.
+    let staging_root = target
+        .parent()
+        .ok_or_else(|| failure("invalid Atomusicator project root"))?;
+    let stage = TemporaryDirectory::new(staging_root).map_err(failure)?;
     copy_tree(&source, &stage.0, &source, 0)?;
     let mut metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(stage.0.join("session.json")).map_err(failure)?)
