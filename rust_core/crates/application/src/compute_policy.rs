@@ -8,6 +8,15 @@ pub enum ComputeProfile {
     Balanced,
     Throughput,
 }
+impl ComputeProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Eco => "eco",
+            Self::Balanced => "balanced",
+            Self::Throughput => "throughput",
+        }
+    }
+}
 impl std::str::FromStr for ComputeProfile {
     type Err = DomainError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {

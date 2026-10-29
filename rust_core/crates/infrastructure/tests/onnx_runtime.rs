@@ -22,6 +22,8 @@ fn playback_limits_thread_budget_without_changing_requested_profile() {
     assert_eq!(pool.intra_threads(), requested);
     playing.store(false, Ordering::Release);
     assert_eq!(pool.effective_intra_threads(), requested);
+    pool.set_compute_profile(ComputeProfile::Eco);
+    assert!(pool.intra_threads() <= 2);
 }
 
 #[test]

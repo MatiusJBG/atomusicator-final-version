@@ -6,7 +6,14 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+Future<UiComputeSettingsDto> computeSettings() =>
+    RustLib.instance.api.crateApiComputeSettings();
+
+/// Persists a profile for future jobs. Rejects changes while a job is active.
+Future<void> setComputeProfile({required String profile}) =>
+    RustLib.instance.api.crateApiSetComputeProfile(profile: profile);
 
 Future<List<UiRecoverableJobDto>> recoverableJobs() =>
     RustLib.instance.api.crateApiRecoverableJobs();
@@ -153,6 +160,37 @@ Future<String> applicationVersion() =>
 
 Future<List<String>> supportedStems() =>
     RustLib.instance.api.crateApiSupportedStems();
+
+class UiComputeSettingsDto {
+  final String profile;
+  final List<String> availableProfiles;
+  final int requestedThreads;
+  final int effectiveThreads;
+
+  const UiComputeSettingsDto({
+    required this.profile,
+    required this.availableProfiles,
+    required this.requestedThreads,
+    required this.effectiveThreads,
+  });
+
+  @override
+  int get hashCode =>
+      profile.hashCode ^
+      availableProfiles.hashCode ^
+      requestedThreads.hashCode ^
+      effectiveThreads.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiComputeSettingsDto &&
+          runtimeType == other.runtimeType &&
+          profile == other.profile &&
+          availableProfiles == other.availableProfiles &&
+          requestedThreads == other.requestedThreads &&
+          effectiveThreads == other.effectiveThreads;
+}
 
 class UiJobDto {
   final String id;

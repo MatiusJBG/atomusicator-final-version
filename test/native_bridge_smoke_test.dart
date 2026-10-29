@@ -16,6 +16,25 @@ void main() {
       );
       final outputs = Directory('${directory.path}/outputs')..createSync();
       try {
+        final compute = await native.computeSettings();
+        expect(compute.availableProfiles, ['eco', 'balanced', 'throughput']);
+        expect(compute.availableProfiles, contains(compute.profile));
+        expect(compute.requestedThreads, inInclusiveRange(1, 12));
+        expect(
+          compute.effectiveThreads,
+          inInclusiveRange(1, compute.requestedThreads),
+        );
+        await expectLater(
+          native.setComputeProfile(profile: 'invalid'),
+          throwsA(
+            isA<String>().having(
+              (message) => message,
+              'message',
+              contains('CPU profile'),
+            ),
+          ),
+        );
+        expect((await native.computeSettings()).profile, compute.profile);
         final frames = 44100 * 4;
         final data = ByteData(44 + frames * 2 * 4);
         void ascii(int offset, String value) {

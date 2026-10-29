@@ -229,6 +229,14 @@ that directory into the Flutter debug directory. Recopy after Rust changes;
 Flutter hot reload does not rebuild the Rust engine. Stop the app before
 replacing a DLL. When native APIs change, regenerate bindings as below.
 
+The backend supports `eco`, `balanced` (default), and `throughput` CPU profiles.
+The generated bridge exposes `computeSettings()` and `setComputeProfile(...)`;
+changes are persisted and accepted when no audio job is active. For a startup
+override in PowerShell, set `$env:ATOMUSICATOR_CPU_PROFILE = 'throughput'` before
+launching. Inference reduces its thread budget while the mixer is playing.
+See [runtime configuration and validation](docs/backend-runtime-validation.md)
+for limits and [benchmark procedures](benchmarks/README.md) for measured scope.
+
 ### Regenerate Flutter–Rust bindings
 
 Generated bindings are checked in; ordinary clones do not need regeneration.

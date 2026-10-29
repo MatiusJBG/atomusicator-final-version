@@ -8,6 +8,62 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Separate from project-path preferences to preserve their historical format.
+pub struct ComputePreferences {
+    root: PathBuf,
+}
+impl ComputePreferences {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+    pub fn load(
+        &self,
+    ) -> Result<atomusicator_application::compute_policy::ComputeProfile, InfrastructureError> {
+        let path = self.root.join("compute-profile.json");
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Default::default());
+            }
+            Err(error) => return Err(InfrastructureError::io(&path, error)),
+        };
+        let value: String = serde_json::from_slice(&bytes).map_err(|error| {
+            InfrastructureError::InvalidManifest(format!(
+                "Invalid compute preference at {}: {error}",
+                path.display()
+            ))
+        })?;
+        value
+            .parse()
+            .map_err(|error: atomusicator_domain::DomainError| {
+                InfrastructureError::InvalidManifest(error.to_string())
+            })
+    }
+    pub fn save(
+        &self,
+        profile: atomusicator_application::compute_policy::ComputeProfile,
+    ) -> Result<(), InfrastructureError> {
+        fs::create_dir_all(&self.root).map_err(|e| InfrastructureError::io(&self.root, e))?;
+        let stage = TemporaryDirectory::new(&self.root)
+            .map_err(|e| InfrastructureError::Domain(e.to_string()))?;
+        let temporary = stage.0.join("compute-profile.json");
+        let bytes = serde_json::to_vec(profile.as_str())
+            .map_err(|e| InfrastructureError::InvalidManifest(e.to_string()))?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| InfrastructureError::io(&temporary, e))?;
+        use std::io::Write;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|e| InfrastructureError::io(&temporary, e))?;
+        drop(file);
+        fs::rename(&temporary, self.root.join("compute-profile.json"))
+            .map_err(|e| InfrastructureError::io(&temporary, e))
+    }
+}
+
 pub trait LegacyProjectsReader {
     /// Preferred historical application first, then its predecessor.
     fn candidates(&self) -> Vec<PathBuf>;

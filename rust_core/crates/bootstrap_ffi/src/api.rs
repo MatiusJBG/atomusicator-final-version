@@ -2,6 +2,23 @@
 
 use atomusicator_domain::StemType;
 
+#[derive(Debug, Clone)]
+pub struct UiComputeSettingsDto {
+    pub profile: String,
+    pub available_profiles: Vec<String>,
+    pub requested_threads: u32,
+    pub effective_threads: u32,
+}
+
+pub fn compute_settings() -> Result<UiComputeSettingsDto, String> {
+    crate::studio::studio()?.compute_settings()
+}
+
+/// Persists a profile for future jobs. Rejects changes while a job is active.
+pub fn set_compute_profile(profile: String) -> Result<(), String> {
+    crate::studio::studio()?.set_compute_profile(&profile)
+}
+
 /// Flutter-facing description of one persisted stem track.
 #[derive(Debug, Clone)]
 pub struct UiStemTrackDto {

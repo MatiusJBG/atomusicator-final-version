@@ -1,7 +1,10 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -29,7 +32,7 @@ pub enum ExecutionProviderKind {
 pub struct OrtSessionPool {
     sessions: SessionPool<Mutex<Session>, SessionKey>,
     provider_order: Vec<ExecutionProviderKind>,
-    intra_threads: usize,
+    intra_threads: AtomicUsize,
     profiling_directory: Option<PathBuf>,
     playback_probe: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     diagnostics: Mutex<BTreeMap<String, SessionDiagnostic>>,
@@ -85,7 +88,7 @@ impl OrtSessionPool {
         Ok(Self {
             sessions: SessionPool::new(capacity)?,
             provider_order,
-            intra_threads,
+            intra_threads: AtomicUsize::new(intra_threads),
             profiling_directory: None,
             playback_probe: None,
             diagnostics: Mutex::new(BTreeMap::new()),
@@ -110,15 +113,28 @@ impl OrtSessionPool {
     }
 
     pub fn effective_intra_threads(&self) -> usize {
+        let requested = self.intra_threads();
         if self.playback_probe.as_ref().is_some_and(|probe| probe()) {
             let logical = std::thread::available_parallelism().map_or(1, usize::from);
             atomusicator_application::compute_policy::ComputeBudget::playback_limit(
-                self.intra_threads,
-                logical,
+                requested, logical,
             )
         } else {
-            self.intra_threads
+            requested
         }
+    }
+    /// Callers must reserve the largest enabled profile and serialize settings
+    /// changes against job admission. Existing sessions retain their own key.
+    pub fn set_compute_profile(
+        &self,
+        profile: atomusicator_application::compute_policy::ComputeProfile,
+    ) {
+        let logical = std::thread::available_parallelism().map_or(1, usize::from);
+        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile(
+            profile, logical, false,
+        )
+        .threads_per_inference();
+        self.intra_threads.store(threads, Ordering::Release);
     }
 
     pub fn with_compute_profile(
@@ -159,7 +175,7 @@ impl OrtSessionPool {
             ));
         }
         let mut pool = Self::new(capacity)?;
-        pool.intra_threads = intra_threads;
+        pool.intra_threads = AtomicUsize::new(intra_threads);
         Ok(pool)
     }
 
@@ -234,7 +250,7 @@ impl OrtSessionPool {
         self.sessions.capacity()
     }
     pub fn intra_threads(&self) -> usize {
-        self.intra_threads
+        self.intra_threads.load(Ordering::Acquire)
     }
 }
 

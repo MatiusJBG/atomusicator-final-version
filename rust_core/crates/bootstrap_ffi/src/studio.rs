@@ -16,7 +16,7 @@ use atomusicator_infrastructure::{
     models::manifest_manager::ManifestModelManager,
     onnx::OrtSessionPool,
     pitch_cache::PitchRenderCache,
-    preferences::{NativeLegacyProjects, ProjectsPreferences},
+    preferences::{ComputePreferences, NativeLegacyProjects, ProjectsPreferences},
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
 };
@@ -35,6 +35,8 @@ pub struct Studio {
     projects: Mutex<PathBuf>,
     runtime: tokio::runtime::Runtime,
     sessions: Arc<OrtSessionPool>,
+    compute_profile: Mutex<atomusicator_application::compute_policy::ComputeProfile>,
+    compute_preferences: ComputePreferences,
     resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission,
     pitch_cache: PitchRenderCache,
     live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore,
@@ -55,9 +57,10 @@ pub fn studio() -> Result<Arc<Studio>, String> {
             let projects = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
                 .load()
                 .map_err(err)?;
+            let compute_preferences = ComputePreferences::new(policy.app_data_root().to_path_buf());
             let profile = match std::env::var("ATOMUSICATOR_CPU_PROFILE") {
                 Ok(value) => value.parse().map_err(err)?,
-                Err(std::env::VarError::NotPresent) => Default::default(),
+                Err(std::env::VarError::NotPresent) => compute_preferences.load().map_err(err)?,
                 Err(error) => return Err(err(error)),
             };
             let mixer = CpalRealtimeMixer::new().map_err(err)?;
@@ -66,7 +69,13 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .map_err(err)?
                     .with_playback_probe(mixer.playback_probe()),
             );
-            let inference_threads = sessions.intra_threads();
+            let inference_threads =
+                atomusicator_application::compute_policy::ComputeBudget::for_profile(
+                    atomusicator_application::compute_policy::ComputeProfile::Throughput,
+                    std::thread::available_parallelism().map_or(1, usize::from),
+                    false,
+                )
+                .threads_per_inference();
             Ok(Arc::new(Studio {
                 mixer,
                 jobs: Arc::new(crate::jobs::JobRegistry::new(
@@ -82,6 +91,8 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .build()
                     .map_err(err)?,
                 sessions,
+                compute_profile: Mutex::new(profile),
+                compute_preferences,
                 pitch_cache: PitchRenderCache::new(policy.stage_cache_dir().join("pitch-v1")),
                 live_pitch_store:
                     atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
@@ -98,6 +109,24 @@ pub fn studio() -> Result<Arc<Studio>, String> {
         .clone()
 }
 impl Studio {
+    pub fn compute_settings(&self) -> Result<crate::api::UiComputeSettingsDto, String> {
+        let profile = *self.compute_profile.lock().map_err(err)?;
+        Ok(crate::api::UiComputeSettingsDto {
+            profile: profile.as_str().into(),
+            available_profiles: vec!["eco".into(), "balanced".into(), "throughput".into()],
+            requested_threads: self.sessions.intra_threads() as u32,
+            effective_threads: self.sessions.effective_intra_threads() as u32,
+        })
+    }
+    pub fn set_compute_profile(&self, value: &str) -> Result<(), String> {
+        let profile = value.parse().map_err(err)?;
+        let _idle = self.jobs.idle()?;
+        let mut current = self.compute_profile.lock().map_err(err)?;
+        self.compute_preferences.save(profile).map_err(err)?;
+        self.sessions.set_compute_profile(profile);
+        *current = profile;
+        Ok(())
+    }
     pub fn projects_directory(&self) -> Result<String, String> {
         Ok(self
             .projects
@@ -705,6 +734,8 @@ mod tests {
                 .build()
                 .unwrap(),
             sessions: Arc::new(OrtSessionPool::new(2).unwrap()),
+            compute_profile: Mutex::new(Default::default()),
+            compute_preferences: ComputePreferences::new(root.join("preferences")),
             pitch_cache: PitchRenderCache::new(root.join("pitch-cache")),
             live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
                 root.join("live-pitch"),
@@ -718,6 +749,36 @@ mod tests {
             )
             .unwrap(),
         })
+    }
+    #[test]
+    fn compute_settings_persist_and_reject_changes_during_active_jobs() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let backend = backend(&root.0);
+        backend.set_compute_profile("eco").unwrap();
+        assert_eq!(backend.compute_settings().unwrap().profile, "eco");
+        assert_eq!(backend.compute_preferences.load().unwrap().as_str(), "eco");
+        assert!(backend.set_compute_profile("invalid").is_err());
+        let (release, waiting) = std::sync::mpsc::sync_channel(1);
+        let id = backend
+            .jobs
+            .start(
+                atomusicator_infrastructure::job_journal::JobRequest::Ephemeral {
+                    operation: "test-profile-admission".into(),
+                },
+                None,
+                move |_, _| {
+                    waiting.recv().map_err(err)?;
+                    Ok(None)
+                },
+            )
+            .unwrap();
+        let rejected = backend.set_compute_profile("throughput");
+        release.send(()).unwrap();
+        wait(&backend, &id);
+        assert!(rejected.unwrap_err().contains("already running"));
+        assert_eq!(backend.compute_settings().unwrap().profile, "eco");
+        assert_eq!(backend.compute_preferences.load().unwrap().as_str(), "eco");
+        backend.set_compute_profile("balanced").unwrap();
     }
     fn wait(backend: &Studio, id: &str) -> UiJobDto {
         let deadline = Instant::now() + Duration::from_secs(120);

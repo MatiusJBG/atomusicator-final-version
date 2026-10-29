@@ -51,8 +51,13 @@ small RF64 readback, malformed sizes and non-sentinel size precedence.
 Set `ATOMUSICATOR_CPU_PROFILE` before starting the application: `eco` (up to two
 inference threads), `balanced` (default, up to six), or `throughput` (up to twelve).
 Unknown values fail explicitly. Every profile reserves two logical CPUs when
-possible, and remains valid on single-core hosts. This setting is currently a
-startup backend option; a Flutter settings control is still pending.
+possible, and remains valid on single-core hosts. The generated Flutter bridge
+exposes `computeSettings()` and `setComputeProfile(profile: ...)`. The latter
+rejects changes during any active audio job and persists the selection atomically
+in `Atomusicator/compute-profile.json` under the OS local application-data folder.
+Missing preferences default to balanced; invalid preferences fail explicitly.
+A startup environment setting overrides the saved preference for that launch.
+The visual settings control remains a frontend integration task.
 
 While the mixer is playing, the next inference window halves the requested
 thread budget (rounded up), uses at most six threads
@@ -60,7 +65,7 @@ and reserves four logical CPUs when possible. A running inference is allowed to
 finish; this is not instantaneous preemption. Sessions are cached by canonical
 model path **and actual thread count**, so a thread-budget change cannot reuse
 an incompatible ORT session. All session variants share the same capacity limit.
-Admission reserves the profile's upper bound, and published metadata records the
+Admission reserves the largest supported profile's upper bound, and published metadata records the
 actual thread counts observed in initialized sessions. This policy reduces CPU
 contention; physical playback/underrun qualification remains necessary.
 
@@ -75,10 +80,16 @@ The host-specific matrix and its measurement limits are in
 
 ### Platform checks
 
-Windows full workspace: 143 tests passed, 11 opt-in tests omitted. Linux x64 in
-an isolated Arch/QEMU overlay: 142 passed, 11 omitted, with formatting and
-all-target Clippy clean. The count differs because the Windows ACL test is
-platform-specific. Both used Rust 1.99.1 and ONNX Runtime 1.20.0; Linux used the
+Windows full workspace after the CPU settings bridge: 150 tests passed, 12
+opt-in tests omitted, with formatting and all-target Clippy clean. A separate
+real-model ONNX run passed all 13 tests, including thread-variant replacement
+and four-model tensor parity. Flutter's compiled-bridge smoke test also passed,
+including settings retrieval, invalid-profile rejection and existing pitch/export.
+
+The earlier RF64 revision passed 142 tests with 11 omitted on Linux x64 in an
+isolated Arch/QEMU overlay, with formatting and all-target Clippy clean. The
+subsequent CPU/bridge changes have not yet been rerun there. Both platforms used
+Rust 1.99.1 and ONNX Runtime 1.20.0; Linux used the
 [official CPU runtime archive](https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0).
 
 Additional opt-in checks compare borrowed and owned ORT tensors for all four
