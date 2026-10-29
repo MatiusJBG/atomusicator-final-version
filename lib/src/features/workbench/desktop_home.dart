@@ -29,7 +29,7 @@ class _ProjectsHome extends ConsumerWidget {
           const _SectionLabel('TUS PROYECTOS'),
           const SizedBox(height: 8),
           Text(
-            '${items.length} proyectos · separación en 5 stems',
+            '${items.length} proyectos · mezcla y edición de audio',
             style: const TextStyle(fontSize: 10, color: AppColors.muted),
           ),
           const SizedBox(height: 16),

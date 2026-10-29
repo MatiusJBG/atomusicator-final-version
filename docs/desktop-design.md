@@ -1,5 +1,19 @@
 # Penpot desktop implementation
 
+## Product identity
+
+The product is **Atomusicator**, an audio workbench for stem extraction,
+synchronized mixing, live pitch and export. Use this name for application,
+page and window titles. Atomizador and Mezclador name individual tools, not
+the product. Home and Help describe the complete audio workflow.
+
+Keep machine-readable stem names, model names and session contracts intact:
+vocal stems describe audio content, not application branding. The historical
+directory name is confined to the compatibility importer documented in
+[managed storage](atomusicator-storage.md). It must remain discoverable so
+existing projects can be imported. The repository and active data directories
+already use Atomusicator; no directory rename is needed for the frontend.
+
 Reference: Atomusicator desktop UI, file `4b7520f4-628e-8193-8008-d4b8c22582c9`,
 page `4b7520f4-628e-8193-8008-d4b8c22582ca`. The boards were inspected through
 Penpot's rendered SVG, including actual coordinates, type sizes and fill colors.

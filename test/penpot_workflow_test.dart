@@ -46,7 +46,17 @@ void main() {
     'Penpot navigation starts at Inicio and opens empty Atomizador without a mixer dock',
     (tester) async {
       final container = await mount(tester);
-      expect(find.text('Atomusicator'), findsNWidgets(2));
+      expect(find.text('Atomusicator'), findsOneWidget);
+      expect(find.text('Estudio de audio'), findsOneWidget);
+      await tester.tap(find.byTooltip('Ayuda'));
+      await tester.pumpAndSettle();
+      expect(find.text('Atomusicator · Estudio de audio'), findsOneWidget);
+      expect(
+        find.textContaining('ajusta su mezcla y tono, y exporta el resultado'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Entendido'));
+      await tester.pumpAndSettle();
       expect(find.text('Tus proyectos y mezclas recientes'), findsOneWidget);
       await tester.tap(find.byTooltip('Atomizador'));
       await tester.pump();
