@@ -135,6 +135,18 @@ pub fn write_block_wav(
     source: &dyn atomusicator_application::ports::AudioBlockSource,
     cancel: &atomusicator_application::CancellationToken,
 ) -> Result<(), DomainError> {
+    write_block_wav_hashed(path, source, cancel).map(|_| ())
+}
+
+/// Hashes the definitive RIFF header and PCM bytes in write order, without
+/// rereading the file or seeking back to patch a placeholder header.
+pub fn write_block_wav_hashed(
+    path: &Path,
+    source: &dyn atomusicator_application::ports::AudioBlockSource,
+    cancel: &atomusicator_application::CancellationToken,
+) -> Result<String, DomainError> {
+    use sha2::{Digest, Sha256};
+    use std::io::{BufWriter, Write};
     let metadata = source.metadata();
     validate_block_wav_size(metadata)?;
     let channels = usize::from(metadata.format.channels);
@@ -142,18 +154,41 @@ pub fn write_block_wav(
         std::fs::create_dir_all(parent)
             .map_err(|e| DomainError::AudioExportFailure(e.to_string()))?;
     }
-    let failure = |e: hound::Error| DomainError::AudioExportFailure(e.to_string());
-    let mut writer = WavWriter::create(
-        path,
-        WavSpec {
-            channels: metadata.format.channels,
-            sample_rate: metadata.format.sample_rate_hz,
-            bits_per_sample: 32,
-            sample_format: SampleFormat::Float,
-        },
-    )
-    .map_err(failure)?;
+    let failure = |e: std::io::Error| DomainError::AudioExportFailure(e.to_string());
+    let block_align = metadata
+        .format
+        .channels
+        .checked_mul(4)
+        .ok_or_else(|| failure(std::io::Error::other("WAV block alignment overflow")))?;
+    let byte_rate = metadata
+        .format
+        .sample_rate_hz
+        .checked_mul(u32::from(block_align))
+        .ok_or_else(|| failure(std::io::Error::other("WAV byte rate overflow")))?;
+    let data_bytes = (metadata.frame_count * u64::from(block_align)) as u32;
+    let mut header = Vec::with_capacity(58);
+    header.extend_from_slice(b"RIFF");
+    header.extend_from_slice(&(data_bytes + 50).to_le_bytes());
+    header.extend_from_slice(b"WAVEfmt ");
+    header.extend_from_slice(&18u32.to_le_bytes());
+    header.extend_from_slice(&3u16.to_le_bytes()); // WAVE_FORMAT_IEEE_FLOAT
+    header.extend_from_slice(&metadata.format.channels.to_le_bytes());
+    header.extend_from_slice(&metadata.format.sample_rate_hz.to_le_bytes());
+    header.extend_from_slice(&byte_rate.to_le_bytes());
+    header.extend_from_slice(&block_align.to_le_bytes());
+    header.extend_from_slice(&32u16.to_le_bytes());
+    header.extend_from_slice(&0u16.to_le_bytes()); // cbSize
+    header.extend_from_slice(b"fact");
+    header.extend_from_slice(&4u32.to_le_bytes());
+    header.extend_from_slice(&(metadata.frame_count as u32).to_le_bytes());
+    header.extend_from_slice(b"data");
+    header.extend_from_slice(&data_bytes.to_le_bytes());
+    let mut writer = BufWriter::new(std::fs::File::create(path).map_err(failure)?);
+    let mut hash = Sha256::new();
+    writer.write_all(&header).map_err(failure)?;
+    hash.update(&header);
     let mut buffer = vec![0.0; 65536 * channels];
+    let mut bytes = Vec::with_capacity(buffer.len() * 4);
     for start in (0..metadata.frame_count).step_by(65536) {
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
@@ -162,16 +197,19 @@ pub fn write_block_wav(
         if source.read_frames(start, &mut buffer[..frames * channels])? != frames {
             return Err(DomainError::AudioAlignmentMismatch);
         }
+        bytes.clear();
         for sample in &buffer[..frames * channels] {
-            writer.write_sample(*sample).map_err(failure)?;
+            if !sample.is_finite() {
+                return Err(DomainError::NonFiniteSample);
+            }
+            bytes.extend_from_slice(&sample.to_le_bytes());
         }
+        writer.write_all(&bytes).map_err(failure)?;
+        hash.update(&bytes);
     }
-    writer.finalize().map_err(failure)?;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| DomainError::AudioExportFailure(e.to_string()))
+    writer.flush().map_err(failure)?;
+    writer.get_ref().sync_all().map_err(failure)?;
+    Ok(format!("{:x}", hash.finalize()))
 }
 
 /// Reads float32 WAVs exactly and normalizes supported signed PCM WAVs to `f32`.
