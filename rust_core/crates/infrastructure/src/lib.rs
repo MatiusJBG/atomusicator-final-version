@@ -19,6 +19,7 @@ pub mod models;
 pub mod onnx;
 pub mod pitch_cache;
 pub mod preferences;
+pub mod provider_trace;
 pub mod resource_probe;
 mod session_pool;
 pub mod session_reader;

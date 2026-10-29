@@ -110,3 +110,43 @@ check the residual stem and the other outputs as well.
 Keep generated reports in ignored `benchmarks/results/` or `local_audio/`.
 Resource reports sample the root and observed descendants, including limitations
 and the observed sampling gaps; VRAM remains explicitly unmeasured.
+
+## DirectML qualification on Windows x64
+
+Production remains CPU-only. Prepare a separate, pinned diagnostic runtime:
+
+```powershell
+pwsh -File benchmarks/Prepare-DirectMlQualification.ps1
+$env:ORT_LIB_LOCATION = "$PWD/build/toolchain/directml-qualification/sdk"
+$env:ORT_PREFER_DYNAMIC_LINK = '1'
+$env:CARGO_TARGET_DIR = "$PWD/build/directml-qualification-target"
+$env:TEMP = "$PWD/build/interactive-pitch-temp"
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+cargo build --locked --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example provider_qualify
+$bin = "$env:CARGO_TARGET_DIR/debug/examples"
+Copy-Item "$env:ORT_LIB_LOCATION/lib/onnxruntime.dll", "$env:ORT_LIB_LOCATION/lib/DirectML.dll" $bin
+& "$bin/provider_qualify.exe" "$PWD/local_audio/directml-check-001"
+```
+
+Use a fresh report directory per run. The preparation script verifies NuGet
+SHA-256 pins and Microsoft signatures, and retains ONNX Runtime and DirectML
+licenses/notices alongside its local SDK. It does not modify application runtime
+DLLs or add packages to a release. Remove these process environment overrides
+before returning to normal application builds (or open a fresh terminal).
+
+The example explicitly ends ORT profiling, counts actual `*_kernel_time` events
+by provider, and compares the CPU/DirectML inverse-STFT window samples for all
+four verified local models. A CPU fallback does not qualify as GPU execution.
+The executable fails after saving its report if node execution or window parity
+fails. Timing includes cold initialization and comes from a debug diagnostic
+build; it is not a full-pipeline performance qualification.
+
+The first local run executed 112 DirectML kernel events per model. Maximum
+normalized-window PCM errors were respectively 1.769513e-7 (main), 1.741573e-7
+(kara), 3.358582e-8 (drums), and 3.427267e-7 (bass), below 1e-4.
+This proves node execution and single-window parity on the default ORT adapter.
+It does not identify that adapter independently, measure VRAM, prove full-song
+SI-SDR parity or certify batching. All four model declarations have a dynamic
+batch dimension, so batching remains a feasible experiment rather than a
+static-shape exclusion. Private raw traces and reports stay in ignored directories.
