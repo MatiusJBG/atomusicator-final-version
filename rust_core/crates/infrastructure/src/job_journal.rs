@@ -83,6 +83,22 @@ impl JobJournal {
         retry_of: Option<String>,
         source_sha256: Option<String>,
     ) -> Result<(JournalRecord, JobLease), DomainError> {
+        self.create_leased_profiled(
+            id,
+            request,
+            retry_of,
+            source_sha256,
+            atomusicator_domain::quality::SeparationProfile::production(),
+        )
+    }
+    pub fn create_leased_profiled(
+        &self,
+        id: &str,
+        request: JobRequest,
+        retry_of: Option<String>,
+        source_sha256: Option<String>,
+        profile: atomusicator_domain::quality::SeparationProfile,
+    ) -> Result<(JournalRecord, JobLease), DomainError> {
         fs::create_dir_all(&self.root).map_err(failure)?;
         let directory = self.directory(id)?;
         fs::create_dir(&directory).map_err(failure)?;
@@ -95,7 +111,7 @@ impl JobJournal {
             lifecycle: JobLifecycle::new(),
             request,
             source_sha256,
-            profile: atomusicator_domain::quality::SeparationProfile::compatibility(),
+            profile,
             message: "Queued".into(),
             output_directory: None,
             staging_directory: None,

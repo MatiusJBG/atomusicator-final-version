@@ -117,15 +117,20 @@ impl JobRegistry {
         {
             return Err("another audio job is already running".into());
         }
-        let expected_source = retry_of
+        let previous = retry_of
             .as_ref()
             .map(|id| self.journal.load(id))
             .transpose()
-            .map_err(err)?
-            .and_then(|record| record.source_sha256);
+            .map_err(err)?;
+        let expected_source = previous
+            .as_ref()
+            .and_then(|record| record.source_sha256.clone());
+        let profile = previous
+            .map(|record| record.profile)
+            .unwrap_or_else(atomusicator_domain::quality::SeparationProfile::production);
         let (mut record, lease) = self
             .journal
-            .create_leased(&id, request, retry_of.clone(), expected_source)
+            .create_leased_profiled(&id, request, retry_of.clone(), expected_source, profile)
             .map_err(err)?;
         record.lifecycle.start().map_err(err)?;
         self.journal.save(&mut record).map_err(err)?;

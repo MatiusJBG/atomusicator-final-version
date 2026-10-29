@@ -188,7 +188,11 @@ impl Studio {
         {
             return Err("job cannot be resumed".into());
         }
-        if record.profile != atomusicator_domain::quality::SeparationProfile::compatibility() {
+        if atomusicator_application::use_cases::bounded_separation::RhythmPolicy::from_profile(
+            &record.profile,
+        )
+        .is_err()
+        {
             return Err("job quality profile is incompatible; start a new separation".into());
         }
         self.jobs.journal.cleanup_staging(&record).map_err(err)?;
@@ -290,7 +294,10 @@ impl Studio {
             download_allowed,
         };
         self.start_request(request, retry_of, move |backend,id,cancel| {
+            let profile=backend.jobs.journal.load(id).map_err(err)?.profile;
+            let rhythm_policy=atomusicator_application::use_cases::bounded_separation::RhythmPolicy::from_profile(&profile).map_err(err)?;
             let _resources=backend.resources.reserve_separation(&backend.sessions).map_err(crate::jobs::JobFailure::from_domain)?;
+            let _idle_sessions=backend.sessions.idle_scope();
             let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
             if expected_hash.is_some_and(|expected| expected != source_hash) {
                 return Err("Source content changed since the interrupted attempt; start a new separation".into());
@@ -328,7 +335,7 @@ impl Studio {
             let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1"));
             let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
-            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store);
+            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store).with_rhythm_policy(rhythm_policy);
             let result = pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?;
             check_cancel(cancel)?;
             if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
@@ -340,7 +347,7 @@ impl Studio {
                 display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source,
             };
             let engine=serde_json::json!({"name":"Atomusicator native MDX","models":usages,
-                "source_sha256":source_hash,"profile":atomusicator_domain::quality::SeparationProfile::compatibility(),
+                "source_sha256":source_hash,"profile":profile,
                 "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
                 "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
