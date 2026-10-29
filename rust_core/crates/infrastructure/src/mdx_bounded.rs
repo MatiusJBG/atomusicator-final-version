@@ -11,7 +11,19 @@ pub fn run_bounded_mdx(
     source: &dyn AudioBlockSource,
     target: &mut dyn AudioBlockWriter,
     cancel: &CancellationToken,
+    predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
+) -> Result<(), DomainError> {
+    run_bounded_mdx_observed(c, source, target, cancel, predict, None)
+}
+
+pub type MdxObserver<'a> = dyn Fn(&str, &[f32]) + 'a;
+pub fn run_bounded_mdx_observed(
+    c: MdxConfig,
+    source: &dyn AudioBlockSource,
+    target: &mut dyn AudioBlockWriter,
+    cancel: &CancellationToken,
     mut predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
+    observe: Option<&MdxObserver<'_>>,
 ) -> Result<(), DomainError> {
     let metadata = source.metadata();
     if metadata.format.sample_rate_hz != 44100
@@ -68,6 +80,9 @@ pub fn run_bounded_mdx(
             }
         }
         let normalized: Vec<f32> = raw.iter().map(|v| v / peak).collect();
+        if let Some(observe) = observe {
+            observe("input_pcm_windows", &raw);
+        }
         let mut spectrum = transform.forward(&normalized)?;
         for component in 0..4 {
             spectrum
@@ -75,8 +90,14 @@ pub fn run_bounded_mdx(
                 .fill(0.0);
         }
         let prediction = predict(&spectrum)?;
+        if let Some(observe) = observe {
+            observe("tensor_output_spectral_units", &prediction);
+        }
         check(cancel)?;
         let decoded = transform.inverse(&prediction)?;
+        if let Some(observe) = observe {
+            observe("post_istft_normalized_windows", &decoded);
+        }
         for frame in 0..actual {
             let weight = if actual > 1 {
                 0.5 - 0.5 * (2.0 * std::f32::consts::PI * frame as f32 / (actual - 1) as f32).cos()
@@ -107,6 +128,9 @@ pub fn run_bounded_mdx(
                     value
                 });
             }
+        }
+        if let Some(observe) = observe {
+            observe("restored_compensated_pcm", &output);
         }
         target.write(&output)?;
         accumulator.copy_within(flush * 2.., 0);

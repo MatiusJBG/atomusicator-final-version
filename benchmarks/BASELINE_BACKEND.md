@@ -6,7 +6,7 @@ This document records verification status, not an assertion that the backend is
 qualified for release. Private input audio, reference stems, measurements and
 implementation plans remain outside version control.
 
-The initial audit found:
+The initial audit at `84bb04f` found (historical findings, not current status):
 
 - The Cargo workspace contains four crates with local path dependencies.
 - The model manifest is embedded by `include_str!` in
@@ -14,11 +14,11 @@ The initial audit found:
   not depend on the runtime working directory.
 - The previous product directory literal remains intentionally confined to
   `storage/legacy_import.rs` for compatible data discovery.
-- `audio_bench` currently reports `CPUExecutionProvider` as a literal. This is
+- `audio_bench` reported `CPUExecutionProvider` as a literal. This is
   not evidence of per-node provider assignment or observed GPU fallback.
-- Session creation currently holds the pool mutex. Moving it outside the
+- Session creation held the pool mutex. Moving it outside the
   mutex requires capacity reservations and concurrent admission tests.
-- No release optimization profile exists in the workspace manifest.
+- No release optimization profile existed in the workspace manifest.
 
 ## Required baseline before DSP or inference optimization
 

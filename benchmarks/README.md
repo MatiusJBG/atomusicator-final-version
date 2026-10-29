@@ -5,7 +5,7 @@ directory. No Python is used. All four model hashes must already verify in the
 local model cache; the runner never downloads models.
 
 ```powershell
-cargo build --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example audio_bench
+cargo build --locked --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example audio_bench
 ./benchmarks/Measure-NativeRun.ps1 -Executable rust_core/target/release/examples/audio_bench.exe -Arguments @('local_audio/corpus.json','local_audio/run-001') -Report local_audio/resources-001.json
 ```
 
@@ -15,7 +15,14 @@ optional `references` mapping `lead_vocal`, `backing_vocals`, `drums`, `bass` or
 `instrumental` to aligned source stems. Paths are relative to the manifest or
 absolute. Keep audio and manifests in ignored `local_audio/`.
 
-SI-SDR is calculated independently per channel after mean removal. Amplitude
+The default runner uses `BoundedSeparation` and fresh spool storage with checkpoint
+reuse disabled. The optional whole-buffer comparison runner is now named
+`audio_bench_reference` and requires `--features reference-pipeline`; it is
+excluded from standard production builds.
+
+SI-SDR is calculated independently per channel after mean removal. SDR is
+`10 log10(reference energy / squared sample error)`, with no BSS Eval filtering.
+Amplitude
 error, RMS and peak are also reported because scale invariance can hide gain
 errors. Silence and mathematically perfect estimates have explicit JSON states.
 Reference duration/rate/channel mismatches fail rather than silently cropping.
@@ -24,7 +31,7 @@ Inspect an existing five-stem directory without rerunning inference:
 
 ```powershell
 cargo build --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example audio_inspect
-./rust_core/target/release/examples/audio_inspect.exe local_audio/source.flac local_audio/run-001/case local_audio/diagnostics.json
+./rust_core/target/release/examples/audio_inspect.exe local_audio/source.flac local_audio/run-001/case/outputs local_audio/diagnostics.json
 ```
 
 An optional last argument selects a baseline stem directory. Its comparisons are
@@ -50,3 +57,43 @@ around -30 dB and near-zero output energy expose poor separation on this case.
 This is not evidence of acceptable extraction quality, representative vocal
 quality, or native/Python equivalence. The exact-sum reconstruction invariant
 alone does not verify allocation to the correct stem. No audio is redistributed.
+
+## Prepare and diagnose user-supplied reference stems
+
+Place exactly one `.flac` or `.wav` per canonical name in
+`local_audio/ground_truth/`: `lead_vocal`, `backing_vocals`, `drums`, `bass`,
+`instrumental`. Preparation preserves those originals, pads shorter tails at
+sample zero, and applies one common gain to references and their summed mix if
+needed to keep the prepared files below full scale. Its JSON records hashes,
+padding, the raw summed peak and common gain. It creates `ground_truth/mix.wav`
+only if absent, and rejects an existing mix unrelated to the reference sum.
+
+```powershell
+cargo build --locked --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example prepare_ground_truth --example audio_bench --example audio_inspect --example rhythm_probe
+./rust_core/target/release/examples/prepare_ground_truth.exe local_audio/ground_truth local_audio/prepared-001
+```
+
+Build a local corpus manifest using the prepared `mix.path`, `mix.sha256` and
+each prepared `references.<stem>.path` from `preparation.json`. Use absolute
+paths or paths relative to the corpus manifest. Include the user's attribution
+and local evaluation permission; do not invent a redistribution license.
+
+After running `audio_bench`, inspect its stage observations and isolate the
+rhythm models from upstream vocal subtraction:
+
+```powershell
+./rust_core/target/release/examples/audio_inspect.exe --stage-report local_audio/run-001/report.json local_audio/stage-diagnosis.json
+./rust_core/target/release/examples/rhythm_probe.exe local_audio/run-001/case local_audio/probes-001
+```
+
+The probes choose the 15-second grid excerpt with maximum reference drum energy
+and run each rhythm model on the mixture, its actual pipeline input and the
+isolated reference. They are diagnostic excerpts, not full-song qualification.
+Tensor observations are spectral units; normalized iSTFT windows include overlap
+and padding. Compare whole-track PCM RMS at the restored output, stage spool and
+final WAV to locate amplitude loss. The gate observations concern vocals only;
+drums and bass bypass `SpectralBleedGate`.
+
+Keep generated reports in ignored `benchmarks/results/` or `local_audio/`.
+Resource reports sample the root and observed descendants, including limitations
+and the observed sampling gaps; VRAM remains explicitly unmeasured.

@@ -165,6 +165,7 @@ pub struct MdxInference {
     models: BTreeMap<String, (PathBuf, String)>,
     cache: Option<ContentAddressedCache>,
     runtime_signature: String,
+    diagnostics: Option<Arc<crate::inference_diagnostics::InferenceDiagnostics>>,
 }
 impl MdxInference {
     pub fn new(
@@ -193,7 +194,15 @@ impl MdxInference {
             models,
             cache,
             runtime_signature,
+            diagnostics: None,
         })
+    }
+    pub fn with_diagnostics(
+        mut self,
+        diagnostics: Arc<crate::inference_diagnostics::InferenceDiagnostics>,
+    ) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
     }
     fn infer(
         &self,
@@ -282,7 +291,13 @@ impl MdxInference {
                     &spectrum,
                 )
                 .map_err(|e| fail(&e.to_string()))?;
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/tensor_output_spectral_units"), &prediction);
+            }
             let decoded = transform.inverse(&prediction)?;
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/post_istft_normalized_windows"), &decoded);
+            }
             for frame in 0..actual {
                 let weight = if actual > 1 {
                     0.5 - 0.5
@@ -375,16 +390,30 @@ impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
             .get(id)
             .ok_or_else(|| fail("verified MDX model is missing"))?;
         let c = MdxConfig::for_profile(id)?;
-        crate::mdx_bounded::run_bounded_mdx(c, source, target, cancel, |spectrum| {
-            self.runner
-                .run_f32(
-                    path,
-                    "input",
-                    &[1, 4, c.dim_f as i64, c.dim_t as i64],
-                    spectrum,
-                )
-                .map_err(|e| fail(&e.to_string()))
-        })
+        let observe = |stage: &str, values: &[f32]| {
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/{stage}"), values);
+            }
+        };
+        crate::mdx_bounded::run_bounded_mdx_observed(
+            c,
+            source,
+            target,
+            cancel,
+            |spectrum| {
+                self.runner
+                    .run_f32(
+                        path,
+                        "input",
+                        &[1, 4, c.dim_f as i64, c.dim_t as i64],
+                        spectrum,
+                    )
+                    .map_err(|e| fail(&e.to_string()))
+            },
+            self.diagnostics
+                .as_ref()
+                .map(|_| &observe as &dyn Fn(&str, &[f32])),
+        )
     }
 }
 fn block_profile(stage: atomusicator_application::ports::InferenceStage) -> &'static str {
