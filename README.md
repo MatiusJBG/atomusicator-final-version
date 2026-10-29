@@ -154,7 +154,7 @@ Outputs:
 | --- | --- |
 | Complete runnable app | `build/windows/x64/runner/Release/` |
 | App executable | `build/windows/x64/runner/Release/atomusicator.exe` |
-| Windows installer | `packaging/dist/Atomusicator-Setup-0.6.0.exe` |
+| Windows installer | `packaging/dist/Atomusicator-Setup-0.7.0.exe` |
 | Runtime checksum inventory | `build/windows/x64/runner/Release/release-manifest.json` |
 
 Keep the **whole release folder** together when running or creating a portable
@@ -278,6 +278,7 @@ See the audit for exact compatibility limits and measured evidence.
 | PowerShell rejects `#requires -Version 7.0` | Open `pwsh`, not Windows PowerShell 5.1 |
 | Flutter cannot find Visual Studio or Windows | Install Desktop development with C++, Windows SDK and CMake tools; rerun `flutter doctor -v` |
 | Missing native DLL / audio tools | Run `packaging/build_windows.ps1 -SkipInstaller`; launch the complete release folder |
+| Access denied in `Separador Vocal/.../projects/.atomusicator-write-probe-*` | Rebuild and restart the app. If the historical workspace is not writable, the backend validates `%LOCALAPPDATA%\Atomusicator\projects` and saves it as the new destination. Historical projects remain in place; a manually selected unwritable directory is still rejected. The native destination also requires write access. |
 | Model download denied / model unavailable | Grant download consent, check network and available disk; do not bypass SHA-256 checks |
 | FLAC invisible in the picker | Rebuild/use the updated app; it uses an explicit WAV/MP3/FLAC/M4A filter |
 | Ctrl+V imports nothing | Copy actual files in Explorer, focus the workbench and paste; copying a filename as text is a different clipboard format |
