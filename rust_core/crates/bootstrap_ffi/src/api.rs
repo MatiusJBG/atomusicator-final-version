@@ -120,6 +120,35 @@ pub fn set_projects_directory(directory: String) -> Result<(), String> {
 pub fn start_pitch(semitones: i32, preserve_formants: bool) -> Result<String, String> {
     crate::studio::studio()?.pitch(semitones, preserve_formants)
 }
+
+#[derive(Debug, Clone)]
+pub struct UiLivePitchDto {
+    pub session_id: String,
+    pub epoch: u64,
+    pub revision: u64,
+    /// Revision consumed by the audio callback, not a physical latency measurement.
+    pub applied_revision: u64,
+    pub semitones: i32,
+    pub preserve_formants: bool,
+}
+pub fn live_pitch_status() -> Result<UiLivePitchDto, String> {
+    crate::studio::studio()?.live_pitch_status()
+}
+pub fn set_live_pitch(
+    session_id: String,
+    epoch: u64,
+    revision: u64,
+    semitones: i32,
+    preserve_formants: bool,
+) -> Result<UiLivePitchDto, String> {
+    crate::studio::studio()?.set_live_pitch(
+        &session_id,
+        epoch,
+        revision,
+        semitones,
+        preserve_formants,
+    )
+}
 pub fn start_export(
     destination: String,
     selected_stems: Vec<String>,
@@ -129,6 +158,37 @@ pub fn start_export(
     bit_depth: u16,
     normalize: bool,
 ) -> Result<String, String> {
+    start_export_with_pitch(
+        destination,
+        selected_stems,
+        format,
+        sample_rate,
+        channels,
+        bit_depth,
+        normalize,
+        None,
+    )
+}
+#[derive(Debug, Clone)]
+pub struct UiPitchExportDto {
+    pub session_id: String,
+    pub epoch: u64,
+    pub semitones: i32,
+    pub preserve_formants: bool,
+}
+// Keep the generated bridge's existing export arguments compatible; the
+// optional snapshot is validated and converted into domain options below.
+#[allow(clippy::too_many_arguments)]
+pub fn start_export_with_pitch(
+    destination: String,
+    selected_stems: Vec<String>,
+    format: String,
+    sample_rate: u32,
+    channels: u16,
+    bit_depth: u16,
+    normalize: bool,
+    pitch: Option<UiPitchExportDto>,
+) -> Result<String, String> {
     let options = atomusicator_infrastructure::audio_tools::ExportOptions::new(
         &format,
         sample_rate,
@@ -137,7 +197,13 @@ pub fn start_export(
         normalize,
     )
     .map_err(|e| e.to_string())?;
-    crate::studio::studio()?.export(destination.into(), selected_stems, options)
+    let backend = crate::studio::studio()?;
+    match pitch {
+        None => backend.export(destination.into(), selected_stems, options),
+        Some(pitch) => {
+            backend.export_with_pitch(destination.into(), selected_stems, options, Some(pitch))
+        }
+    }
 }
 pub fn playback_status() -> Result<UiPlaybackDto, String> {
     Ok(crate::studio::studio()?.playback())
@@ -230,7 +296,10 @@ mod tests {
     fn engine_version_reports_native_core_and_stem_count() {
         assert_eq!(
             super::get_engine_version(),
-            "Atomusicator Native Core v0.6.0 (Stems: 5)"
+            format!(
+                "Atomusicator Native Core v{} (Stems: 5)",
+                env!("CARGO_PKG_VERSION")
+            )
         );
     }
 }

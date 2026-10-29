@@ -16,9 +16,11 @@ void main() {
       ),
     );
 
-    expect(find.text('Your mix starts here'), findsOneWidget);
-    expect(find.text('Choose audio files'), findsOneWidget);
-    expect(find.text('Not separated'), findsNWidgets(5));
+    await tester.tap(find.byTooltip('Atomizador'));
+    await tester.pump();
+    expect(find.text('Arrastra tu audio aquí'), findsOneWidget);
+    expect(find.text('Importar audio'), findsOneWidget);
+    expect(find.byType(StudioTransport), findsNothing);
   });
 
   testWidgets(
@@ -58,12 +60,12 @@ void main() {
         );
         await tester.pump();
         expect(tester.takeException(), isNull);
-        expect(find.text('Bass'), findsWidgets);
+        expect(find.text('Bajo'), findsWidgets);
       }
       await tester.tap(find.text('M'));
       await tester.pump();
       expect(gateway.calls, contains('track:bass:true:false'));
-      await tester.tap(find.byTooltip('Play'));
+      await tester.tap(find.byTooltip('Reproducir'));
       await tester.pump();
       expect(gateway.calls, contains('play'));
       container.read(timelineZoomProvider.notifier).state = 4;

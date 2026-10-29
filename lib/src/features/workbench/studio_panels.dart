@@ -1,10 +1,12 @@
 import 'dart:math' as math;
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/studio_controller.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/di/workbench_providers.dart';
+import '../../../core/di/desktop_studio_state.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../rust_bridge/api.dart' as native;
 
@@ -13,10 +15,10 @@ part 'studio_dock.dart';
 part 'studio_export.dart';
 
 const stemNames = {
-  'lead_vocal': 'Lead vocal',
-  'backing_vocals': 'Backing vocals',
-  'drums': 'Drums',
-  'bass': 'Bass',
+  'lead_vocal': 'Voz principal',
+  'backing_vocals': 'Coros',
+  'drums': 'Batería',
+  'bass': 'Bajo',
   'instrumental': 'Instrumental',
 };
 Color stemColor(String kind) => switch (kind) {
@@ -40,9 +42,27 @@ String formatStudioTime(double value) {
 
 final timelineZoomProvider = StateProvider<double>((ref) => 1);
 
+Future<void> openStudioFolder(BuildContext context, String directory) async {
+  try {
+    if (Platform.isWindows) {
+      await Process.start('explorer.exe', [directory]);
+    } else if (Platform.isMacOS) {
+      await Process.start('open', [directory]);
+    } else {
+      await Process.start('xdg-open', [directory]);
+    }
+  } on ProcessException {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(directory)));
+    }
+  }
+}
+
 Future<void> openStudioSession(BuildContext context, WidgetRef ref) async {
   final directory = await FilePicker.platform.getDirectoryPath(
-    dialogTitle: 'Open a session folder containing session.json',
+    dialogTitle: 'Abrir una carpeta de sesión con session.json',
   );
   if (directory != null) {
     await ref.read(studioProvider.notifier).open(directory);
@@ -57,7 +77,7 @@ Future<void> chooseProjectsDirectory(
     await ref.read(nativeEngineStatusProvider.future);
     final current = await native.projectsDirectory();
     final directory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Projects directory',
+      dialogTitle: 'Carpeta de proyectos',
       initialDirectory: current,
     );
     if (directory != null) {
@@ -122,7 +142,7 @@ class StudioFeedback extends ConsumerWidget {
                                 children: [
                                   const Expanded(
                                     child: Text(
-                                      'Recovery history could not be read.',
+                                      'No se pudo leer el historial de recuperación.',
                                     ),
                                   ),
                                   TextButton(
@@ -130,7 +150,7 @@ class StudioFeedback extends ConsumerWidget {
                                         () => ref.invalidate(
                                           recoverableJobsProvider,
                                         ),
-                                    child: const Text('Retry'),
+                                    child: const Text('Reintentar'),
                                   ),
                                 ],
                               )
@@ -145,7 +165,7 @@ class StudioFeedback extends ConsumerWidget {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Interrupted separation: ${saved.sourcePath.split(RegExp(r'[/\\]')).last}',
+                                    'Separación interrumpida: ${saved.sourcePath.split(RegExp(r'[/\\]')).last}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -155,14 +175,14 @@ class StudioFeedback extends ConsumerWidget {
                                       () => ref
                                           .read(studioProvider.notifier)
                                           .resumeSavedJob(saved.id),
-                                  child: const Text('Resume'),
+                                  child: const Text('Reanudar'),
                                 ),
                                 TextButton(
                                   onPressed:
                                       () => ref
                                           .read(studioProvider.notifier)
                                           .discardSavedJob(saved.id),
-                                  child: const Text('Discard'),
+                                  child: const Text('Descartar'),
                                 ),
                               ],
                             ),
@@ -176,14 +196,14 @@ class StudioFeedback extends ConsumerWidget {
               Row(
                 children: [
                   Expanded(
-                    child: Text(job?.message ?? 'Starting…', maxLines: 2),
+                    child: Text(job?.message ?? 'Iniciando…', maxLines: 2),
                   ),
                   TextButton(
                     onPressed:
                         job?.status == native.UiJobStatus.running
                             ? () => ref.read(studioProvider.notifier).cancel()
                             : null,
-                    child: const Text('Cancel'),
+                    child: const Text('Cancelar'),
                   ),
                 ],
               ),
@@ -208,23 +228,21 @@ class StudioFeedback extends ConsumerWidget {
                             builder:
                                 (context) => AlertDialog(
                                   title: const Text(
-                                    'Download separation models?',
+                                    '¿Descargar los modelos de separación?',
                                   ),
                                   content: const Text(
-                                    'Download the four reviewed UVR/Kuielab models (about 180 MB). SHA-256 is checked before inference. Models are cached locally; your audio stays on this computer. UVR, Anjok07, aufr33 and Kuielab/KINoAI — MIT.',
+                                    'Se descargarán los cuatro modelos UVR/Kuielab revisados (unos 180 MB). Se verifica SHA-256 antes de procesar. Los modelos se guardan en este equipo y tu audio permanece local. UVR, Anjok07, aufr33 y Kuielab/KINoAI — MIT.',
                                   ),
                                   actions: [
                                     TextButton(
                                       onPressed:
                                           () => Navigator.pop(context, false),
-                                      child: const Text('Cancel'),
+                                      child: const Text('Cancelar'),
                                     ),
                                     FilledButton(
                                       onPressed:
                                           () => Navigator.pop(context, true),
-                                      child: const Text(
-                                        'Download and separate',
-                                      ),
+                                      child: const Text('Descargar y separar'),
                                     ),
                                   ],
                                 ),
@@ -241,16 +259,18 @@ class StudioFeedback extends ConsumerWidget {
                                 );
                           }
                         },
-                        child: const Text('Download models and retry'),
+                        child: const Text('Descargar modelos y reintentar'),
                       ),
                   ],
                 ),
               ),
             if (job?.status == native.UiJobStatus.cancelled)
-              const Text('Operation cancelled. Previous session retained.'),
+              const Text(
+                'Operación cancelada. Se conserva la sesión anterior.',
+              ),
             if (job?.status == native.UiJobStatus.completed &&
                 job?.outputDirectory != null)
-              SelectableText('Saved to ${job!.outputDirectory}'),
+              SelectableText('Guardado en ${job!.outputDirectory}'),
           ],
         ),
       ),

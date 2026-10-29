@@ -68,12 +68,43 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
         .collect::<Vec<_>>();
     let pool = OrtSessionPool::new(1).unwrap();
     let live = pool.load_session(&paths[0]).unwrap();
+    pool.trim_idle_and_resize(1).unwrap();
+    assert_eq!(pool.capacity().unwrap(), 1);
+    assert!(std::sync::Arc::ptr_eq(
+        &live,
+        &pool.load_session(&paths[0]).unwrap()
+    ));
     assert!(
         pool.load_session(&paths[1]).is_err(),
         "evicting a leased Arc must not admit another live session"
     );
     drop(live);
     assert!(pool.load_session(&paths[1]).is_ok());
+    pool.trim_idle_and_resize(1).unwrap();
+    let first = pool.load_session(&paths[0]).unwrap();
+    let first_weak = std::sync::Arc::downgrade(&first);
+    drop(first);
+    pool.trim_idle_and_resize(1).unwrap();
+    assert!(
+        first_weak.upgrade().is_none(),
+        "idle cached models must actually be released"
+    );
+    pool.trim_idle_and_resize(2).unwrap();
+    let first = pool.load_session(&paths[0]).unwrap();
+    let second = pool.load_session(&paths[1]).unwrap();
+    assert!(
+        pool.trim_idle_and_resize(1).is_err(),
+        "cannot hide two live model allocations behind one slot"
+    );
+    assert_eq!(pool.capacity().unwrap(), 2);
+    drop((first, second));
+}
+
+#[test]
+fn memory_pressure_cannot_resize_the_session_cache_to_zero() {
+    let pool = OrtSessionPool::new(2).unwrap();
+    assert!(pool.trim_idle_and_resize(0).is_err());
+    assert_eq!(pool.capacity().unwrap(), 2);
 }
 
 #[test]

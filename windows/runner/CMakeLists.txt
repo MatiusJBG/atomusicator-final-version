@@ -39,3 +39,14 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# A Low integrity workspace can label newly linked images Low as well. Windows
+# then starts the application at Low integrity even from a normal user shell,
+# blocking Dart DevFS/TEMP and native AppData writes. Label this built image for
+# normal desktop execution; do not change workspace or user-data directory ACLs.
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND "$ENV{SystemRoot}/System32/icacls.exe"
+    "$<TARGET_FILE:${BINARY_NAME}>" /setintegritylevel M
+  COMMENT "Set normal desktop integrity on the application executable"
+  VERBATIM
+)

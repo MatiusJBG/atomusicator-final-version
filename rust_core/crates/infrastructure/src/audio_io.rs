@@ -1,4 +1,5 @@
 pub mod aligned;
+mod pitch_stream;
 pub mod playback;
 pub mod streamer;
 pub mod wav_codec;

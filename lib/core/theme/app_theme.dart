@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 abstract final class AppColors {
   static const canvas = Color(0xFF0B0F14);
-  static const panel = Color(0xFF141B23);
+  static const sidebar = Color(0xFF090E14);
+  static const panel = Color(0xFF131A22);
   static const panelRaised = Color(0xFF1C2731);
-  static const line = Color(0xFF26323E);
-  static const text = Color(0xFFE2E8EF);
-  static const muted = Color(0xFF94A6B5);
-  static const seaGlass = Color(0xFF22CDBB);
+  static const line = Color(0xFF22302F);
+  static const text = Color(0xFFE6EDF3);
+  static const muted = Color(0xFF7E93A8);
+  static const seaGlass = Color(0xFF2DD4BF);
   static const amber = Color(0xFFFFB000);
   static const coral = Color(0xFFFF4163);
   static const lavender = Color(0xFFA653F5);
@@ -20,6 +21,7 @@ abstract final class AppTheme {
   static final dark = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    fontFamily: 'Inter',
     visualDensity: VisualDensity.compact,
     scaffoldBackgroundColor: AppColors.canvas,
     colorScheme: const ColorScheme.dark(
@@ -49,7 +51,7 @@ abstract final class AppTheme {
         fontWeight: FontWeight.w600,
       ),
       bodyLarge: TextStyle(color: AppColors.text, fontSize: 14, height: 1.45),
-      bodyMedium: TextStyle(color: AppColors.muted, fontSize: 13, height: 1.45),
+      bodyMedium: TextStyle(color: AppColors.text, fontSize: 13, height: 1.45),
       labelLarge: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
       labelMedium: TextStyle(
         color: AppColors.muted,
@@ -74,7 +76,12 @@ abstract final class AppTheme {
         disabledBackgroundColor: AppColors.panelRaised,
         disabledForegroundColor: AppColors.muted,
         padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 13),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -82,7 +89,12 @@ abstract final class AppTheme {
         foregroundColor: AppColors.text,
         side: const BorderSide(color: AppColors.line),
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
@@ -90,6 +102,28 @@ abstract final class AppTheme {
         foregroundColor: AppColors.muted,
         minimumSize: const Size(40, 40),
       ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        textStyle: const TextStyle(fontFamily: 'Inter', fontSize: 11),
+      ),
+    ),
+    chipTheme: const ChipThemeData(
+      backgroundColor: AppColors.canvas,
+      selectedColor: Color(0xFF10332E),
+      checkmarkColor: AppColors.seaGlass,
+      labelStyle: TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        color: AppColors.text,
+      ),
+      secondaryLabelStyle: TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        color: AppColors.seaGlass,
+      ),
+      side: BorderSide(color: AppColors.line),
+      shape: StadiumBorder(),
     ),
     sliderTheme: SliderThemeData(
       activeTrackColor: AppColors.seaGlass,

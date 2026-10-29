@@ -28,6 +28,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiJobFailure dco_decode_box_autoadd_ui_job_failure(dynamic raw);
 
   @protected
+  UiPitchExportDto dco_decode_box_autoadd_ui_pitch_export_dto(dynamic raw);
+
+  @protected
   UiPlaybackFailure dco_decode_box_autoadd_ui_playback_failure(dynamic raw);
 
   @protected
@@ -67,6 +70,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiJobFailure? dco_decode_opt_box_autoadd_ui_job_failure(dynamic raw);
 
   @protected
+  UiPitchExportDto? dco_decode_opt_box_autoadd_ui_pitch_export_dto(dynamic raw);
+
+  @protected
   UiPlaybackFailure? dco_decode_opt_box_autoadd_ui_playback_failure(
     dynamic raw,
   );
@@ -81,6 +87,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_u_32(dynamic raw);
 
   @protected
+  BigInt dco_decode_u_64(dynamic raw);
+
+  @protected
   int dco_decode_u_8(dynamic raw);
 
   @protected
@@ -91,6 +100,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UiJobStatus dco_decode_ui_job_status(dynamic raw);
+
+  @protected
+  UiLivePitchDto dco_decode_ui_live_pitch_dto(dynamic raw);
+
+  @protected
+  UiPitchExportDto dco_decode_ui_pitch_export_dto(dynamic raw);
 
   @protected
   UiPlaybackDto dco_decode_ui_playback_dto(dynamic raw);
@@ -121,6 +136,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UiJobFailure sse_decode_box_autoadd_ui_job_failure(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UiPitchExportDto sse_decode_box_autoadd_ui_pitch_export_dto(
     SseDeserializer deserializer,
   );
 
@@ -176,6 +196,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  UiPitchExportDto? sse_decode_opt_box_autoadd_ui_pitch_export_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   UiPlaybackFailure? sse_decode_opt_box_autoadd_ui_playback_failure(
     SseDeserializer deserializer,
   );
@@ -192,6 +217,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer);
 
   @protected
@@ -202,6 +230,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UiJobStatus sse_decode_ui_job_status(SseDeserializer deserializer);
+
+  @protected
+  UiLivePitchDto sse_decode_ui_live_pitch_dto(SseDeserializer deserializer);
+
+  @protected
+  UiPitchExportDto sse_decode_ui_pitch_export_dto(SseDeserializer deserializer);
 
   @protected
   UiPlaybackDto sse_decode_ui_playback_dto(SseDeserializer deserializer);
@@ -237,6 +271,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_ui_job_failure(
     UiJobFailure self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_ui_pitch_export_dto(
+    UiPitchExportDto self,
     SseSerializer serializer,
   );
 
@@ -304,6 +344,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_ui_pitch_export_dto(
+    UiPitchExportDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_ui_playback_failure(
     UiPlaybackFailure? self,
     SseSerializer serializer,
@@ -322,6 +368,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
@@ -332,6 +381,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ui_job_status(UiJobStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ui_live_pitch_dto(
+    UiLivePitchDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ui_pitch_export_dto(
+    UiPitchExportDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_ui_playback_dto(UiPlaybackDto self, SseSerializer serializer);

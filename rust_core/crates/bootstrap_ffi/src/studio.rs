@@ -1,4 +1,5 @@
 //! Composition and background job ownership. The bridge passes paths/peaks, never PCM.
+mod live_pitch;
 use crate::api::{UiJobDto, UiPlaybackDto, UiPlaybackFailure, UiSessionDto, UiTrackMeterDto};
 use crate::session_preparation::stem_key;
 use atomusicator_application::{
@@ -17,6 +18,7 @@ use atomusicator_infrastructure::{
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
 };
+use live_pitch::pitch_persistence_key;
 use std::{
     collections::BTreeMap,
     fs,
@@ -33,6 +35,7 @@ pub struct Studio {
     sessions: Arc<OrtSessionPool>,
     resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission,
     pitch_cache: PitchRenderCache,
+    live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore,
 }
 #[derive(Clone)]
 struct LoadedSession {
@@ -40,6 +43,7 @@ struct LoadedSession {
     originals: Vec<(StemType, PathBuf)>,
     waveforms: BTreeMap<StemType, Arc<atomusicator_infrastructure::waveform_index::WaveformIndex>>,
     _pitch_batch: Option<atomusicator_infrastructure::pitch_cache::LeasedPitchBatch>,
+    pitch_key: String,
 }
 static STUDIO: OnceLock<Result<Arc<Studio>, String>> = OnceLock::new();
 pub fn studio() -> Result<Arc<Studio>, String> {
@@ -65,6 +69,11 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .map_err(err)?,
                 sessions: Arc::new(OrtSessionPool::new(2).map_err(err)?),
                 pitch_cache: PitchRenderCache::new(policy.stage_cache_dir().join("pitch-v1")),
+                live_pitch_store:
+                    atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
+                        policy.app_data_root().join("live-pitch"),
+                    )
+                    .map_err(err)?,
                 resources:
                     atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
                         atomusicator_application::compute_policy::ComputeBudget::interactive(
@@ -278,7 +287,7 @@ impl Studio {
             download_allowed,
         };
         self.start_request(request, retry_of, move |backend,id,cancel| {
-            let _resources=backend.resources.reserve_separation().map_err(crate::jobs::JobFailure::from_domain)?;
+            let _resources=backend.resources.reserve_separation(&backend.sessions).map_err(crate::jobs::JobFailure::from_domain)?;
             let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
             if expected_hash.is_some_and(|expected| expected != source_hash) {
                 return Err("Source content changed since the interrupted attempt; start a new separation".into());
@@ -381,6 +390,10 @@ impl Studio {
             .map_err(err)
     }
     fn load_directory(&self, path: &Path) -> Result<UiSessionDto, String> {
+        let mut loaded_slot = self.loaded.lock().map_err(err)?;
+        if let Err(error) = self.live_pitch_store.flush() {
+            eprintln!("Pitch settings flush failed: {error}");
+        }
         let files = atomusicator_infrastructure::session_reader::read_session_files(
             path,
             &CancellationToken::default(),
@@ -398,12 +411,23 @@ impl Studio {
             &originals,
             0,
         )?;
-        let dto = prepared.dto;
-        *self.loaded.lock().map_err(err)? = Some(LoadedSession {
+        let mut dto = prepared.dto;
+        let pitch_key = pitch_persistence_key(&dto)?;
+        match self.live_pitch_store.load(&pitch_key) {
+            Ok(Some(spec)) => {
+                let epoch = self.mixer.live_pitch().snapshot().epoch;
+                self.mixer.live_pitch().set(epoch, 1, spec).map_err(err)?;
+                dto.pitch_semitones = spec.semitones() as i32;
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("Ignoring invalid saved pitch settings: {error}"),
+        }
+        *loaded_slot = Some(LoadedSession {
             dto: dto.clone(),
             originals,
             waveforms: prepared.waveforms,
             _pitch_batch: None,
+            pitch_key,
         });
         Ok(dto)
     }
@@ -450,6 +474,7 @@ impl Studio {
                 .unwrap_or(&loaded.originals);
             check_cancel(cancel)?;
             backend.jobs.begin_commit(id)?;
+            let mut loaded_slot = backend.loaded.lock().map_err(err)?;
             let prepared = crate::session_preparation::prepare_tracks(
                 &backend.mixer,
                 loaded.dto.id.clone(),
@@ -460,11 +485,13 @@ impl Studio {
             )?;
             let dto = prepared.dto;
             backend.mixer.seek(position).map_err(err)?;
-            *backend.loaded.lock().map_err(err)? = Some(LoadedSession {
+            let pitch_key = pitch_persistence_key(&dto)?;
+            *loaded_slot = Some(LoadedSession {
                 dto: dto.clone(),
                 originals: loaded.originals.clone(),
                 waveforms: prepared.waveforms,
                 _pitch_batch: batch,
+                pitch_key,
             });
             drop(loaded);
             if let Err(error) = cache.prune(2 * 1024 * 1024 * 1024) {
@@ -479,18 +506,36 @@ impl Studio {
         selected: Vec<String>,
         options: ExportOptions,
     ) -> Result<String, String> {
+        self.export_with_pitch(destination, selected, options, None)
+    }
+    pub fn export_with_pitch(
+        self: &Arc<Self>,
+        destination: PathBuf,
+        selected: Vec<String>,
+        options: ExportOptions,
+        pitch: Option<crate::api::UiPitchExportDto>,
+    ) -> Result<String, String> {
         if !destination.is_dir() {
             return Err("export destination must exist".into());
         }
         if selected.is_empty() {
             return Err("select at least one track".into());
         }
-        let loaded = self
-            .loaded
-            .lock()
-            .map_err(err)?
-            .clone()
-            .ok_or("no session loaded")?;
+        let (loaded, live_spec) = {
+            let slot = self.loaded.lock().map_err(err)?;
+            let loaded = slot.clone().ok_or("no session loaded")?;
+            let snapshot = self.mixer.live_pitch().snapshot();
+            let spec = if let Some(pitch) = pitch {
+                if pitch.session_id != loaded.dto.id || pitch.epoch != snapshot.epoch {
+                    return Err("export pitch session changed".into());
+                }
+                PitchShiftSpec::try_new(pitch.semitones as f32, pitch.preserve_formants)
+                    .map_err(err)?
+            } else {
+                snapshot.spec
+            };
+            (loaded, spec)
+        };
         for key in &selected {
             if !loaded.dto.tracks.iter().any(|t| &t.stem_type == key) {
                 return Err("unknown export track".into());
@@ -514,7 +559,23 @@ impl Studio {
                 );
                 tools
                     .export(
-                        Path::new(&track.file_path),
+                        {
+                            if live_spec.semitones() != 0.0 {
+                                let rendered =
+                                    stage.0.join(format!(".pitch-{}.wav", track.stem_type));
+                                atomusicator_infrastructure::live_pitch::render_file(
+                                    Path::new(&track.file_path),
+                                    &rendered,
+                                    live_spec,
+                                    cancel,
+                                )
+                                .map_err(err)?;
+                                rendered
+                            } else {
+                                PathBuf::from(&track.file_path)
+                            }
+                        }
+                        .as_path(),
                         &stage
                             .0
                             .join(format!("{}.{}", track.stem_type, options.format)),
@@ -522,9 +583,19 @@ impl Studio {
                         cancel,
                     )
                     .map_err(err)?;
+                let temporary = stage.0.join(format!(".pitch-{}.wav", track.stem_type));
+                if temporary.exists() {
+                    fs::remove_file(temporary).map_err(err)?;
+                }
             }
             check_cancel(cancel)?;
             let target = destination.join(format!("Atomusicator-export-{}", unique_id()));
+            fs::write(stage.0.join("export.json"),serde_json::to_vec_pretty(&serde_json::json!({
+                "version":1,"source_session_id":loaded.dto.id,
+                "live_pitch":{"semitones":live_spec.semitones(),"preserve_formants":live_spec.preserve_formants(),"engine":atomusicator_infrastructure::live_pitch::ENGINE_ID},
+                "format":options.format,"sample_rate":options.sample_rate,"channels":options.channels,"bit_depth":options.bit_depth,"normalize":options.normalize,
+                "selected_stems":selected
+            })).map_err(err)?).map_err(err)?;
             backend.jobs.begin_commit(id)?;
             fs::rename(&stage.0, &target).map_err(err)?;
             backend.jobs.output(id, target)?;
@@ -606,6 +677,10 @@ mod tests {
                 .unwrap(),
             sessions: Arc::new(OrtSessionPool::new(2).unwrap()),
             pitch_cache: PitchRenderCache::new(root.join("pitch-cache")),
+            live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
+                root.join("live-pitch"),
+            )
+            .unwrap(),
             resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
                 atomusicator_application::compute_policy::ComputeBudget::interactive(
                     std::thread::available_parallelism().map_or(1, usize::from),
@@ -639,6 +714,63 @@ mod tests {
             stems.push(serde_json::json!({"kind":stem_key(kind),"path":relative}));
         }
         fs::write(root.join("session.json"),serde_json::to_vec(&serde_json::json!({"session_id":"legacy","file_name":"example.wav","separation":{"status":"complete","stems":stems}})).unwrap()).unwrap();
+    }
+    #[test]
+    fn live_pitch_is_not_a_job_and_survives_reopen_without_changing_originals() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        legacy_session(&root.0);
+        let backend = backend(&root.0);
+        let session = backend.open(&root.0).unwrap();
+        let original = fs::read(&session.tracks[0].file_path).unwrap();
+        let status = backend.live_pitch_status().unwrap();
+        let accepted = backend
+            .set_live_pitch(&session.id, status.epoch, 1, 7, false)
+            .unwrap();
+        assert_eq!(accepted.semitones, 7);
+        assert!(backend.jobs.idle().is_ok());
+        assert_eq!(backend.open(&root.0).unwrap().pitch_semitones, 7);
+        let restored = backend.live_pitch_status().unwrap();
+        assert!(!restored.preserve_formants);
+        assert!(restored.epoch > status.epoch);
+        assert!(
+            backend
+                .set_live_pitch(&session.id, status.epoch, 2, -7, true)
+                .is_err()
+        );
+        assert_eq!(fs::read(&session.tracks[0].file_path).unwrap(), original);
+    }
+    #[test]
+    #[ignore = "requires the bundled FFmpeg runtime"]
+    fn live_export_freezes_clicked_settings_while_playback_settings_keep_changing() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        legacy_session(&root.0);
+        let backend = backend(&root.0);
+        let session = backend.open(&root.0).unwrap();
+        let status = backend.live_pitch_status().unwrap();
+        let id = backend
+            .export_with_pitch(
+                root.0.clone(),
+                vec!["bass".into()],
+                ExportOptions::new("wav", 44100, 2, 32, false).unwrap(),
+                Some(crate::api::UiPitchExportDto {
+                    session_id: session.id.clone(),
+                    epoch: status.epoch,
+                    semitones: 7,
+                    preserve_formants: true,
+                }),
+            )
+            .unwrap();
+        backend
+            .set_live_pitch(&session.id, status.epoch, 1, -7, false)
+            .unwrap();
+        let job = wait(&backend, &id);
+        assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
+        let info: serde_json::Value = serde_json::from_slice(
+            &fs::read(PathBuf::from(job.output_directory.unwrap()).join("export.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(info["live_pitch"]["semitones"], 7.0);
+        assert_eq!(backend.live_pitch_status().unwrap().semitones, -7);
     }
     #[test]
     fn jobs_reject_overlap_cancel_and_keep_failures_visible() {

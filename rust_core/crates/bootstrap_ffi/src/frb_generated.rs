@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.8.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1244749379;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -881316938;
 
 // Section: executor
 
@@ -202,6 +202,38 @@ fn wire__crate__api__job_status_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::job_status(api_job_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__live_pitch_status_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "live_pitch_status",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::live_pitch_status()?;
                     Ok(output_ok)
                 })())
             }
@@ -467,6 +499,49 @@ fn wire__crate__api__seek_impl(
         },
     )
 }
+fn wire__crate__api__set_live_pitch_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "set_live_pitch",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            let api_epoch = <u64>::sse_decode(&mut deserializer);
+            let api_revision = <u64>::sse_decode(&mut deserializer);
+            let api_semitones = <i32>::sse_decode(&mut deserializer);
+            let api_preserve_formants = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::set_live_pitch(
+                        api_session_id,
+                        api_epoch,
+                        api_revision,
+                        api_semitones,
+                        api_preserve_formants,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__set_master_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -616,6 +691,55 @@ fn wire__crate__api__start_export_impl(
                         api_channels,
                         api_bit_depth,
                         api_normalize,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__start_export_with_pitch_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "start_export_with_pitch",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_destination = <String>::sse_decode(&mut deserializer);
+            let api_selected_stems = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_format = <String>::sse_decode(&mut deserializer);
+            let api_sample_rate = <u32>::sse_decode(&mut deserializer);
+            let api_channels = <u16>::sse_decode(&mut deserializer);
+            let api_bit_depth = <u16>::sse_decode(&mut deserializer);
+            let api_normalize = <bool>::sse_decode(&mut deserializer);
+            let api_pitch = <Option<crate::api::UiPitchExportDto>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::start_export_with_pitch(
+                        api_destination,
+                        api_selected_stems,
+                        api_format,
+                        api_sample_rate,
+                        api_channels,
+                        api_bit_depth,
+                        api_normalize,
+                        api_pitch,
                     )?;
                     Ok(output_ok)
                 })())
@@ -930,6 +1054,17 @@ impl SseDecode for Option<crate::api::UiJobFailure> {
     }
 }
 
+impl SseDecode for Option<crate::api::UiPitchExportDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::UiPitchExportDto>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::UiPlaybackFailure> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -963,6 +1098,13 @@ impl SseDecode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u32::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u64::<NativeEndian>().unwrap()
     }
 }
 
@@ -1029,6 +1171,42 @@ impl SseDecode for crate::api::UiJobStatus {
             6 => crate::api::UiJobStatus::Recoverable,
             7 => crate::api::UiJobStatus::Completed,
             _ => unreachable!("Invalid variant for UiJobStatus: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiLivePitchDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_sessionId = <String>::sse_decode(deserializer);
+        let mut var_epoch = <u64>::sse_decode(deserializer);
+        let mut var_revision = <u64>::sse_decode(deserializer);
+        let mut var_appliedRevision = <u64>::sse_decode(deserializer);
+        let mut var_semitones = <i32>::sse_decode(deserializer);
+        let mut var_preserveFormants = <bool>::sse_decode(deserializer);
+        return crate::api::UiLivePitchDto {
+            session_id: var_sessionId,
+            epoch: var_epoch,
+            revision: var_revision,
+            applied_revision: var_appliedRevision,
+            semitones: var_semitones,
+            preserve_formants: var_preserveFormants,
+        };
+    }
+}
+
+impl SseDecode for crate::api::UiPitchExportDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_sessionId = <String>::sse_decode(deserializer);
+        let mut var_epoch = <u64>::sse_decode(deserializer);
+        let mut var_semitones = <i32>::sse_decode(deserializer);
+        let mut var_preserveFormants = <bool>::sse_decode(deserializer);
+        return crate::api::UiPitchExportDto {
+            session_id: var_sessionId,
+            epoch: var_epoch,
+            semitones: var_semitones,
+            preserve_formants: var_preserveFormants,
         };
     }
 }
@@ -1148,23 +1326,26 @@ fn pde_ffi_dispatcher_primary_impl(
         3 => wire__crate__api__discard_job_impl(port, ptr, rust_vec_len, data_len),
         4 => wire__crate__api__get_engine_version_impl(port, ptr, rust_vec_len, data_len),
         5 => wire__crate__api__job_status_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__open_audio_session_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__pause_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__play_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__playback_status_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__projects_directory_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__recoverable_jobs_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__resume_job_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__seek_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__set_master_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__set_projects_directory_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__set_track_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__start_export_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__start_pitch_impl(port, ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__start_separation_impl(port, ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__stop_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__supported_stems_impl(port, ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__waveform_peaks_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__live_pitch_status_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__open_audio_session_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__pause_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__play_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__playback_status_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__projects_directory_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__recoverable_jobs_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__resume_job_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__seek_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__set_live_pitch_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__set_master_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__set_projects_directory_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__set_track_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__start_export_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__start_export_with_pitch_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__start_pitch_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__start_separation_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__stop_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__supported_stems_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__waveform_peaks_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1246,6 +1427,46 @@ impl flutter_rust_bridge::IntoDart for crate::api::UiJobStatus {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiJobStatus {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::UiJobStatus> for crate::api::UiJobStatus {
     fn into_into_dart(self) -> crate::api::UiJobStatus {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiLivePitchDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.session_id.into_into_dart().into_dart(),
+            self.epoch.into_into_dart().into_dart(),
+            self.revision.into_into_dart().into_dart(),
+            self.applied_revision.into_into_dart().into_dart(),
+            self.semitones.into_into_dart().into_dart(),
+            self.preserve_formants.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiLivePitchDto {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiLivePitchDto> for crate::api::UiLivePitchDto {
+    fn into_into_dart(self) -> crate::api::UiLivePitchDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::UiPitchExportDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.session_id.into_into_dart().into_dart(),
+            self.epoch.into_into_dart().into_dart(),
+            self.semitones.into_into_dart().into_dart(),
+            self.preserve_formants.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::UiPitchExportDto {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::UiPitchExportDto>
+    for crate::api::UiPitchExportDto
+{
+    fn into_into_dart(self) -> crate::api::UiPitchExportDto {
         self
     }
 }
@@ -1482,6 +1703,16 @@ impl SseEncode for Option<crate::api::UiJobFailure> {
     }
 }
 
+impl SseEncode for Option<crate::api::UiPitchExportDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::UiPitchExportDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::UiPlaybackFailure> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1513,6 +1744,13 @@ impl SseEncode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u32::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u64::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -1578,6 +1816,28 @@ impl SseEncode for crate::api::UiJobStatus {
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for crate::api::UiLivePitchDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.session_id, serializer);
+        <u64>::sse_encode(self.epoch, serializer);
+        <u64>::sse_encode(self.revision, serializer);
+        <u64>::sse_encode(self.applied_revision, serializer);
+        <i32>::sse_encode(self.semitones, serializer);
+        <bool>::sse_encode(self.preserve_formants, serializer);
+    }
+}
+
+impl SseEncode for crate::api::UiPitchExportDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.session_id, serializer);
+        <u64>::sse_encode(self.epoch, serializer);
+        <i32>::sse_encode(self.semitones, serializer);
+        <bool>::sse_encode(self.preserve_formants, serializer);
     }
 }
 

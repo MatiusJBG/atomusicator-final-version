@@ -3,373 +3,505 @@ part of 'studio_panels.dart';
 class StudioTransport extends ConsumerWidget {
   const StudioTransport({super.key});
   @override
+  Widget build(BuildContext context, WidgetRef ref) => LayoutBuilder(
+    builder: (context, box) {
+      final wide = box.maxWidth >= 1150;
+      return Container(
+        height: wide ? 184 : 222,
+        padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0E141B),
+          border: Border(top: BorderSide(color: Color(0xFF1A2531))),
+        ),
+        child:
+            wide
+                ? const Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 33, child: _DockPlayback()),
+                    SizedBox(width: 24),
+                    Expanded(flex: 34, child: _PitchDockPanel()),
+                    SizedBox(width: 16),
+                    Expanded(flex: 37, child: _DockMaster()),
+                  ],
+                )
+                : const Column(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Expanded(child: _DockPlayback()),
+                          SizedBox(width: 20),
+                          Expanded(child: _DockMaster()),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                    PitchControls(compact: true),
+                  ],
+                ),
+      );
+    },
+  );
+}
+
+class _DockPlayback extends ConsumerWidget {
+  const _DockPlayback();
+  @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
     final controller = ref.read(studioProvider.notifier);
     final enabled = state.session != null && !state.busy;
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.panel,
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final wide = box.maxWidth >= 1050;
-          final playback = SizedBox(
-            width: 320,
+    return Row(
+      children: [
+        SizedBox(
+          width: 68,
+          height: 68,
+          child: IconButton.filled(
+            tooltip: state.playing ? 'Pausar' : 'Reproducir',
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.seaGlass,
+              foregroundColor: const Color(0xFF04231F),
+            ),
+            onPressed:
+                enabled
+                    ? () =>
+                        controller.transport(state.playing ? 'pause' : 'play')
+                    : null,
+            icon: Icon(
+              state.playing ? Icons.pause : Icons.play_arrow,
+              size: 32,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        IconButton(
+          tooltip: 'Detener',
+          onPressed: enabled ? () => controller.transport('stop') : null,
+          icon: const Icon(Icons.stop_rounded, size: 20),
+        ),
+        IconButton(
+          tooltip: 'Ir al inicio',
+          onPressed: enabled ? () => controller.seek(0) : null,
+          icon: const Icon(Icons.restart_alt, size: 21),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            decoration: BoxDecoration(
+              color: AppColors.canvas,
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    formatStudioTime(state.position),
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
                 Text(
-                  state.playing ? '●  Playing' : '●  Playback',
+                  'de ${formatStudioTime(state.duration)}',
+                  style: const TextStyle(fontSize: 9, color: AppColors.muted),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  state.playing ? 'REPRODUCIENDO' : 'EN PAUSA',
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 7.2,
+                    letterSpacing: 1,
                     color: state.playing ? AppColors.seaGlass : AppColors.muted,
                   ),
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    IconButton.filled(
-                      tooltip: state.playing ? 'Pause' : 'Play',
-                      style: IconButton.styleFrom(
-                        backgroundColor: AppColors.seaGlass,
-                        foregroundColor: AppColors.canvas,
-                        fixedSize: const Size(46, 46),
-                      ),
-                      onPressed:
-                          enabled
-                              ? () => controller.transport(
-                                state.playing ? 'pause' : 'play',
-                              )
-                              : null,
-                      icon: Icon(
-                        state.playing ? Icons.pause : Icons.play_arrow,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Stop',
-                      onPressed:
-                          enabled ? () => controller.transport('stop') : null,
-                      icon: const Icon(Icons.stop_rounded, size: 19),
-                    ),
-                    IconButton(
-                      tooltip: 'Go to start',
-                      onPressed: enabled ? () => controller.seek(0) : null,
-                      icon: const Icon(Icons.first_page, size: 19),
-                    ),
-                    Expanded(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 9,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.canvas,
-                            border: Border.all(color: AppColors.line),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            '${formatStudioTime(state.position)} / ${formatStudioTime(state.duration)}',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontFeatures: [FontFeature.tabularFigures()],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
                 SizedBox(
-                  height: 22,
-                  width: 295,
-                  child: Slider(
-                    value: state.position.clamp(0, state.duration),
-                    max: state.duration > 0 ? state.duration : 1,
-                    semanticFormatterCallback:
-                        (v) => 'Position ${formatStudioTime(v)}',
-                    onChanged: enabled ? controller.seek : null,
+                  height: 15,
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      overlayShape: SliderComponentShape.noOverlay,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 2,
+                      ),
+                    ),
+                    child: Slider(
+                      value: state.position.clamp(0, state.duration),
+                      max: state.duration > 0 ? state.duration : 1,
+                      semanticFormatterCallback:
+                          (v) => 'Posición ${formatStudioTime(v)}',
+                      onChanged: enabled ? controller.seek : null,
+                    ),
                   ),
                 ),
               ],
             ),
-          );
-          final master = SizedBox(
-            width: 330,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Master',
-                      style: TextStyle(fontSize: 10, color: AppColors.muted),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PitchDockPanel extends StatelessWidget {
+  const _PitchDockPanel();
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: AppColors.panel,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFF22302F)),
+    ),
+    child: const PitchControls(),
+  );
+}
+
+class _DockMaster extends ConsumerWidget {
+  const _DockMaster();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(studioProvider);
+    final enabled = state.session != null && !state.busy;
+    return Row(
+      children: [
+        SizedBox(
+          width: 70,
+          child: Column(
+            children: [
+              const Text(
+                'MASTER',
+                style: TextStyle(
+                  fontSize: 7.5,
+                  letterSpacing: .8,
+                  color: AppColors.muted,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: Semantics(
+                  label: 'Nivel de salida master',
+                  value: '${state.peak}',
+                  child: SizedBox(
+                    width: 46,
+                    child: CustomPaint(
+                      painter: _MasterMeterPainter(state.peak),
                     ),
-                    const Spacer(),
-                    if (state.session != null)
-                      Text(
-                        state.busy ? 'Processing…' : '✓  Stems ready',
+                  ),
+                ),
+              ),
+              SizedBox(
+                height: 20,
+                child: SliderTheme(
+                  data: SliderTheme.of(
+                    context,
+                  ).copyWith(overlayShape: SliderComponentShape.noOverlay),
+                  child: Slider(
+                    value: state.master.clamp(0, 2),
+                    max: 2,
+                    semanticFormatterCallback:
+                        (v) => 'Ganancia master ${v.toStringAsFixed(2)}',
+                    onChanged:
+                        enabled
+                            ? ref.read(studioProvider.notifier).setMaster
+                            : null,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.seaGlass.withValues(alpha: .08),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: AppColors.seaGlass.withValues(alpha: .18),
+                        ),
+                      ),
+                      child: Text(
+                        state.busy ? 'Procesando…' : '✓ Separación lista',
                         style: const TextStyle(
                           fontSize: 10,
                           color: AppColors.seaGlass,
                         ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 100,
-                      child: Column(
-                        children: [
-                          LinearProgressIndicator(
-                            value: state.peak.clamp(0, 1),
-                            minHeight: 7,
-                            semanticsLabel: 'Master audio level',
-                            color:
-                                state.peak > 1
-                                    ? AppColors.coral
-                                    : AppColors.seaGlass,
-                            backgroundColor: AppColors.line,
-                          ),
-                          SizedBox(
-                            height: 27,
-                            child: Slider(
-                              value: state.master,
-                              max: 2,
-                              semanticFormatterCallback:
-                                  (v) => 'Master gain ${v.toStringAsFixed(2)}',
-                              onChanged: enabled ? controller.setMaster : null,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                    const Spacer(),
-                    Tooltip(
-                      message: 'Export stems',
-                      child: FilledButton.icon(
-                        onPressed:
-                            enabled
-                                ? () => showDialog<void>(
-                                  context: context,
-                                  builder: (_) => const ExportDialog(),
-                                )
-                                : null,
-                        icon: const Icon(
-                          Icons.file_download_outlined,
-                          size: 17,
-                        ),
-                        label: const Text('Export stems'),
-                      ),
+                  ),
+                  IconButton(
+                    tooltip: 'Abrir carpeta de la sesión',
+                    onPressed:
+                        enabled
+                            ? () => openStudioFolder(
+                              context,
+                              state.session!.directory,
+                            )
+                            : null,
+                    icon: const Icon(Icons.folder_open_outlined, size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 56,
+                child: FilledButton.icon(
+                  onPressed:
+                      enabled
+                          ? () => showDialog<void>(
+                            context: context,
+                            builder: (_) => const ExportDialog(),
+                          )
+                          : null,
+                  icon: const Icon(Icons.file_download_outlined, size: 20),
+                  label: const Text(
+                    'Exportar stems',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ],
+                  ),
                 ),
-              ],
-            ),
-          );
-          if (wide) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                playback,
-                const SizedBox(height: 88, child: VerticalDivider(width: 25)),
-                const Expanded(child: PitchControls()),
-                const SizedBox(height: 88, child: VerticalDivider(width: 25)),
-                master,
-              ],
-            );
-          }
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(children: [playback, const Spacer(), master]),
-              const Divider(height: 10),
-              const PitchControls(compact: true),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class PitchControls extends ConsumerStatefulWidget {
-  const PitchControls({super.key, this.compact = false});
-  final bool compact;
-  @override
-  ConsumerState<PitchControls> createState() => _PitchControlsState();
-}
-
-class _PitchControlsState extends ConsumerState<PitchControls> {
-  double semitones = 0;
-  bool formants = true;
-  bool applying = false;
-  @override
-  void initState() {
-    super.initState();
-    semitones =
-        ref.read(studioProvider).session?.pitchSemitones.toDouble() ?? 0;
-    ref.listenManual(studioProvider.select((s) => s.busy), (previous, next) {
-      if (previous == true && !next && mounted) {
-        setState(() => applying = false);
-      }
-    });
-    ref.listenManual(
-      studioProvider.select((s) => (s.session?.id, s.session?.pitchSemitones)),
-      (previous, next) {
-        if (mounted && next != previous) {
-          setState(() => semitones = next.$2?.toDouble() ?? 0);
-        }
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(studioProvider);
-    final enabled = state.session != null && !state.busy;
-    final processing = applying && state.busy;
-    final progress = state.job?.progress.clamp(0.0, 1.0) ?? 0;
-    final controls = Row(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.canvas,
-            border: Border.all(color: AppColors.line),
-            borderRadius: BorderRadius.circular(5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Lower pitch',
-                visualDensity: VisualDensity.compact,
-                onPressed:
-                    enabled && semitones > -12
-                        ? () => setState(() => semitones--)
-                        : null,
-                icon: const Icon(Icons.remove, size: 14),
-              ),
-              Text(
-                'Pitch: ${semitones > 0 ? '+' : ''}${semitones.round()} st',
-                style: const TextStyle(fontSize: 11),
-              ),
-              IconButton(
-                tooltip: 'Raise pitch',
-                visualDensity: VisualDensity.compact,
-                onPressed:
-                    enabled && semitones < 12
-                        ? () => setState(() => semitones++)
-                        : null,
-                icon: const Icon(Icons.add, size: 14),
               ),
             ],
-          ),
-        ),
-        const Spacer(),
-        SizedBox(
-          height: 28,
-          child: Transform.scale(
-            scale: .7,
-            child: Switch(
-              value: formants,
-              onChanged: enabled ? (v) => setState(() => formants = v) : null,
-            ),
-          ),
-        ),
-        const Text(
-          'Formants',
-          style: TextStyle(fontSize: 10, color: AppColors.muted),
-        ),
-        const Spacer(),
-        OutlinedButton.icon(
-          onPressed:
-              enabled
-                  ? () {
-                    setState(() => applying = true);
-                    ref
-                        .read(studioProvider.notifier)
-                        .applyPitch(semitones.round(), formants);
-                  }
-                  : null,
-          icon: Icon(processing ? Icons.hourglass_top : Icons.check, size: 16),
-          label: Text(
-            processing
-                ? 'Applying… ${(progress * 100).round()}%'
-                : 'Apply pitch',
           ),
         ),
       ],
     );
-    return Column(
+  }
+}
+
+class _MasterMeterPainter extends CustomPainter {
+  _MasterMeterPainter(this.peak);
+  final double peak;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final normalized = peak.isFinite ? peak.clamp(0.0, 1.0) : 0.0;
+    for (var i = 0; i < 22; i++) {
+      final y = size.height - (i + 1) * size.height / 22;
+      final color =
+          i > 19
+              ? AppColors.coral
+              : i > 16
+              ? AppColors.amber
+              : const Color(0xFF22C55E);
+      final paint =
+          Paint()
+            ..color =
+                i / 22 < normalized ? color : color.withValues(alpha: .10);
+      canvas.drawRect(Rect.fromLTWH(12, y, 9, size.height / 22 - 2), paint);
+      canvas.drawRect(Rect.fromLTWH(24, y, 9, size.height / 22 - 2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_MasterMeterPainter old) => old.peak != peak;
+}
+
+class PitchControls extends ConsumerWidget {
+  const PitchControls({super.key, this.compact = false});
+  final bool compact;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(studioProvider);
+    final semitones = state.requestedPitch;
+    final formants = state.requestedFormants;
+    final enabled =
+        state.session != null && state.livePitch != null && !state.busy;
+    final pitch = Container(
+      decoration: BoxDecoration(
+        color: AppColors.canvas,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Bajar tono',
+            onPressed:
+                enabled && semitones > -12
+                    ? () => ref
+                        .read(studioProvider.notifier)
+                        .applyPitch(semitones - 1, formants)
+                    : null,
+            icon: const Icon(Icons.remove, size: 15),
+          ),
+          Text(
+            '${semitones > 0 ? "+" : ""}$semitones st',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Subir tono',
+            onPressed:
+                enabled && semitones < 12
+                    ? () => ref
+                        .read(studioProvider.notifier)
+                        .applyPitch(semitones + 1, formants)
+                    : null,
+            icon: const Icon(Icons.add, size: 15),
+          ),
+        ],
+      ),
+    );
+    final formant = Row(
       mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 28,
+          child: Transform.scale(
+            scale: .65,
+            child: Switch(
+              value: formants,
+              onChanged:
+                  enabled
+                      ? (v) => ref
+                          .read(studioProvider.notifier)
+                          .applyPitch(semitones, v)
+                      : null,
+            ),
+          ),
+        ),
+        Text(
+          formants ? 'Activo' : 'Inactivo',
+          style: const TextStyle(fontSize: 9, color: AppColors.seaGlass),
+        ),
+        IconButton(
+          tooltip: 'Restablecer tono',
+          onPressed:
+              enabled
+                  ? () =>
+                      ref.read(studioProvider.notifier).applyPitch(0, formants)
+                  : null,
+          icon: const Icon(Icons.restart_alt, size: 15),
+        ),
+      ],
+    );
+    if (compact) {
+      return Wrap(
+        spacing: 14,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          const Text(
+            'PITCHER',
+            style: TextStyle(fontSize: 9, color: AppColors.muted),
+          ),
+          pitch,
+          const Text(
+            'FORMANTE',
+            style: TextStyle(fontSize: 8, color: AppColors.muted),
+          ),
+          formant,
+        ],
+      );
+    }
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!widget.compact) ...[
-          const Row(
-            children: [
-              Icon(Icons.tune, size: 16),
-              SizedBox(width: 6),
-              Text(
-                'Pitch',
-                style: TextStyle(fontSize: 11, color: AppColors.muted),
+        const Row(
+          children: [
+            Icon(Icons.tune, size: 14, color: AppColors.seaGlass),
+            SizedBox(width: 8),
+            Text(
+              'PITCHER',
+              style: TextStyle(fontSize: 9.4, fontWeight: FontWeight.w600),
+            ),
+            Spacer(),
+            Text(
+              'En vivo',
+              style: TextStyle(fontSize: 8, color: AppColors.seaGlass),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'Corrección de tono · todas las pistas',
+          style: TextStyle(fontSize: 8.6, color: AppColors.muted),
+        ),
+        const Spacer(),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'PITCH',
+                    style: TextStyle(fontSize: 7.2, color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 5),
+                  pitch,
+                ],
               ),
-              Spacer(),
-              Text(
-                'All tracks · Original tempo',
-                style: TextStyle(fontSize: 9, color: AppColors.muted),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'FORMANTE',
+                  style: TextStyle(fontSize: 7.2, color: AppColors.muted),
+                ),
+                const SizedBox(height: 5),
+                formant,
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        SizedBox(
+          height: 20,
+          child: Row(
+            children: [
+              const Text(
+                '−12 st',
+                style: TextStyle(fontSize: 8, color: AppColors.muted),
+              ),
+              Expanded(
+                child: Slider(
+                  value: semitones.toDouble(),
+                  min: -12,
+                  max: 12,
+                  divisions: 24,
+                  semanticFormatterCallback:
+                      (v) => 'Tono ${v.round()} semitonos',
+                  onChanged:
+                      enabled
+                          ? (v) => ref
+                              .read(studioProvider.notifier)
+                              .applyPitch(v.round(), formants)
+                          : null,
+                ),
+              ),
+              const Text(
+                '+12 st',
+                style: TextStyle(fontSize: 8, color: AppColors.muted),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-        ],
-        controls,
-        if (!widget.compact)
-          SizedBox(
-            height: 26,
-            child: Row(
-              children: [
-                const Text(
-                  '−12',
-                  style: TextStyle(fontSize: 9, color: AppColors.muted),
-                ),
-                Expanded(
-                  child: Slider(
-                    value: semitones,
-                    min: -12,
-                    max: 12,
-                    divisions: 24,
-                    semanticFormatterCallback:
-                        (v) => 'Pitch ${v.round()} semitones',
-                    onChanged:
-                        enabled ? (v) => setState(() => semitones = v) : null,
-                  ),
-                ),
-                const Text(
-                  '+12 st',
-                  style: TextStyle(fontSize: 9, color: AppColors.muted),
-                ),
-              ],
-            ),
-          ),
-        if (processing) ...[
-          const SizedBox(height: 6),
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 6),
-          const Text(
-            'Preserving original stems.',
-            style: TextStyle(fontSize: 10, color: AppColors.muted),
-          ),
-        ],
+        ),
       ],
     );
   }
@@ -379,12 +511,12 @@ class PitchDialog extends StatelessWidget {
   const PitchDialog({super.key});
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Apply pitch'),
-    content: const SizedBox(width: 570, child: PitchControls()),
+    title: const Text('Tono en vivo'),
+    content: const SizedBox(width: 570, height: 150, child: PitchControls()),
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Close'),
+        child: const Text('Cerrar'),
       ),
     ],
   );

@@ -204,8 +204,12 @@ fn bounded_real_models_match_the_frozen_memory_pipeline() {
         .unwrap();
     writer.write(audio.samples()).unwrap();
     let source = writer.finish().unwrap();
+    // Compare the compact one-session path with the frozen two-session baseline.
+    drop(pool);
+    let compact_pool = Arc::new(OrtSessionPool::new(2).unwrap());
+    compact_pool.trim_idle_and_resize(1).unwrap();
     let bounded = BoundedSeparation::new(
-        MdxInference::with_session_pool(models, None, pool).unwrap(),
+        MdxInference::with_session_pool(models, None, compact_pool).unwrap(),
         Progress,
         StftSpectralBleedGate::new(2048, 0.05, 0.25).unwrap(),
         store,

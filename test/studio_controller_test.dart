@@ -25,6 +25,126 @@ void main() {
     );
   });
   tearDown(() => container.dispose());
+  test(
+    'export freezes the displayed pitch even before queued live updates finish',
+    () async {
+      final controller = container.read(studioProvider.notifier);
+      await controller.open('/session');
+      final pending = Completer<UiLivePitchDto>();
+      gateway.pendingPitch = (_, _) => pending.future;
+      final update = controller.applyPitch(7, false);
+      final export = controller.export(
+        '/exports',
+        ['bass'],
+        'wav',
+        44100,
+        2,
+        24,
+        false,
+      );
+      controller.applyPitch(-3, true);
+      await export;
+      expect(gateway.calls, contains('export-pitch:7:false'));
+      gateway.pendingPitch = null;
+      pending.complete(
+        UiLivePitchDto(
+          sessionId: 'session',
+          epoch: BigInt.one,
+          revision: BigInt.one,
+          appliedRevision: BigInt.zero,
+          semitones: 7,
+          preserveFormants: false,
+        ),
+      );
+      await update;
+      expect(container.read(studioProvider).requestedPitch, -3);
+    },
+  );
+  test(
+    'live pitch coalesces rapid changes without owning a background job',
+    () async {
+      final controller = container.read(studioProvider.notifier);
+      await controller.open('/session');
+      final first = Completer<UiLivePitchDto>();
+      var calls = 0;
+      gateway.pendingPitch = (semitones, formants) {
+        if (calls++ == 0) return first.future;
+        return Future.value(
+          UiLivePitchDto(
+            sessionId: 'session',
+            epoch: BigInt.one,
+            revision: BigInt.two,
+            appliedRevision: BigInt.one,
+            semitones: semitones,
+            preserveFormants: formants,
+          ),
+        );
+      };
+      final complete = controller.applyPitch(1, true);
+      controller.applyPitch(2, true);
+      controller.applyPitch(3, false);
+      expect(container.read(studioProvider).requestedPitch, 3);
+      expect(container.read(studioProvider).busy, isFalse);
+      first.complete(
+        UiLivePitchDto(
+          sessionId: 'session',
+          epoch: BigInt.one,
+          revision: BigInt.one,
+          appliedRevision: BigInt.zero,
+          semitones: 1,
+          preserveFormants: true,
+        ),
+      );
+      await complete;
+      expect(gateway.calls.where((v) => v.startsWith('live-pitch:')).toList(), [
+        'live-pitch:1:true',
+        'live-pitch:3:false',
+      ]);
+      expect(container.read(studioProvider).requestedPitch, 3);
+      expect(container.read(studioProvider).livePitch?.semitones, 3);
+      expect(container.read(studioProvider).job, isNull);
+    },
+  );
+  test(
+    'an old live pitch acknowledgment cannot change a reopened session',
+    () async {
+      final controller = container.read(studioProvider.notifier);
+      await controller.open('/session');
+      final stale = Completer<UiLivePitchDto>();
+      gateway.pendingPitch = (_, _) => stale.future;
+      final update = controller.applyPitch(7, true);
+      await controller.open('/session');
+      stale.complete(
+        UiLivePitchDto(
+          sessionId: 'session',
+          epoch: BigInt.one,
+          revision: BigInt.one,
+          appliedRevision: BigInt.one,
+          semitones: 7,
+          preserveFormants: true,
+        ),
+      );
+      await update;
+      expect(container.read(studioProvider).requestedPitch, 0);
+      expect(container.read(studioProvider).livePitch?.semitones, 0);
+    },
+  );
+  test(
+    'live pitch remains available during export and rolls back rejected settings',
+    () async {
+      final controller = container.read(studioProvider.notifier);
+      await controller.open('/session');
+      await controller.export('/exports', ['bass'], 'wav', 44100, 2, 24, false);
+      expect(container.read(studioProvider).busy, isTrue);
+      await controller.applyPitch(4, true);
+      expect(container.read(studioProvider).requestedPitch, 4);
+      expect(container.read(studioProvider).busy, isTrue);
+      gateway.fail = true;
+      await controller.applyPitch(30, false);
+      expect(container.read(studioProvider).requestedPitch, 4);
+      expect(container.read(studioProvider).error, isNotNull);
+    },
+  );
   test('late waveform detail cannot replace a reopened session', () async {
     final controller = container.read(studioProvider.notifier);
     await controller.open('/session');

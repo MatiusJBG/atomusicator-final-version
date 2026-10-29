@@ -82,7 +82,7 @@ void main() {
   ) async {
     FilePicker.platform = AudioPicker();
     await mount(tester, (container) async {
-      await tester.tap(find.text('Import audio'));
+      await tester.tap(find.text('Importar audio'));
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(container.read(workbenchProvider).selectedSource?.path, flacPath);
@@ -101,7 +101,7 @@ void main() {
         ),
       ]);
       await tester.pump();
-      final point = tester.getCenter(find.text('Import audio'));
+      final point = tester.getCenter(find.text('Cambiar audio'));
       const codec = StandardMethodCodec();
       Future<void> send(String method, Object args) async {
         await tester.binding.defaultBinaryMessenger.handlePlatformMessage(

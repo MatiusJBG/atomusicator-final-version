@@ -29,7 +29,7 @@ void main() {
             .value,
         1.0,
       );
-      expect(find.byTooltip('Bass level: clipping'), findsOneWidget);
+      expect(find.byTooltip('Bajo level: clipping'), findsOneWidget);
       await show(0);
       expect(
         tester

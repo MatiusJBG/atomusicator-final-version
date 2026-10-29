@@ -15,21 +15,21 @@ class StudioTracks extends ConsumerWidget {
           child: Row(
             children: [
               const Text(
-                'DAW mixer',
-                style: TextStyle(fontWeight: FontWeight.w600),
+                'MEZCLADOR',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
               ),
               const SizedBox(width: 12),
-              _Badge('${tracks.length} STEMS'),
+              _Badge('${tracks.length} stems sincronizados'),
               if (muted > 0) ...[
                 const SizedBox(width: 12),
                 Text(
-                  '$muted muted',
+                  '$muted silenciadas',
                   style: const TextStyle(fontSize: 11, color: AppColors.muted),
                 ),
               ],
               const Spacer(),
               IconButton(
-                tooltip: 'Zoom out',
+                tooltip: 'Alejar',
                 icon: const Icon(Icons.zoom_out, size: 18),
                 onPressed:
                     zoom > 1
@@ -42,7 +42,7 @@ class StudioTracks extends ConsumerWidget {
                 value: zoom,
                 underline: const SizedBox.shrink(),
                 style: const TextStyle(
-                  fontFamily: 'monospace',
+                  fontFamily: 'Inter',
                   fontSize: 11,
                   color: AppColors.text,
                 ),
@@ -60,7 +60,7 @@ class StudioTracks extends ConsumerWidget {
                 },
               ),
               IconButton(
-                tooltip: 'Zoom in',
+                tooltip: 'Acercar',
                 icon: const Icon(Icons.zoom_in, size: 18),
                 onPressed:
                     zoom < 4
@@ -75,15 +75,12 @@ class StudioTracks extends ConsumerWidget {
         Expanded(
           child: Container(
             clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              border: Border.all(color: AppColors.line),
-              borderRadius: BorderRadius.circular(5),
-            ),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
             child: LayoutBuilder(
               builder: (context, box) {
-                final controlWidth = box.maxWidth < 900 ? 240.0 : 298.0;
+                final controlWidth = box.maxWidth < 1050 ? 300.0 : 436.0;
                 final rowHeight = math.max(
-                  94.0,
+                  106.0 * ref.watch(studioDensityProvider),
                   (box.maxHeight - 32) / tracks.length,
                 );
                 // A single vertical scroller keeps controls and waveforms sample aligned.
@@ -107,7 +104,7 @@ class StudioTracks extends ConsumerWidget {
                                 child: const Row(
                                   children: [
                                     Text(
-                                      'TRACK / MIX',
+                                      'PISTAS',
                                       style: TextStyle(
                                         fontSize: 9,
                                         color: AppColors.muted,
@@ -115,7 +112,7 @@ class StudioTracks extends ConsumerWidget {
                                     ),
                                     Spacer(),
                                     Text(
-                                      'PEAK',
+                                      'VU',
                                       style: TextStyle(
                                         fontSize: 9,
                                         color: AppColors.muted,
@@ -151,9 +148,12 @@ class StudioTracks extends ConsumerWidget {
                                     height: 32,
                                     width: double.infinity,
                                     child: CustomPaint(
-                                      painter: TimelineRulerPainter(
-                                        state.duration,
-                                      ),
+                                      painter:
+                                          ref.watch(studioGridProvider)
+                                              ? TimelineRulerPainter(
+                                                state.duration,
+                                              )
+                                              : null,
                                     ),
                                   ),
                                   for (final track in tracks)
@@ -210,12 +210,15 @@ class _TrackControls extends ConsumerWidget {
     final mix = state.tracks[track.stemType] ?? const MixTrackState();
     final name = stemNames[track.stemType] ?? track.stemType;
     final color = stemColor(track.stemType);
+    final peak = state.trackPeaks[track.stemType] ?? 0;
     final enabled = !state.busy;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 7, 12, 5),
-      decoration: const BoxDecoration(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 14, 6),
+      decoration: BoxDecoration(
         color: AppColors.panel,
-        border: Border(top: BorderSide(color: AppColors.line)),
+        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+        border: Border(left: BorderSide(color: color, width: 3)),
       ),
       child: Column(
         children: [
@@ -223,30 +226,41 @@ class _TrackControls extends ConsumerWidget {
             children: [
               Text(
                 (index + 1).toString().padLeft(2, '0'),
-                style: const TextStyle(fontSize: 9, color: AppColors.muted),
+                style: const TextStyle(fontSize: 9.6, color: AppColors.muted),
               ),
-              const SizedBox(width: 8),
-              Icon(stemIcon(track.stemType), color: color, size: 17),
-              const SizedBox(width: 8),
+              const SizedBox(width: 14),
+              Icon(stemIcon(track.stemType), color: color, size: 21),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   name,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
             ],
           ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 53, top: 2),
+              child: Text(
+                '${track.channels == 1 ? "Mono" : "Estéreo"} · ${(track.sampleRate / 1000).toStringAsFixed(track.sampleRate % 1000 == 0 ? 0 : 1)} kHz',
+                style: const TextStyle(fontSize: 8.6, color: AppColors.muted),
+              ),
+            ),
+          ),
           const SizedBox(height: 4),
           Expanded(
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 _MixToggle(
                   label: 'M',
-                  tooltip: 'Mute $name',
+                  tooltip: 'Silenciar $name',
                   selected: mix.mute,
                   onTap:
                       enabled
@@ -256,7 +270,7 @@ class _TrackControls extends ConsumerWidget {
                           )
                           : null,
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 _MixToggle(
                   label: 'S',
                   tooltip: 'Solo $name',
@@ -269,30 +283,35 @@ class _TrackControls extends ConsumerWidget {
                           )
                           : null,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 10),
                 SizedBox(
-                  width: 46,
+                  width: 48,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.surround_sound_outlined, size: 17),
+                      const Text(
+                        'PAN',
+                        style: TextStyle(
+                          fontSize: 7.8,
+                          height: 1,
+                          color: AppColors.muted,
+                        ),
+                      ),
                       SizedBox(
-                        height: 20,
+                        height: 19,
                         child: SliderTheme(
                           data: SliderTheme.of(context).copyWith(
-                            trackHeight: 1,
+                            overlayShape: SliderComponentShape.noOverlay,
                             thumbShape: const RoundSliderThumbShape(
                               enabledThumbRadius: 3,
                             ),
-                            overlayShape: SliderComponentShape.noOverlay,
                           ),
                           child: Slider(
                             value: mix.pan.clamp(-1, 1),
                             min: -1,
                             max: 1,
                             semanticFormatterCallback:
-                                (value) =>
-                                    '$name pan ${value.toStringAsFixed(2)}',
+                                (v) => '$name paneo ${v.toStringAsFixed(2)}',
                             onChanged:
                                 enabled
                                     ? (v) => controller.setTrack(
@@ -303,26 +322,58 @@ class _TrackControls extends ConsumerWidget {
                           ),
                         ),
                       ),
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'L',
+                            style: TextStyle(
+                              fontSize: 7,
+                              height: 1,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                          Text(
+                            'R',
+                            style: TextStyle(
+                              fontSize: 7,
+                              height: 1,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: color,
-                          overlayShape: SliderComponentShape.noOverlay,
+                      Text(
+                        'VOL  ${mix.gainDb.toStringAsFixed(1)} dB',
+                        style: const TextStyle(
+                          fontSize: 8,
+                          height: 1,
+                          color: AppColors.muted,
                         ),
-                        child: SizedBox(
-                          height: 22,
+                      ),
+                      SizedBox(
+                        height: 22,
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: color,
+                            overlayShape: SliderComponentShape.noOverlay,
+                          ),
                           child: Slider(
                             value: mix.gainDb.clamp(-60, 12),
                             min: -60,
                             max: 12,
                             semanticFormatterCallback:
-                                (v) => '$name gain ${v.toStringAsFixed(1)} dB',
+                                (v) =>
+                                    '$name ganancia ${v.toStringAsFixed(1)} dB',
                             onChanged:
                                 enabled
                                     ? (v) => controller.setTrack(
@@ -333,22 +384,27 @@ class _TrackControls extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      Text(
-                        '${mix.gainDb.toStringAsFixed(1)} dB',
-                        style: const TextStyle(
-                          fontSize: 9,
-                          color: AppColors.muted,
-                        ),
-                      ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 14),
                 SizedBox(
-                  width: 38,
-                  child: TrackLevelMeter(
-                    stemType: track.stemType,
-                    peak: state.trackPeaks[track.stemType] ?? 0,
+                  width: 68,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'VU  ${peak > 0 ? (20 * math.log(peak) / math.ln10).toStringAsFixed(1) : "−∞"} dB',
+                        style: const TextStyle(
+                          fontSize: 8,
+                          height: 1,
+                          color: AppColors.muted,
+                        ),
+                      ),
+                      const SizedBox(height: 9),
+                      TrackLevelMeter(stemType: track.stemType, peak: peak),
+                    ],
                   ),
                 ),
               ],
@@ -445,39 +501,47 @@ class _TrackWave extends ConsumerWidget {
                               state.duration,
                         )
                     : null,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .035),
-                border: Border(
-                  top: BorderSide(color: color.withValues(alpha: .6)),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F161E),
+                  borderRadius: const BorderRadius.horizontal(
+                    right: Radius.circular(12),
+                  ),
+                  border: Border(
+                    top: const BorderSide(color: Color(0xFF1A2531)),
+                  ),
                 ),
-              ),
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: WaveformPainter(
-                        peaks: peaks,
-                        color: color.withValues(alpha: audible ? .9 : .24),
-                        progress:
-                            state.duration > 0
-                                ? state.position / state.duration
-                                : 0,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: WaveformPainter(
+                          peaks: peaks,
+                          color: color.withValues(alpha: audible ? .9 : .24),
+                          progress:
+                              state.duration > 0
+                                  ? state.position / state.duration
+                                  : 0,
+                          showGrid: ref.watch(studioGridProvider),
+                        ),
                       ),
                     ),
-                  ),
-                  Positioned(
-                    left: 9,
-                    top: 4,
-                    child: Text(
-                      track.filePath.split(RegExp(r'[/\\]')).last,
-                      style: TextStyle(
-                        fontSize: 8,
-                        color: color.withValues(alpha: .65),
+                    Positioned(
+                      left: 9,
+                      top: 4,
+                      child: Text(
+                        track.filePath.split(RegExp(r'[/\\]')).last,
+                        style: TextStyle(
+                          fontSize: 8,
+                          height: 1,
+                          color: color.withValues(alpha: .65),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -492,12 +556,35 @@ class TimelineRulerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = AppColors.panel);
     final text = TextPainter(textDirection: TextDirection.ltr);
-    for (var i = 0; i <= 8; i++) {
-      final x = size.width * i / 8;
+    final safeDuration = duration.isFinite && duration > 0 ? duration : 0.0;
+    final desiredStep = safeDuration / 7;
+    final step =
+        [
+          1.0,
+          2.0,
+          5.0,
+          10.0,
+          15.0,
+          30.0,
+          60.0,
+          120.0,
+          300.0,
+          600.0,
+          1800.0,
+          3600.0,
+        ].where((value) => value >= desiredStep).firstOrNull ??
+        (desiredStep / 3600).ceil() * 3600.0;
+    final ticks = [
+      for (var time = 0.0; time < safeDuration; time += step) time,
+      safeDuration,
+    ];
+    for (final time in ticks) {
+      final x = safeDuration > 0 ? size.width * time / safeDuration : 0.0;
       text.text = TextSpan(
-        text: formatStudioTime(duration * i / 8),
+        text:
+            '${time.floor() ~/ 60}:${(time.floor() % 60).toString().padLeft(2, '0')}',
         style: const TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: 'Inter',
           fontSize: 9,
           color: AppColors.muted,
         ),
@@ -524,22 +611,26 @@ class WaveformPainter extends CustomPainter {
     required this.peaks,
     required this.color,
     required this.progress,
+    this.showGrid = true,
   });
   final List<double> peaks;
   final Color color;
   final double progress;
+  final bool showGrid;
   @override
   void paint(Canvas canvas, Size size) {
     final grid = Paint()..color = AppColors.line.withValues(alpha: .55);
-    for (var i = 0; i <= 16; i++) {
+    for (var i = 0; showGrid && i <= 16; i++) {
       final x = size.width * i / 16;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
     }
-    canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
-      grid,
-    );
+    if (showGrid) {
+      canvas.drawLine(
+        Offset(0, size.height / 2),
+        Offset(size.width, size.height / 2),
+        grid,
+      );
+    }
     final count = peaks.length ~/ 2;
     final path = Path();
     // Peaks are combined min/max buckets from the engine, not separate stereo channels.
@@ -582,5 +673,8 @@ class WaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(WaveformPainter old) =>
-      old.peaks != peaks || old.progress != progress || old.color != color;
+      old.peaks != peaks ||
+      old.progress != progress ||
+      old.color != color ||
+      old.showGrid != showGrid;
 }

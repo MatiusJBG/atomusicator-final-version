@@ -4,6 +4,37 @@ import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:atomusicator/src/rust_bridge/api.dart';
 
 class FakeStudio implements StudioGateway {
+  int liveSemitones = 0;
+  bool liveFormants = true;
+  BigInt liveRevision = BigInt.zero;
+  Future<UiLivePitchDto> Function(int semitones, bool formants)? pendingPitch;
+  UiLivePitchDto get pitchStatus => UiLivePitchDto(
+    sessionId: session.id,
+    epoch: BigInt.one,
+    revision: liveRevision,
+    appliedRevision: liveRevision,
+    semitones: liveSemitones,
+    preserveFormants: liveFormants,
+  );
+  @override
+  Future<UiLivePitchDto> livePitchStatus() async => pitchStatus;
+  @override
+  Future<UiLivePitchDto> livePitch(
+    String sessionId,
+    BigInt epoch,
+    BigInt revision,
+    int semitones,
+    bool formants,
+  ) async {
+    calls.add('live-pitch:$semitones:$formants');
+    if (pendingPitch != null) return pendingPitch!(semitones, formants);
+    if (fail) throw StateError(failureMessage);
+    liveSemitones = semitones;
+    liveFormants = formants;
+    liveRevision = revision;
+    return pitchStatus;
+  }
+
   final waveformResolutions = <int>[];
   Future<List<double>> Function()? pendingWaveform;
   @override
@@ -88,8 +119,12 @@ class FakeStudio implements StudioGateway {
     int rate,
     int channels,
     int bits,
-    bool normalize,
-  ) async {
+    bool normalize, {
+    UiPitchExportDto? pitch,
+  }) async {
+    if (pitch != null) {
+      calls.add('export-pitch:${pitch.semitones}:${pitch.preserveFormants}');
+    }
     calls.add(
       'export:${stems.join(',')}:$format:$rate:$channels:$bits:$normalize',
     );

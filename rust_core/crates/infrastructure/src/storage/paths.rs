@@ -66,6 +66,11 @@ impl WorkspacePathPolicy {
         {
             return legacy_projects;
         }
+        self.native_projects_dir()
+    }
+
+    /// App-owned fallback, independent of historical folders and their permissions.
+    pub fn native_projects_dir(&self) -> PathBuf {
         self.app_data_root.join("projects")
     }
 
