@@ -3,6 +3,70 @@ use std::path::Path;
 use atomusicator_infrastructure::onnx::{ExecutionProviderKind, OnnxSessionRunner, OrtSessionPool};
 
 #[test]
+fn playback_limits_thread_budget_without_changing_requested_profile() {
+    use atomusicator_application::compute_policy::ComputeProfile;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let playing = Arc::new(AtomicBool::new(false));
+    let probe = playing.clone();
+    let pool = OrtSessionPool::with_compute_profile(1, ComputeProfile::Throughput)
+        .unwrap()
+        .with_playback_probe(Arc::new(move || probe.load(Ordering::Acquire)));
+    let requested = pool.intra_threads();
+    assert_eq!(pool.effective_intra_threads(), requested);
+    playing.store(true, Ordering::Release);
+    assert!(pool.effective_intra_threads() <= 6);
+    assert!(pool.effective_intra_threads() <= requested);
+    assert_eq!(pool.intra_threads(), requested);
+    playing.store(false, Ordering::Release);
+    assert_eq!(pool.effective_intra_threads(), requested);
+}
+
+#[test]
+#[ignore = "requires locally cached ONNX model"]
+fn playback_thread_change_rebuilds_real_session_and_preserves_capacity() {
+    use atomusicator_application::compute_policy::ComputeProfile;
+    use atomusicator_infrastructure::{
+        models::manifest_manager::ManifestModelManager, storage::paths::WorkspacePathPolicy,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let policy = WorkspacePathPolicy::system_default().unwrap();
+    let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).unwrap();
+    let model = policy
+        .model_candidates(&manager.manifest().models[0].filename)
+        .unwrap()
+        .into_iter()
+        .find(|path| path.is_file())
+        .expect("cached model required");
+    let playing = Arc::new(AtomicBool::new(false));
+    let probe = playing.clone();
+    let pool = OrtSessionPool::with_compute_profile(1, ComputeProfile::Throughput)
+        .unwrap()
+        .with_playback_probe(Arc::new(move || probe.load(Ordering::Acquire)));
+    let first = pool.load_session(&model).unwrap();
+    let weak = Arc::downgrade(&first);
+    playing.store(true, Ordering::Release);
+    if pool.effective_intra_threads() == pool.intra_threads() {
+        return;
+    }
+    assert!(
+        pool.load_session(&model).is_err(),
+        "live old variant must count toward capacity"
+    );
+    drop(first);
+    let second = pool.load_session(&model).unwrap();
+    assert!(weak.upgrade().is_none(), "old workspace must be released");
+    assert_eq!(pool.capacity().unwrap(), 1);
+    assert_eq!(pool.diagnostics().len(), 2);
+    drop(second);
+}
+
+#[test]
 fn provider_order_requires_cpu_fallback() {
     assert!(OrtSessionPool::with_provider_order(1, vec![ExecutionProviderKind::Cuda]).is_err());
     assert!(

@@ -77,3 +77,25 @@ Separate tests compare reusable FFT operations against the original allocating
 implementation, and borrowed ORT input against owned tensors for all four pinned
 models. The real-model bounded/frozen pipeline comparison passes at <=1e-6.
 These kernel results do not establish the full separation speedup.
+
+## CPU thread matrix (Ryzen 9 8945HS, 16 logical CPUs)
+
+Release build, ORT 1.20.0 CPU, one resident model at a time, inter-op=1,
+sequential execution, spinning disabled. Each cell is the median of five
+synthetic spectral-tensor runs in seconds; initialization is measured separately.
+The temporary Linux VM was shut down before these measurements.
+
+| Intra-op threads | Main | Kara | Drums | Bass |
+|---:|---:|---:|---:|---:|
+| 1 | 8.6451 | 6.3066 | 6.2717 | 6.2282 |
+| 2 | 6.0504 | 4.0942 | 4.0129 | 4.2253 |
+| 4 | 3.8227 | 2.5864 | 2.8477 | 2.7821 |
+| 6 | 3.0769 | 2.1103 | 2.4191 | 2.4298 |
+| 8 | 2.7207 | 1.8570 | 2.1839 | 2.3542 |
+| 12 | 2.4225 | 1.6585 | 1.9826 | 2.0821 |
+
+Twelve versus six threads reduces these medians by 14.3–21.4%. This supports
+an opt-in throughput profile on this host, not a universal optimal thread count
+or an end-to-end speedup claim. Warm outputs were bit identical within each
+configuration; cross-configuration hashes are not a musical parity test.
+Raw outputs and process-tree resource samples: ignored `local_audio/cpu-matrix-*`.

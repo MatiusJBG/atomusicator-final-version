@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -27,14 +27,23 @@ pub enum ExecutionProviderKind {
 }
 
 pub struct OrtSessionPool {
-    sessions: SessionPool<Mutex<Session>>,
+    sessions: SessionPool<Mutex<Session>, SessionKey>,
     provider_order: Vec<ExecutionProviderKind>,
     intra_threads: usize,
+    profiling_directory: Option<PathBuf>,
+    playback_probe: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     diagnostics: Mutex<BTreeMap<String, SessionDiagnostic>>,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct SessionKey {
+    path: PathBuf,
+    threads: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionDiagnostic {
+    pub intra_threads: usize,
     pub provider_registered: ExecutionProviderKind,
     /// CPU-only sessions have an unambiguous assignment. Accelerator sessions
     /// may partition nodes onto CPU; registration alone cannot prove assignment.
@@ -77,8 +86,51 @@ impl OrtSessionPool {
             sessions: SessionPool::new(capacity)?,
             provider_order,
             intra_threads,
+            profiling_directory: None,
+            playback_probe: None,
             diagnostics: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Opt-in diagnostic traces; normal application runs do not generate them.
+    pub fn with_profiling_directory(
+        mut self,
+        directory: PathBuf,
+    ) -> Result<Self, InfrastructureError> {
+        std::fs::create_dir_all(&directory).map_err(|e| InfrastructureError::io(&directory, e))?;
+        self.profiling_directory = Some(directory);
+        Ok(self)
+    }
+
+    /// The callback only reads transport state. Never call into the mixer or
+    /// acquire its control mutex from an ORT worker.
+    pub fn with_playback_probe(mut self, probe: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.playback_probe = Some(probe);
+        self
+    }
+
+    pub fn effective_intra_threads(&self) -> usize {
+        if self.playback_probe.as_ref().is_some_and(|probe| probe()) {
+            let logical = std::thread::available_parallelism().map_or(1, usize::from);
+            atomusicator_application::compute_policy::ComputeBudget::playback_limit(
+                self.intra_threads,
+                logical,
+            )
+        } else {
+            self.intra_threads
+        }
+    }
+
+    pub fn with_compute_profile(
+        capacity: usize,
+        profile: atomusicator_application::compute_policy::ComputeProfile,
+    ) -> Result<Self, InfrastructureError> {
+        let logical = std::thread::available_parallelism().map_or(1, usize::from);
+        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile(
+            profile, logical, false,
+        )
+        .threads_per_inference();
+        Self::with_cpu_threads(capacity, threads)
     }
 
     pub fn with_provider_order(
@@ -118,12 +170,17 @@ impl OrtSessionPool {
         let canonical_path = model_path
             .canonicalize()
             .map_err(|error| InfrastructureError::io(model_path, error))?;
-        self.sessions.load(canonical_path.clone(), || {
+        let threads = self.effective_intra_threads();
+        self.sessions.load(SessionKey { path: canonical_path.clone(), threads }, || {
             let started = Instant::now();
             let mut failures = Vec::new();
             for provider in self.provider_order.iter().copied() {
             let result = SessionBuilder::new()
-                .and_then(|builder| builder.with_intra_threads(self.intra_threads))
+                .and_then(|builder| match &self.profiling_directory {
+                    Some(directory) => builder.with_profiling(directory.join(crate::audio_tools::unique_id())),
+                    None => Ok(builder),
+                })
+                .and_then(|builder| builder.with_intra_threads(threads))
                 .and_then(|builder| builder.with_inter_threads(1))
                 .and_then(|builder| builder.with_parallel_execution(false))
                 .and_then(|builder| builder.with_intra_op_spinning(false))
@@ -136,6 +193,7 @@ impl OrtSessionPool {
             match result {
                 Ok(session) => {
                     let diagnostic = SessionDiagnostic {
+                        intra_threads: threads,
                         provider_registered: provider,
                         provider_effective: (provider == ExecutionProviderKind::Cpu).then(|| "CPUExecutionProvider".into()),
                         fallback_errors: failures,
@@ -145,7 +203,7 @@ impl OrtSessionPool {
                     if let Ok(mut diagnostics) = self.diagnostics.lock() {
                         // Bound telemetry independently of the model paths seen.
                         if diagnostics.len() >= 64 { diagnostics.clear(); }
-                        diagnostics.insert(canonical_path.to_string_lossy().into_owned(), diagnostic);
+                        diagnostics.insert(format!("{}#{threads}", canonical_path.display()), diagnostic);
                     }
                     return Ok(Mutex::new(session));
                 }

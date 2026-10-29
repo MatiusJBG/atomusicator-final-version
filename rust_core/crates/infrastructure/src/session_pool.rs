@@ -2,6 +2,7 @@
 use crate::errors::InfrastructureError;
 use lru::LruCache;
 use std::{
+    hash::Hash,
     num::NonZeroUsize,
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
@@ -16,13 +17,13 @@ struct Slot<T> {
     state: Mutex<State<T>>,
     changed: Condvar,
 }
-pub(crate) struct SessionPool<T> {
-    entries: Mutex<LruCache<PathBuf, Arc<Slot<T>>>>,
+pub(crate) struct SessionPool<T, K: Hash + Eq = PathBuf> {
+    entries: Mutex<LruCache<K, Arc<Slot<T>>>>,
 }
 fn poisoned() -> InfrastructureError {
     InfrastructureError::OnnxRuntime("session pool lock was poisoned".into())
 }
-impl<T> SessionPool<T> {
+impl<T, K: Hash + Eq + Clone> SessionPool<T, K> {
     pub(crate) fn new(capacity: usize) -> Result<Self, InfrastructureError> {
         let capacity = NonZeroUsize::new(capacity).ok_or_else(|| {
             InfrastructureError::InvalidManifest(
@@ -38,7 +39,7 @@ impl<T> SessionPool<T> {
     }
     pub(crate) fn load(
         &self,
-        key: PathBuf,
+        key: K,
         loader: impl FnOnce() -> Result<T, String>,
     ) -> Result<Arc<T>, InfrastructureError> {
         let (slot, owner) = {
@@ -206,5 +207,16 @@ mod tests {
                 .is_err()
         );
         assert_eq!(*pool.load(PathBuf::from("a"), || Ok(42)).unwrap(), 42);
+    }
+
+    #[test]
+    fn thread_variants_share_capacity_but_never_share_sessions() {
+        let pool = SessionPool::<usize, (PathBuf, usize)>::new(1).unwrap();
+        let path = PathBuf::from("model");
+        let first = pool.load((path.clone(), 12), || Ok(12)).unwrap();
+        assert!(pool.load((path.clone(), 6), || Ok(6)).is_err());
+        drop(first);
+        assert_eq!(*pool.load((path.clone(), 6), || Ok(6)).unwrap(), 6);
+        assert_eq!(*pool.load((path, 12), || Ok(12)).unwrap(), 12);
     }
 }

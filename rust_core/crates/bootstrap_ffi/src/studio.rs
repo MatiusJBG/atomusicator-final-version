@@ -55,8 +55,20 @@ pub fn studio() -> Result<Arc<Studio>, String> {
             let projects = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
                 .load()
                 .map_err(err)?;
+            let profile = match std::env::var("ATOMUSICATOR_CPU_PROFILE") {
+                Ok(value) => value.parse().map_err(err)?,
+                Err(std::env::VarError::NotPresent) => Default::default(),
+                Err(error) => return Err(err(error)),
+            };
+            let mixer = CpalRealtimeMixer::new().map_err(err)?;
+            let sessions = Arc::new(
+                OrtSessionPool::with_compute_profile(2, profile)
+                    .map_err(err)?
+                    .with_playback_probe(mixer.playback_probe()),
+            );
+            let inference_threads = sessions.intra_threads();
             Ok(Arc::new(Studio {
-                mixer: CpalRealtimeMixer::new().map_err(err)?,
+                mixer,
                 jobs: Arc::new(crate::jobs::JobRegistry::new(
                     atomusicator_infrastructure::job_journal::JobJournal::new(
                         policy.app_data_root().join("jobs"),
@@ -69,7 +81,7 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .enable_all()
                     .build()
                     .map_err(err)?,
-                sessions: Arc::new(OrtSessionPool::new(2).map_err(err)?),
+                sessions,
                 pitch_cache: PitchRenderCache::new(policy.stage_cache_dir().join("pitch-v1")),
                 live_pitch_store:
                     atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
@@ -78,10 +90,7 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .map_err(err)?,
                 resources:
                     atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
-                        atomusicator_application::compute_policy::ComputeBudget::interactive(
-                            std::thread::available_parallelism().map_or(1, usize::from),
-                        )
-                        .threads_per_inference(),
+                        inference_threads,
                     )
                     .map_err(err)?,
             }))
@@ -351,6 +360,7 @@ impl Studio {
                 "source_sha256":source_hash,"profile":profile,
                 "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
                 "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),
+                    "session_diagnostics":backend.sessions.diagnostics(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
             backend.jobs.output(id,projects.join(id))?;
             let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,id,&asset,&result,engine,cancel,

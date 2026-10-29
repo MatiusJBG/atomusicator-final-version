@@ -194,6 +194,10 @@ impl CpalRealtimeMixer {
     pub fn is_playing(&self) -> bool {
         self.controls.transport.playing.load(Ordering::Acquire)
     }
+    pub fn playback_probe(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let controls = Arc::clone(&self.controls);
+        Arc::new(move || controls.transport.playing.load(Ordering::Acquire))
+    }
     pub fn peak(&self) -> f32 {
         f32::from_bits(self.controls.transport.peak.load(Ordering::Relaxed))
     }

@@ -46,6 +46,35 @@ small RF64 readback, malformed sizes and non-sentinel size precedence.
 
 ## Verification scope
 
+### CPU profiles
+
+Set `ATOMUSICATOR_CPU_PROFILE` before starting the application: `eco` (up to two
+inference threads), `balanced` (default, up to six), or `throughput` (up to twelve).
+Unknown values fail explicitly. Every profile reserves two logical CPUs when
+possible, and remains valid on single-core hosts. This setting is currently a
+startup backend option; a Flutter settings control is still pending.
+
+While the mixer is playing, the next inference window halves the requested
+thread budget (rounded up), uses at most six threads
+and reserves four logical CPUs when possible. A running inference is allowed to
+finish; this is not instantaneous preemption. Sessions are cached by canonical
+model path **and actual thread count**, so a thread-budget change cannot reuse
+an incompatible ORT session. All session variants share the same capacity limit.
+Admission reserves the profile's upper bound, and published metadata records the
+actual thread counts observed in initialized sessions. This policy reduces CPU
+contention; physical playback/underrun qualification remains necessary.
+
+Example from PowerShell, before `flutter run -d windows`:
+
+```powershell
+$env:ATOMUSICATOR_CPU_PROFILE = 'throughput'
+```
+
+The host-specific matrix and its measurement limits are in
+`benchmarks/BASELINE_BACKEND.md`.
+
+### Platform checks
+
 Windows full workspace: 143 tests passed, 11 opt-in tests omitted. Linux x64 in
 an isolated Arch/QEMU overlay: 142 passed, 11 omitted, with formatting and
 all-target Clippy clean. The count differs because the Windows ACL test is
