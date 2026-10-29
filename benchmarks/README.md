@@ -94,6 +94,19 @@ and padding. Compare whole-track PCM RMS at the restored output, stage spool and
 final WAV to locate amplitude loss. The gate observations concern vocals only;
 drums and bass bypass `SpectralBleedGate`.
 
+To check the bass-routing hypothesis across the entire track, reuse validated
+unchanged baseline stages and infer only the alternative bass input:
+
+```powershell
+cargo build --locked --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example bass_candidate
+./rust_core/target/release/examples/bass_candidate.exe local_audio/run-001/case local_audio/bass-candidate-001
+```
+
+This recomputes `instrumental` after replacing bass and scores all five stems.
+Its results are a quality counterfactual, not an independent full-run performance
+measurement. Do not promote a routing change merely because bass improves:
+check the residual stem and the other outputs as well.
+
 Keep generated reports in ignored `benchmarks/results/` or `local_audio/`.
 Resource reports sample the root and observed descendants, including limitations
 and the observed sampling gaps; VRAM remains explicitly unmeasured.

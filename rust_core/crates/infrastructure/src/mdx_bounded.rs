@@ -89,6 +89,9 @@ pub fn run_bounded_mdx_observed(
                 [component * c.dim_f * c.dim_t..(component * c.dim_f + 3.min(c.dim_f)) * c.dim_t]
                 .fill(0.0);
         }
+        if let Some(observe) = observe {
+            observe("tensor_input_spectral_units", &spectrum);
+        }
         let prediction = predict(&spectrum)?;
         if let Some(observe) = observe {
             observe("tensor_output_spectral_units", &prediction);
@@ -112,6 +115,7 @@ pub fn run_bounded_mdx_observed(
         // No later window can contribute before the next grid position.
         let flush = step.min((padded - start) as usize);
         let mut output = Vec::with_capacity(flush * 2);
+        let mut uncompensated = observe.map(|_| Vec::with_capacity(flush * 2));
         for frame in 0..flush {
             let position = start + frame as u64;
             if position < trim as u64 || position - trim as u64 >= frames {
@@ -121,7 +125,11 @@ pub fn run_bounded_mdx_observed(
                 return Err(fail("MDX overlap left an uncovered frame"));
             }
             for channel in 0..2 {
-                let value = accumulator[frame * 2 + channel] / weights[frame] * peak * c.compensate;
+                let restored = accumulator[frame * 2 + channel] / weights[frame] * peak;
+                if let Some(values) = &mut uncompensated {
+                    values.push(restored);
+                }
+                let value = restored * c.compensate;
                 output.push(if c.invert {
                     raw[frame * 2 + channel] - value
                 } else {
@@ -130,6 +138,10 @@ pub fn run_bounded_mdx_observed(
             }
         }
         if let Some(observe) = observe {
+            observe(
+                "post_ola_restore_pre_comp_pcm",
+                uncompensated.as_ref().unwrap(),
+            );
             observe("restored_compensated_pcm", &output);
         }
         target.write(&output)?;
