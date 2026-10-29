@@ -79,6 +79,26 @@ impl ManifestModelManager {
         &self,
         profile_id: &str,
     ) -> Result<VerifiedModelSpec, InfrastructureError> {
+        if let Some(cached) = self.cached_profile(profile_id).await? {
+            return Ok(cached);
+        }
+        let profile = self.manifest.profile(profile_id)?;
+        let local_path = self
+            .downloader
+            .download_verified(profile, &self.path_policy.models_dir())
+            .await?;
+        Ok(verified_spec(
+            profile,
+            local_path,
+            profile.sha256.to_ascii_lowercase(),
+        ))
+    }
+
+    /// Cache-only lookup/import; never grants download consent implicitly.
+    pub async fn cached_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<VerifiedModelSpec>, InfrastructureError> {
         let profile = self.manifest.profile(profile_id)?;
         let expected_hash = profile.sha256.to_ascii_lowercase();
 
@@ -89,15 +109,22 @@ impl ManifestModelManager {
             if let Ok(actual_hash) = hash_file(&candidate).await
                 && actual_hash.eq_ignore_ascii_case(&expected_hash)
             {
-                return Ok(verified_spec(profile, candidate, expected_hash));
+                let native = self.path_policy.models_dir().join(&profile.filename);
+                let local = if candidate == native {
+                    native
+                } else {
+                    crate::storage::legacy_import::import_verified_model(
+                        &candidate,
+                        &native,
+                        &expected_hash,
+                    )
+                    .await?
+                };
+                return Ok(Some(verified_spec(profile, local, expected_hash)));
             }
         }
 
-        let local_path = self
-            .downloader
-            .download_verified(profile, &self.path_policy.models_dir())
-            .await?;
-        Ok(verified_spec(profile, local_path, expected_hash))
+        Ok(None)
     }
 
     pub async fn verify_model_file(path: &Path) -> Result<String, InfrastructureError> {
