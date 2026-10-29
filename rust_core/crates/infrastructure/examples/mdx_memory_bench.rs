@@ -5,7 +5,7 @@ use atomusicator_application::{
     ports::{AudioBlockSource, AudioBlockWriter},
 };
 use atomusicator_domain::{AudioAssetMetadata, AudioFormat, DomainError};
-use atomusicator_infrastructure::{mdx::MdxConfig, mdx_bounded::run_bounded_mdx};
+use atomusicator_infrastructure::{mdx::MdxConfig, mdx_bounded::run_bounded_mdx_reusing};
 use std::{sync::Arc, time::Instant};
 struct VirtualSource {
     metadata: AudioAssetMetadata,
@@ -87,15 +87,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut windows = 0u64;
     let started = Instant::now();
-    run_bounded_mdx(
+    run_bounded_mdx_reusing(
         MdxConfig::for_profile("uvr-mdxnet-main-v1")?,
         &source,
         &mut sink,
         &CancellationToken::default(),
-        |tensor| {
+        |tensor, output| {
             windows += 1;
-            Ok(vec![0.0; tensor.len()])
+            output.resize(tensor.len(), 0.0);
+            output.fill(0.0);
+            Ok(())
         },
+        None,
     )?;
     if sink.frames != source.metadata.frame_count {
         return Err("lost or duplicated output frames".into());

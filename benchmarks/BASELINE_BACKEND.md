@@ -58,3 +58,22 @@ of at least 10–15% and unchanged musical quality within declared tolerances.
 The Windows CI workflow checks formatting, all-target Clippy and workspace tests.
 Opt-in hardware/model tests, acoustic tests, GPU parity and clean-machine installer
 qualification require separate evidence; a green CI run does not certify them.
+
+## Reusable MDX workspace measurement
+
+Five independent Release processes per implementation, virtual five-minute
+source through the actual main-profile FFT/OLA kernel, counting sink and zero
+neural prediction (no ONNX inference or musical-quality claim):
+
+| Measurement | Before | Reused buffers |
+|---|---:|---:|
+| Median kernel time | 2.795860 s | 2.355453 s |
+| p95 (nearest rank, n=5) | 2.951130 s | 2.492066 s |
+| Maximum sampled process-tree RSS | 48,832,512 B | 49,754,112 B |
+
+Median kernel time improved 15.75%; sampled RSS increased 1.89%. Both use the
+same Release profile. Original raw logs remain in ignored `local_audio/`.
+Separate tests compare reusable FFT operations against the original allocating
+implementation, and borrowed ORT input against owned tensors for all four pinned
+models. The real-model bounded/frozen pipeline comparison passes at <=1e-6.
+These kernel results do not establish the full separation speedup.

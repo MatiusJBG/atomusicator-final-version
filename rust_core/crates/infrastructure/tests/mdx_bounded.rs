@@ -150,3 +150,38 @@ fn diagnostic_taps_preserve_output_and_measure_compensation_separately() {
     assert!((ratio - f64::from(c.compensate)).abs() < 1e-6);
     assert!(levels["tensor_input_spectral_units"] > 0.0);
 }
+
+#[test]
+fn reusable_fft_workspace_matches_frozen_operations_and_clears_prior_windows() {
+    use atomusicator_infrastructure::mdx::MdxFftWorkspace;
+    let c = MdxConfig {
+        n_fft: 60,
+        hop: 12,
+        dim_f: 31,
+        dim_t: 16,
+        compensate: 1.043,
+        invert: false,
+    };
+    let transform = MdxTransform::new(c).unwrap();
+    let mut scratch = MdxFftWorkspace::new(&transform);
+    let mut spectrum = vec![0.0; 4 * c.dim_f * c.dim_t];
+    let mut decoded = vec![0.0; c.chunk_frames() * 2];
+    for gain in [0.3, 0.0, 0.9] {
+        let samples: Vec<_> = (0..c.chunk_frames() * 2)
+            .map(|i| (i as f32 * 0.1).sin() * gain)
+            .collect();
+        transform
+            .forward_into(&samples, &mut spectrum, &mut scratch)
+            .unwrap();
+        assert_eq!(spectrum, transform.forward(&samples).unwrap());
+        transform
+            .inverse_into(&spectrum, &mut decoded, &mut scratch)
+            .unwrap();
+        assert_eq!(decoded, transform.inverse(&spectrum).unwrap());
+    }
+    assert!(
+        transform
+            .forward_into(&[0.0; 1], &mut spectrum, &mut scratch)
+            .is_err()
+    );
+}

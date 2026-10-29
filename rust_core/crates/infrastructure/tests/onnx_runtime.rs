@@ -66,7 +66,7 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
                 .expect("cached model required")
         })
         .collect::<Vec<_>>();
-    let pool = OrtSessionPool::new(1).unwrap();
+    let pool = std::sync::Arc::new(OrtSessionPool::new(1).unwrap());
     let live = pool.load_session(&paths[0]).unwrap();
     let diagnostics = pool.diagnostics();
     assert_eq!(diagnostics.len(), 1);
@@ -92,7 +92,7 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
     let first = pool.load_session(&paths[0]).unwrap();
     let first_weak = std::sync::Arc::downgrade(&first);
     drop(first);
-    pool.trim_idle_and_resize(1).unwrap();
+    drop(pool.idle_scope());
     assert!(
         first_weak.upgrade().is_none(),
         "idle cached models must actually be released"
@@ -146,4 +146,96 @@ fn runner_rejects_non_finite_tensor_values_before_loading_a_model() {
         .unwrap_err();
 
     assert!(error.to_string().contains("non-finite values"));
+}
+
+#[test]
+fn borrowed_runner_validates_shape_and_finiteness_before_loading() {
+    let runner = OnnxSessionRunner::new(std::sync::Arc::new(OrtSessionPool::new(1).unwrap()));
+    let mut output = vec![9.0];
+    assert!(
+        runner
+            .run_f32_into(
+                Path::new("missing.onnx"),
+                "input",
+                &[1, 4],
+                &mut [0.0],
+                &mut output
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("describes 4")
+    );
+    assert!(
+        runner
+            .run_f32_into(
+                Path::new("missing.onnx"),
+                "input",
+                &[1],
+                &mut [f32::NAN],
+                &mut output
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("non-finite")
+    );
+    assert_eq!(output, vec![9.0]);
+}
+
+#[test]
+#[ignore = "requires the four verified local models; compares the borrowed path with ORT-owned tensors"]
+fn borrowed_inputs_match_owned_ort_tensors_and_reuse_output_capacity() {
+    use atomusicator_infrastructure::{
+        mdx::MdxConfig, models::manifest_manager::ManifestModelManager,
+        storage::paths::WorkspacePathPolicy,
+    };
+    let manager = ManifestModelManager::from_embedded_manifest(
+        WorkspacePathPolicy::system_default().unwrap(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let pool = std::sync::Arc::new(OrtSessionPool::with_cpu_threads(1, 2).unwrap());
+    let runner = OnnxSessionRunner::new(pool.clone());
+    for profile in &manager.manifest().models {
+        let model = runtime
+            .block_on(manager.cached_profile(&profile.profile_id))
+            .unwrap()
+            .unwrap();
+        let c = MdxConfig::for_profile(&profile.profile_id).unwrap();
+        let shape = vec![1, 4, c.dim_f as i64, c.dim_t as i64];
+        let mut input: Vec<f32> = (0..4 * c.dim_f * c.dim_t)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
+        let original = input.clone();
+        let expected = {
+            let session = pool.load_session(&model.local_path).unwrap();
+            let session = session.lock().unwrap();
+            let tensor: ort::value::Tensor<f32> =
+                (shape.clone(), input.clone()).try_into().unwrap();
+            let output = session
+                .run(ort::inputs! {"input"=>tensor}.unwrap())
+                .unwrap();
+            output
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .try_extract_tensor::<f32>()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let mut output = Vec::new();
+        runner
+            .run_f32_into(&model.local_path, "input", &shape, &mut input, &mut output)
+            .unwrap();
+        assert_eq!(output, expected);
+        assert_eq!(input, original);
+        let allocation = output.as_ptr();
+        runner
+            .run_f32_into(&model.local_path, "input", &shape, &mut input, &mut output)
+            .unwrap();
+        assert_eq!(allocation, output.as_ptr());
+        assert_eq!(output, expected);
+    }
 }

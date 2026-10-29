@@ -1,5 +1,5 @@
 //! Duration-independent MDX overlap accumulator; window grid and f32 summation order are preserved.
-use crate::mdx::{MdxConfig, MdxTransform};
+use crate::mdx::{MdxConfig, MdxFftWorkspace, MdxTransform};
 use atomusicator_application::{
     CancellationToken,
     ports::{AudioBlockSource, AudioBlockWriter},
@@ -23,6 +23,28 @@ pub fn run_bounded_mdx_observed(
     target: &mut dyn AudioBlockWriter,
     cancel: &CancellationToken,
     mut predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
+    observe: Option<&MdxObserver<'_>>,
+) -> Result<(), DomainError> {
+    run_bounded_mdx_reusing(
+        c,
+        source,
+        target,
+        cancel,
+        |input, output| {
+            *output = predict(input)?;
+            Ok(())
+        },
+        observe,
+    )
+}
+
+/// Production path: caller and transform reuse all large per-window buffers.
+pub fn run_bounded_mdx_reusing(
+    c: MdxConfig,
+    source: &dyn AudioBlockSource,
+    target: &mut dyn AudioBlockWriter,
+    cancel: &CancellationToken,
+    mut predict: impl FnMut(&mut [f32], &mut Vec<f32>) -> Result<(), DomainError>,
     observe: Option<&MdxObserver<'_>>,
 ) -> Result<(), DomainError> {
     let metadata = source.metadata();
@@ -62,10 +84,18 @@ pub fn run_bounded_mdx_observed(
     }
     let mut accumulator = vec![0.0f32; chunk * 2];
     let mut weights = vec![0.0f32; chunk];
+    let mut raw = vec![0.0f32; chunk * 2];
+    let mut normalized = vec![0.0f32; chunk * 2];
+    let mut spectrum = vec![0.0f32; 4 * c.dim_f * c.dim_t];
+    let mut prediction = Vec::with_capacity(spectrum.len());
+    let mut decoded = vec![0.0f32; chunk * 2];
+    let mut fft_workspace = MdxFftWorkspace::new(&transform);
+    let mut output = Vec::with_capacity(step * 2);
+    let mut uncompensated = observe.map(|_| Vec::with_capacity(step * 2));
     for start in (0..padded).step_by(step) {
         check(cancel)?;
         let actual = (padded - start).min(chunk as u64) as usize;
-        let mut raw = vec![0.0f32; chunk * 2];
+        raw.fill(0.0);
         let first = start.max(trim as u64);
         let end = (start + actual as u64).min(trim as u64 + frames);
         if first < end {
@@ -79,11 +109,13 @@ pub fn run_bounded_mdx_observed(
                 return Err(fail("MDX source ended before its declared frame count"));
             }
         }
-        let normalized: Vec<f32> = raw.iter().map(|v| v / peak).collect();
+        for (normalized, raw) in normalized.iter_mut().zip(&raw) {
+            *normalized = raw / peak;
+        }
         if let Some(observe) = observe {
             observe("input_pcm_windows", &raw);
         }
-        let mut spectrum = transform.forward(&normalized)?;
+        transform.forward_into(&normalized, &mut spectrum, &mut fft_workspace)?;
         for component in 0..4 {
             spectrum
                 [component * c.dim_f * c.dim_t..(component * c.dim_f + 3.min(c.dim_f)) * c.dim_t]
@@ -92,12 +124,12 @@ pub fn run_bounded_mdx_observed(
         if let Some(observe) = observe {
             observe("tensor_input_spectral_units", &spectrum);
         }
-        let prediction = predict(&spectrum)?;
+        predict(&mut spectrum, &mut prediction)?;
         if let Some(observe) = observe {
             observe("tensor_output_spectral_units", &prediction);
         }
         check(cancel)?;
-        let decoded = transform.inverse(&prediction)?;
+        transform.inverse_into(&prediction, &mut decoded, &mut fft_workspace)?;
         if let Some(observe) = observe {
             observe("post_istft_normalized_windows", &decoded);
         }
@@ -114,8 +146,10 @@ pub fn run_bounded_mdx_observed(
         }
         // No later window can contribute before the next grid position.
         let flush = step.min((padded - start) as usize);
-        let mut output = Vec::with_capacity(flush * 2);
-        let mut uncompensated = observe.map(|_| Vec::with_capacity(flush * 2));
+        output.clear();
+        if let Some(values) = &mut uncompensated {
+            values.clear();
+        }
         for frame in 0..flush {
             let position = start + frame as u64;
             if position < trim as u64 || position - trim as u64 >= frames {

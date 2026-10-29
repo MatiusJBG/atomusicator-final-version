@@ -11,8 +11,9 @@ use ort::{
         CPUExecutionProvider, CUDAExecutionProvider, CoreMLExecutionProvider,
         DirectMLExecutionProvider,
     },
+    memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType},
     session::{Session, builder::SessionBuilder},
-    value::Tensor,
+    value::TensorRefMut,
 };
 
 use crate::errors::InfrastructureError;
@@ -42,7 +43,27 @@ pub struct SessionDiagnostic {
     pub initialization_seconds: f64,
 }
 
+/// Scope this guard to an offline job. Drop after model runners and leases so
+/// idle ORT workspaces are released even on cancellation or unwinding.
+pub struct IdleSessionScope {
+    pool: Arc<OrtSessionPool>,
+}
+impl Drop for IdleSessionScope {
+    fn drop(&mut self) {
+        let result = self
+            .pool
+            .capacity()
+            .and_then(|capacity| self.pool.trim_idle_and_resize(capacity));
+        if let Err(error) = result {
+            tracing::warn!(%error,"could not release idle ONNX sessions");
+        }
+    }
+}
+
 impl OrtSessionPool {
+    pub fn idle_scope(self: &Arc<Self>) -> IdleSessionScope {
+        IdleSessionScope { pool: self.clone() }
+    }
     pub fn new(capacity: usize) -> Result<Self, InfrastructureError> {
         // Detection is not qualification. Accelerators require explicit opt-in.
         let provider_order = vec![ExecutionProviderKind::Cpu];
@@ -188,6 +209,21 @@ impl OnnxSessionRunner {
         shape: &[i64],
         input: &[f32],
     ) -> Result<Vec<f32>, InfrastructureError> {
+        let mut input = input.to_vec();
+        let mut output = Vec::new();
+        self.run_f32_into(model_path, input_name, shape, &mut input, &mut output)?;
+        Ok(output)
+    }
+    /// Synchronous borrowing keeps the caller's tensor allocation resident and
+    /// reusable. The exclusive slice is never retained beyond this call.
+    pub fn run_f32_into(
+        &self,
+        model_path: &Path,
+        input_name: &str,
+        shape: &[i64],
+        input: &mut [f32],
+        destination: &mut Vec<f32>,
+    ) -> Result<(), InfrastructureError> {
         if input_name.trim().is_empty() {
             return Err(InfrastructureError::OnnxRuntime(
                 "tensor input name cannot be empty".into(),
@@ -223,11 +259,22 @@ impl OnnxSessionRunner {
         let session = session.lock().map_err(|_| {
             InfrastructureError::OnnxRuntime("ONNX session lock was poisoned".into())
         })?;
-        let tensor: Tensor<f32> = (shape.to_vec(), input.to_vec())
-            .try_into()
-            .map_err(|error: ort::Error| InfrastructureError::OnnxRuntime(error.to_string()))?;
-        let inputs = ort::inputs! { input_name => tensor }
-            .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        let info = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Arena,
+            MemoryType::CPUInput,
+        )
+        .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        // SAFETY: dimensions are positive, their checked product equals the
+        // exclusive, aligned f32 slice length, and therefore fits its allocation.
+        // MemoryInfo describes CPU memory. Run is synchronous; neither the tensor
+        // nor its inputs escape this function, and all ORT views drop before the
+        // caller can reuse the slice. No asynchronous I/O binding is used.
+        let tensor: TensorRefMut<'_, f32> =
+            unsafe { TensorRefMut::from_raw(info, input.as_mut_ptr().cast(), shape.to_vec()) }
+                .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        let inputs = vec![(input_name, tensor)];
         let outputs = session
             .run(inputs)
             .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
@@ -237,11 +284,15 @@ impl OnnxSessionRunner {
         let output = output
             .try_extract_tensor::<f32>()
             .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
-        if output.iter().any(|value| !value.is_finite()) {
-            return Err(InfrastructureError::OnnxRuntime(
-                "ONNX model returned non-finite values".into(),
-            ));
+        destination.resize(output.len(), 0.0);
+        for (target, value) in destination.iter_mut().zip(output.iter()) {
+            if !value.is_finite() {
+                return Err(InfrastructureError::OnnxRuntime(
+                    "ONNX model returned non-finite values".into(),
+                ));
+            }
+            *target = *value;
         }
-        Ok(output.iter().copied().collect())
+        Ok(())
     }
 }
