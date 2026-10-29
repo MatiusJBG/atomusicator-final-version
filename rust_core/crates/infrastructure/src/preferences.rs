@@ -63,7 +63,19 @@ impl<L: LegacyProjectsReader> ProjectsPreferences<L> {
                 return Ok(valid);
             }
         }
-        WorkspacePathPolicy::validate_projects_destination(&self.policy.default_projects_dir())
+        let preferred = self.policy.default_projects_dir();
+        match WorkspacePathPolicy::validate_projects_destination(&preferred) {
+            Ok(valid) => Ok(valid),
+            Err(error) if preferred != self.policy.native_projects_dir() => {
+                eprintln!(
+                    "Legacy projects workspace is unavailable; selecting the native workspace: {error}"
+                );
+                // Validate the fallback and persist the repair, so a rejected
+                // historical path is not selected again on every launch.
+                self.save(&self.policy.native_projects_dir())
+            }
+            Err(error) => Err(error),
+        }
     }
     pub fn save(&self, path: &Path) -> Result<PathBuf, InfrastructureError> {
         let valid = WorkspacePathPolicy::validate_projects_destination(path)?;

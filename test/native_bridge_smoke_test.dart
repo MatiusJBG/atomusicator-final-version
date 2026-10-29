@@ -16,7 +16,7 @@ void main() {
       );
       final outputs = Directory('${directory.path}/outputs')..createSync();
       try {
-        final frames = 44100;
+        final frames = 44100 * 4;
         final data = ByteData(44 + frames * 2 * 4);
         void ascii(int offset, String value) {
           for (var i = 0; i < value.length; i++) {
@@ -118,12 +118,56 @@ void main() {
           throw StateError('native job timed out');
         }
 
-        final pitched = await finish(
-          await native.startPitch(semitones: 3, preserveFormants: true),
+        final initialPitch = await native.livePitchStatus();
+        final accepted = await native.setLivePitch(
+          sessionId: session.id,
+          epoch: initialPitch.epoch,
+          revision: initialPitch.revision + BigInt.one,
+          semitones: 3,
+          preserveFormants: true,
         );
-        expect(pitched.session?.pitchSemitones, 3);
+        expect(accepted.semitones, 3);
+        expect((await native.livePitchStatus()).revision, accepted.revision);
+        await native.setMaster(gain: 0);
+        await native.play();
+        var live = accepted;
+        for (final semitones in [12, -12, 7, 0]) {
+          final before = (await native.playbackStatus()).positionSeconds;
+          final elapsed = Stopwatch()..start();
+          live = await native.setLivePitch(
+            sessionId: session.id,
+            epoch: live.epoch,
+            revision: live.revision + BigInt.one,
+            semitones: semitones,
+            preserveFormants: true,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 450));
+          final playback = await native.playbackStatus();
+          expect(playback.failure, isNull);
+          expect(playback.playing, isTrue);
+          expect(
+            playback.positionSeconds - before,
+            closeTo(elapsed.elapsedMicroseconds / 1e6, 0.10),
+            reason: 'Live pitch must preserve the shared playback clock',
+          );
+          expect(
+            (await native.livePitchStatus()).appliedRevision,
+            live.revision,
+          );
+        }
+        await native.pause();
+        final paused = (await native.playbackStatus()).positionSeconds;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect((await native.playbackStatus()).positionSeconds, paused);
+        await native.seek(positionSeconds: 3.8);
+        await native.play();
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        final eof = await native.playbackStatus();
+        expect(eof.failure, isNull);
+        expect(eof.playing, isFalse);
+        expect(eof.positionSeconds, closeTo(4, 0.002));
         final exported = await finish(
-          await native.startExport(
+          await native.startExportWithPitch(
             destination: directory.path,
             selectedStems: ['bass'],
             format: 'flac',
@@ -131,6 +175,12 @@ void main() {
             channels: 1,
             bitDepth: 24,
             normalize: false,
+            pitch: native.UiPitchExportDto(
+              sessionId: session.id,
+              epoch: accepted.epoch,
+              semitones: 3,
+              preserveFormants: true,
+            ),
           ),
         );
         expect(
@@ -152,6 +202,32 @@ void main() {
           File('${floatExport.outputDirectory}/bass.wav').lengthSync(),
           greaterThan(1000),
         );
+        final localSession = Platform.environment['ATOMUSICATOR_TEST_SESSION'];
+        if (localSession != null) {
+          final real = await native.openAudioSession(directory: localSession);
+          final original = await native.livePitchStatus();
+          final live = await native.setLivePitch(
+            sessionId: real.id,
+            epoch: original.epoch,
+            revision: original.revision + BigInt.one,
+            semitones: -7,
+            preserveFormants: true,
+          );
+          await native.setMaster(gain: 0);
+          await native.play();
+          await Future<void>.delayed(const Duration(seconds: 2));
+          final playback = await native.playbackStatus();
+          expect(playback.failure, isNull);
+          expect(playback.positionSeconds, closeTo(2, 0.10));
+          await native.setLivePitch(
+            sessionId: real.id,
+            epoch: live.epoch,
+            revision: live.revision + BigInt.one,
+            semitones: original.semitones,
+            preserveFormants: original.preserveFormants,
+          );
+          await native.stop();
+        }
         await native.stop();
       } finally {
         RustLib.dispose();

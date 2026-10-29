@@ -4,7 +4,7 @@ A Windows audio workbench with a Flutter interface and a Rust engine for
 five-stem separation, synchronized mixing, pitch processing and export.
 The application runs without Python or the legacy repository.
 
-**Release status:** Windows x64 CPU candidate, version 0.6.0. Independent vocal
+**Release status:** Windows x64 CPU candidate, version 0.7.0. Independent vocal
 quality/listening, full 30–60 minute model runs, clean-Windows installation and
 physical device reconnection remain qualification gates. The current installer
 also needs the complete third-party notice/source bundle before publication.
@@ -44,18 +44,31 @@ binary simply because it has a similar name.
 3. Mix lead vocals, backing vocals, drums, bass and instrumental using play,
    pause, stop, seek, gain, mute, solo, pan and master volume. Waveforms share a
    synchronized timeline with 100–400% zoom.
-4. Apply pitch changes with optional formant preservation. Original stems are
-   retained. Separation, pitch and export are cancellable background jobs.
+4. Adjust **Live pitch** from −12 to +12 semitones, with optional formant
+   preservation. Changes take effect during playback without an Apply button,
+   render job or loading screen, and keep the tempo unchanged. Reset returns to
+   the original pitch. Settings are saved locally for the session; original
+   stems remain unchanged. A short audio-buffer response is unavoidable.
 5. Export selected stems as WAV, FLAC or MP3. WAV supports 16/24-bit PCM and
    32-bit float; FLAC supports 16/24-bit; MP3 uses 320 kbps. Choose 44.1/48 kHz,
    mono/stereo and optional loudness normalization. Float WAV preserves
    headroom; normalization of each stem separately can change their balance.
+   Export freezes the pitch shown when you click Export; later live adjustments
+   do not change that export. Separation and export remain cancellable jobs.
 6. Reopen saved sessions. After an interrupted job, follow the recovery controls
    to resume or discard it. Keep original audio available for rebuilding stages.
 
 Native data defaults under `%LOCALAPPDATA%\Atomusicator`; project preferences
 can adopt an existing legacy project location. The application reuses compatible
 verified legacy models without moving them. No Python installation is required.
+
+Live pitch uses an embedded MIT-licensed Signalsmith engine with bounded
+streaming buffers and two DSP workers for five independent stereo stems.
+On the development output device (48 kHz, 1,056-frame callbacks), 16 muted
+control changes measured **95 ms p95** to the driver's estimated presentation
+time, with no underruns. This excludes Flutter event delivery and acoustic
+measurement and is not a guarantee for every device. See the
+[interactive pitch validation](docs/interactive-pitch.md) for scope and limits.
 
 ## Set up a development machine
 
@@ -141,7 +154,7 @@ Outputs:
 | --- | --- |
 | Complete runnable app | `build/windows/x64/runner/Release/` |
 | App executable | `build/windows/x64/runner/Release/atomusicator.exe` |
-| Windows installer | `packaging/dist/Atomusicator-Setup-0.6.0.exe` |
+| Windows installer | `packaging/dist/Atomusicator-Setup-0.7.0.exe` |
 | Runtime checksum inventory | `build/windows/x64/runner/Release/release-manifest.json` |
 
 Keep the **whole release folder** together when running or creating a portable
@@ -199,18 +212,10 @@ a clean OS test or proof of upgrading every historical production installer.
 
 The simplest complete local run is the prepared release executable. A bare
 `flutter run -d windows` does not place all native dependencies beside its debug
-executable. If using debug/hot reload, prepare a release first, build the debug
-runner, and copy its runtime dependencies:
+executable. Prepare the debug runtime before using debug/hot reload:
 
 ```powershell
-cargo build --locked --manifest-path rust_core/Cargo.toml -p atomusicator-bootstrap-ffi
-flutter build windows --debug
-$releaseDirectory = (Resolve-Path build/windows/x64/runner/Release).Path
-$debugDirectory = (Resolve-Path build/windows/x64/runner/Debug).Path
-Get-ChildItem -LiteralPath $releaseDirectory -Filter '*.dll' |
-    Where-Object Name -Match '^(atomusicator_bootstrap_ffi|onnxruntime.*|msvcp140|vcruntime140.*|concrt140)\.dll$' |
-    Copy-Item -Destination $debugDirectory -Force
-Copy-Item -LiteralPath "$releaseDirectory/audio-tools" -Destination $debugDirectory -Recurse -Force
+./packaging/build_windows.ps1 -SkipInstaller -PrepareDebug
 flutter run -d windows
 ```
 
@@ -265,6 +270,8 @@ See the audit for exact compatibility limits and measured evidence.
 | PowerShell rejects `#requires -Version 7.0` | Open `pwsh`, not Windows PowerShell 5.1 |
 | Flutter cannot find Visual Studio or Windows | Install Desktop development with C++, Windows SDK and CMake tools; rerun `flutter doctor -v` |
 | Missing native DLL / audio tools | Run `packaging/build_windows.ps1 -SkipInstaller`; launch the complete release folder |
+| `_createDevFS` / `PathAccessException` creating a directory in `%TEMP%`, alongside AppData access errors | An executable built in a Low-integrity workspace may inherit Low integrity. Rebuild with the updated Windows runner; it labels the application for normal Medium-integrity execution. `packaging/build_windows.ps1 -SkipInstaller -PrepareDebug` also prepares native DLLs and audio helpers. Restart the app; do not loosen TEMP/AppData permissions. See [Windows integrity diagnosis](docs/windows-integrity.md). |
+| Access denied in `Separador Vocal/.../projects/.atomusicator-write-probe-*` | Rebuild and restart the app. If the historical workspace is not writable, the backend validates `%LOCALAPPDATA%\Atomusicator\projects` and saves it as the new destination. Historical projects remain in place; a manually selected unwritable directory is still rejected. The native destination also requires write access. |
 | Model download denied / model unavailable | Grant download consent, check network and available disk; do not bypass SHA-256 checks |
 | FLAC invisible in the picker | Rebuild/use the updated app; it uses an explicit WAV/MP3/FLAC/M4A filter |
 | Ctrl+V imports nothing | Copy actual files in Explorer, focus the workbench and paste; copying a filename as text is a different clipboard format |

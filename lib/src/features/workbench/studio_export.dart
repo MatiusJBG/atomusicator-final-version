@@ -9,22 +9,38 @@ class ExportDialog extends ConsumerStatefulWidget {
 class _ExportDialogState extends ConsumerState<ExportDialog> {
   String format = 'wav';
   int rate = 44100, channels = 2, bits = 24;
-  bool normalize = false, includeMuted = true;
+  bool normalize = false,
+      includeMuted = true,
+      exporting = false,
+      advanced = false;
   String? destination;
   final selected = <String>{};
   @override
   void initState() {
     super.initState();
     selected.addAll(
-      ref.read(studioProvider).session!.tracks.map((t) => t.stemType),
+      ref
+          .read(studioProvider)
+          .session!
+          .tracks
+          .map((t) => t.stemType)
+          .where(ref.read(selectedStemTypesProvider).contains),
     );
   }
 
   Future<void> _chooseFolder() async {
-    final folder = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Export destination',
-    );
-    if (folder != null && mounted) setState(() => destination = folder);
+    try {
+      final folder = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Destino de exportación',
+      );
+      if (folder != null && mounted) setState(() => destination = folder);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo abrir el selector: $error')),
+        );
+      }
+    }
   }
 
   @override
@@ -40,276 +56,414 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
             )
             .map((t) => t.stemType)
             .toList();
-    final exceedsFullScale = tracks.any(
-      (track) =>
-          exported.contains(track.stemType) &&
-          track.peaks.any((sample) => sample.abs() > 1),
+    final exceeds = tracks.any(
+      (t) => exported.contains(t.stemType) && t.peaks.any((v) => v.abs() > 1),
     );
-    return AlertDialog(
+    final completed =
+        exporting && state.job?.status == native.UiJobStatus.completed;
+    return Dialog(
+      backgroundColor: const Color(0xFF0E141B),
       insetPadding: const EdgeInsets.all(24),
-      contentPadding: const EdgeInsets.fromLTRB(28, 8, 28, 20),
-      titlePadding: const EdgeInsets.fromLTRB(28, 20, 20, 0),
-      title: Row(
-        children: [
-          const Expanded(child: Text('Export stems')),
-          IconButton(
-            tooltip: 'Close',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close, size: 18),
-          ),
-        ],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFF22302F)),
       ),
-      content: SizedBox(
-        width: 568,
+      child: SizedBox(
+        width: 600,
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                '${state.session!.name} · ${tracks.length} separate tracks, ready for your DAW.',
-                style: const TextStyle(fontSize: 12, color: AppColors.muted),
-              ),
-              const SizedBox(height: 22),
-              const _FieldLabel('Audio format'),
               Row(
                 children: [
-                  for (final value in ['wav', 'flac', 'mp3']) ...[
-                    if (value != 'wav') const SizedBox(width: 10),
-                    Expanded(
-                      child: _FormatOption(
-                        value: value,
-                        selected: format == value,
-                        onTap:
-                            () => setState(() {
-                              format = value;
-                              if (format != 'wav' && bits == 32) bits = 24;
-                            }),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 18),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _ExportSelect<int>(
-                      label: 'Sample rate',
-                      value: rate,
-                      options: const {44100: '44.1 kHz', 48000: '48 kHz'},
-                      onChanged: (v) => setState(() => rate = v),
-                    ),
+                  const Icon(
+                    Icons.file_download_outlined,
+                    color: AppColors.seaGlass,
+                    size: 26,
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: _ExportSelect<int>(
-                      label: format == 'mp3' ? 'Bit rate' : 'Bit depth',
-                      value: format == 'mp3' ? 320 : bits,
-                      options:
-                          format == 'mp3'
-                              ? const {320: '320 kbps'}
-                              : format == 'wav'
-                              ? const {
-                                16: '16 bits',
-                                24: '24 bits',
-                                32: '32-bit float',
-                              }
-                              : const {16: '16 bits', 24: '24 bits'},
-                      onChanged:
-                          format == 'mp3'
-                              ? null
-                              : (v) => setState(() => bits = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _ExportSelect<int>(
-                      label: 'Channels',
-                      value: channels,
-                      options: const {1: 'Mono', 2: 'Stereo'},
-                      onChanged: (v) => setState(() => channels = v),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  const Expanded(child: _FieldLabel('Stems to export')),
-                  Text(
-                    '${exported.length} OF ${tracks.length} SELECTED',
-                    style: const TextStyle(
-                      fontSize: 9,
-                      color: AppColors.seaGlass,
-                    ),
-                  ),
-                ],
-              ),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final track in tracks)
-                    FilterChip(
-                      key: ValueKey('export-${track.stemType}'),
-                      avatar: Icon(
-                        Icons.circle,
-                        size: 6,
-                        color: stemColor(track.stemType),
-                      ),
-                      label: Text(
-                        stemNames[track.stemType] ?? track.stemType,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppColors.text,
-                        ),
-                      ),
-                      selected: selected.contains(track.stemType),
-                      showCheckmark: false,
-                      selectedColor: AppColors.panelRaised,
-                      backgroundColor: AppColors.canvas,
-                      side: BorderSide(
-                        color:
-                            selected.contains(track.stemType)
-                                ? AppColors.line
-                                : Colors.transparent,
-                      ),
-                      onSelected:
-                          (v) => setState(() {
-                            if (v) {
-                              selected.add(track.stemType);
-                            } else {
-                              selected.remove(track.stemType);
-                            }
-                          }),
-                    ),
-                ],
-              ),
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Include muted tracks',
-                  style: TextStyle(fontSize: 12),
-                ),
-                value: includeMuted,
-                onChanged: (v) => setState(() => includeMuted = v ?? true),
-              ),
-              const SizedBox(height: 12),
-              const _FieldLabel('Save to'),
-              Container(
-                padding: const EdgeInsets.only(left: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.canvas,
-                  border: Border.all(color: AppColors.line),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.folder_open_outlined, size: 18),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        destination ?? 'Choose a local folder',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _chooseFolder,
-                      child: const Text('Change'),
-                    ),
-                  ],
-                ),
-              ),
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Normalize loudness',
-                  style: TextStyle(fontSize: 12),
-                ),
-                value: normalize,
-                onChanged: (v) => setState(() => normalize = v ?? false),
-              ),
-              if (exceedsFullScale &&
-                  !normalize &&
-                  !(format == 'wav' && bits == 32))
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'Selected stems exceed 0 dBFS. Choose 32-bit float WAV to preserve levels, or enable normalization for fixed-point export.',
-                    style: TextStyle(fontSize: 11, color: AppColors.amber),
-                  ),
-                ),
-              if (normalize)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'Loudness normalization processes each file separately and can change relative stem levels.',
-                    style: TextStyle(fontSize: 11, color: AppColors.muted),
-                  ),
-                ),
-              const Text(
-                'Applied pitch is included. Listening gain, pan and master do not affect export.',
-                style: TextStyle(fontSize: 11, color: AppColors.muted),
-              ),
-              const Divider(height: 30),
-              Row(
-                children: [
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${exported.length} files · ${format.toUpperCase()}',
-                          style: const TextStyle(fontSize: 11),
+                          'Exportar stems',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                        const SizedBox(height: 4),
+                        SizedBox(height: 5),
                         Text(
-                          'Full duration · 00:00–${formatStudioTime(state.duration)}',
-                          style: const TextStyle(
-                            fontSize: 10,
+                          'Elige las pistas y el formato de salida',
+                          style: TextStyle(
+                            fontSize: 11,
                             color: AppColors.muted,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    key: const ValueKey('confirm-export'),
+                  IconButton(
+                    tooltip: 'Cerrar',
                     onPressed:
-                        exported.isEmpty || state.busy
+                        exporting && state.busy
                             ? null
-                            : () async {
-                              if (destination == null) await _chooseFolder();
-                              if (destination != null && context.mounted) {
-                                ref
-                                    .read(studioProvider.notifier)
-                                    .export(
-                                      destination!,
-                                      exported,
-                                      format,
-                                      rate,
-                                      channels,
-                                      bits,
-                                      normalize,
-                                    );
-                                Navigator.pop(context);
-                              }
-                            },
-                    icon: const Icon(Icons.file_download_outlined, size: 17),
-                    label: const Text('Export stems'),
+                            : () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 22),
+                  ),
+                ],
+              ),
+              const Divider(height: 26),
+              Row(
+                children: [
+                  const Expanded(child: _FieldLabel('PISTAS')),
+                  Text(
+                    '${exported.length} de ${tracks.length}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.seaGlass,
+                    ),
+                  ),
+                ],
+              ),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  for (final track in tracks)
+                    SizedBox(
+                      width: 272,
+                      height: 38,
+                      child: Material(
+                        color: AppColors.panel,
+                        borderRadius: BorderRadius.circular(10),
+                        child: InkWell(
+                          key: ValueKey('export-${track.stemType}'),
+                          borderRadius: BorderRadius.circular(10),
+                          onTap:
+                              state.busy
+                                  ? null
+                                  : () => setState(() {
+                                    if (!selected.remove(track.stemType)) {
+                                      selected.add(track.stemType);
+                                    }
+                                  }),
+                          child: Row(
+                            children: [
+                              Checkbox(
+                                value: selected.contains(track.stemType),
+                                onChanged:
+                                    state.busy
+                                        ? null
+                                        : (v) => setState(() {
+                                          if (v == true) {
+                                            selected.add(track.stemType);
+                                          } else {
+                                            selected.remove(track.stemType);
+                                          }
+                                        }),
+                              ),
+                              Icon(
+                                stemIcon(track.stemType),
+                                size: 18,
+                                color: stemColor(track.stemType),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  stemNames[track.stemType] ?? track.stemType,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                track.channels == 1 ? 'mono' : 'estéreo',
+                                style: const TextStyle(
+                                  fontSize: 8,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(
+                    width: 272,
+                    height: 38,
+                    child: Tooltip(
+                      message:
+                          'La exportación actual admite stems individuales. La mezcla master aún no está disponible.',
+                      child: Opacity(
+                        opacity: .4,
+                        child: Row(
+                          children: [
+                            SizedBox(width: 12),
+                            Icon(Icons.check_box_outline_blank, size: 18),
+                            SizedBox(width: 12),
+                            Icon(
+                              Icons.graphic_eq,
+                              size: 18,
+                              color: AppColors.seaGlass,
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              'Mezcla Master',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              const _FieldLabel('FORMATO'),
+              Row(
+                children: [
+                  for (final value in ['wav', 'flac', 'mp3']) ...[
+                    if (value != 'wav') const SizedBox(width: 10),
+                    Expanded(
+                      child: ChoiceChip(
+                        showCheckmark: true,
+                        selected: format == value,
+                        label: Text(
+                          value == 'mp3'
+                              ? 'MP3 320 kbps'
+                              : '${value.toUpperCase()} ${value == 'flac' && bits == 32 ? 24 : bits}-bit',
+                          style: const TextStyle(fontSize: 10),
+                        ),
+                        onSelected:
+                            state.busy
+                                ? null
+                                : (_) => setState(() {
+                                  format = value;
+                                  if (format != 'wav' && bits == 32) bits = 24;
+                                }),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 14),
+              const _FieldLabel('DESTINO'),
+              Container(
+                padding: const EdgeInsets.fromLTRB(12, 0, 6, 0),
+                decoration: BoxDecoration(
+                  color: AppColors.canvas,
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.folder_open_outlined, size: 19),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        destination ?? 'Elige una carpeta local',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: state.busy ? null : _chooseFolder,
+                      child: const Text(
+                        'Cambiar',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => setState(() => advanced = !advanced),
+                icon: Icon(
+                  advanced ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                ),
+                label: const Text(
+                  'Opciones avanzadas',
+                  style: TextStyle(fontSize: 10),
+                ),
+              ),
+              if (advanced) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ExportSelect<int>(
+                        label: 'Frecuencia',
+                        value: rate,
+                        options: const {44100: '44.1 kHz', 48000: '48 kHz'},
+                        onChanged: (v) => setState(() => rate = v),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ExportSelect<int>(
+                        label: format == 'mp3' ? 'Bit rate' : 'Profundidad',
+                        value: format == 'mp3' ? 320 : bits,
+                        options:
+                            format == 'mp3'
+                                ? const {320: '320 kbps'}
+                                : format == 'wav'
+                                ? const {
+                                  16: '16 bits',
+                                  24: '24 bits',
+                                  32: '32-bit float',
+                                }
+                                : const {16: '16 bits', 24: '24 bits'},
+                        onChanged:
+                            format == 'mp3'
+                                ? null
+                                : (v) => setState(() => bits = v),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ExportSelect<int>(
+                        label: 'Canales',
+                        value: channels,
+                        options: const {1: 'Mono', 2: 'Estéreo'},
+                        onChanged: (v) => setState(() => channels = v),
+                      ),
+                    ),
+                  ],
+                ),
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text(
+                    'Incluir pistas silenciadas',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  value: includeMuted,
+                  onChanged:
+                      state.busy
+                          ? null
+                          : (v) => setState(() => includeMuted = v ?? true),
+                ),
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text(
+                    'Normalizar volumen',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  value: normalize,
+                  onChanged:
+                      state.busy
+                          ? null
+                          : (v) => setState(() => normalize = v ?? false),
+                ),
+                const Text(
+                  'El tono aplicado se incluye. La ganancia, el paneo y el master de escucha no modifican los archivos exportados.',
+                  style: TextStyle(fontSize: 10, color: AppColors.muted),
+                ),
+                const SizedBox(height: 10),
+              ],
+              if (exceeds && !normalize && !(format == 'wav' && bits == 32))
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Las pistas elegidas superan 0 dBFS. Elige WAV de 32-bit float o activa la normalización.',
+                    style: TextStyle(fontSize: 10, color: AppColors.amber),
+                  ),
+                ),
+              if (normalize)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'La normalización se aplica a cada archivo y puede cambiar los niveles relativos de los stems.',
+                    style: TextStyle(fontSize: 10, color: AppColors.muted),
+                  ),
+                ),
+              if (exporting) ...[
+                Row(
+                  children: [
+                    const Expanded(child: _FieldLabel('PROGRESO')),
+                    Text(
+                      completed
+                          ? 'Exportación completada'
+                          : '${((state.job?.progress ?? 0) * 100).round()} %',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.seaGlass,
+                      ),
+                    ),
+                  ],
+                ),
+                LinearProgressIndicator(
+                  value: completed ? 1 : state.job?.progress,
+                  minHeight: 5,
+                ),
+                const SizedBox(height: 12),
+                if (state.error != null)
+                  Text(
+                    state.error!,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.coral,
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        if (exporting && state.busy) {
+                          ref.read(studioProvider.notifier).cancel();
+                        } else {
+                          Navigator.pop(context);
+                        }
+                      },
+                      child: Text(completed ? 'Cerrar' : 'Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 3,
+                    child: FilledButton.icon(
+                      key: const ValueKey('confirm-export'),
+                      onPressed:
+                          exported.isEmpty || state.busy || completed
+                              ? null
+                              : () async {
+                                if (destination == null) await _chooseFolder();
+                                if (destination != null && mounted) {
+                                  setState(() => exporting = true);
+                                  await ref
+                                      .read(studioProvider.notifier)
+                                      .export(
+                                        destination!,
+                                        exported,
+                                        format,
+                                        rate,
+                                        channels,
+                                        bits,
+                                        normalize,
+                                      );
+                                }
+                              },
+                      icon: const Icon(Icons.file_download_outlined, size: 20),
+                      label: Text(
+                        completed ? 'Exportado' : 'Exportar ahora',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -326,74 +480,14 @@ class _FieldLabel extends StatelessWidget {
   final String text;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.only(bottom: 7),
     child: Text(
       text,
-      style: const TextStyle(fontSize: 11, color: AppColors.muted),
-    ),
-  );
-}
-
-class _FormatOption extends StatelessWidget {
-  const _FormatOption({
-    required this.value,
-    required this.selected,
-    required this.onTap,
-  });
-  final String value;
-  final bool selected;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    selected: selected,
-    child: Material(
-      color:
-          selected
-              ? AppColors.seaGlass.withValues(alpha: .13)
-              : AppColors.canvas,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(5),
-        side: BorderSide(color: selected ? AppColors.seaGlass : AppColors.line),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(5),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      value.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: selected ? AppColors.seaGlass : AppColors.text,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    selected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    size: 13,
-                    color: selected ? AppColors.seaGlass : AppColors.muted,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(switch (value) {
-                'wav' => 'Uncompressed',
-                'flac' => 'Lossless',
-                _ => 'Compressed',
-              }, style: const TextStyle(fontSize: 10, color: AppColors.muted)),
-            ],
-          ),
-        ),
+      style: const TextStyle(
+        fontSize: 9,
+        letterSpacing: 1,
+        fontWeight: FontWeight.w700,
+        color: AppColors.muted,
       ),
     ),
   );
@@ -420,7 +514,7 @@ class _ExportSelect<T> extends StatelessWidget {
         initialValue: value,
         isExpanded: true,
         style: const TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: 'Inter',
           fontSize: 11,
           color: AppColors.text,
         ),

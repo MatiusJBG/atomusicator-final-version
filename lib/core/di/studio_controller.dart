@@ -20,6 +20,14 @@ abstract class StudioGateway {
   Future<void> cancel(String id);
   Future<native.UiSessionDto> open(String directory);
   Future<String> pitch(int semitones, bool formants);
+  Future<native.UiLivePitchDto> livePitchStatus();
+  Future<native.UiLivePitchDto> livePitch(
+    String sessionId,
+    BigInt epoch,
+    BigInt revision,
+    int semitones,
+    bool formants,
+  );
   Future<String> export(
     String destination,
     List<String> stems,
@@ -27,8 +35,9 @@ abstract class StudioGateway {
     int rate,
     int channels,
     int bits,
-    bool normalize,
-  );
+    bool normalize, {
+    native.UiPitchExportDto? pitch,
+  });
   Future<native.UiPlaybackDto> playback();
   Future<void> play();
   Future<void> pause();
@@ -39,6 +48,22 @@ abstract class StudioGateway {
 }
 
 class NativeStudioGateway implements StudioGateway {
+  @override
+  Future<native.UiLivePitchDto> livePitchStatus() => native.livePitchStatus();
+  @override
+  Future<native.UiLivePitchDto> livePitch(
+    String sessionId,
+    BigInt epoch,
+    BigInt revision,
+    int semitones,
+    bool formants,
+  ) => native.setLivePitch(
+    sessionId: sessionId,
+    epoch: epoch,
+    revision: revision,
+    semitones: semitones,
+    preserveFormants: formants,
+  );
   @override
   Future<List<double>> waveform(
     String sessionId,
@@ -79,8 +104,9 @@ class NativeStudioGateway implements StudioGateway {
     int rate,
     int channels,
     int bits,
-    bool normalize,
-  ) => native.startExport(
+    bool normalize, {
+    native.UiPitchExportDto? pitch,
+  }) => native.startExportWithPitch(
     destination: destination,
     selectedStems: stems,
     format: format,
@@ -88,6 +114,7 @@ class NativeStudioGateway implements StudioGateway {
     channels: channels,
     bitDepth: bits,
     normalize: normalize,
+    pitch: pitch,
   );
   @override
   Future<native.UiPlaybackDto> playback() => native.playbackStatus();
@@ -151,8 +178,14 @@ class StudioState {
     this.master = 1,
     this.tracks = const {},
     this.exportDirectory,
+    this.livePitch,
+    this.requestedPitch = 0,
+    this.requestedFormants = true,
   });
   final native.UiSessionDto? session;
+  final native.UiLivePitchDto? livePitch;
+  final int requestedPitch;
+  final bool requestedFormants;
   final native.UiJobDto? job;
   final bool busy, playing;
   final String? error, exportDirectory;
@@ -174,6 +207,9 @@ class StudioState {
     double? master,
     Map<String, MixTrackState>? tracks,
     String? exportDirectory,
+    native.UiLivePitchDto? livePitch,
+    int? requestedPitch,
+    bool? requestedFormants,
   }) => StudioState(
     session: session ?? this.session,
     job: clearJob ? null : job ?? this.job,
@@ -186,6 +222,9 @@ class StudioState {
     master: master ?? this.master,
     tracks: tracks ?? this.tracks,
     exportDirectory: exportDirectory ?? this.exportDirectory,
+    livePitch: livePitch ?? this.livePitch,
+    requestedPitch: requestedPitch ?? this.requestedPitch,
+    requestedFormants: requestedFormants ?? this.requestedFormants,
   );
 }
 
@@ -230,6 +269,9 @@ final recoverableJobsProvider =
     });
 
 class StudioController extends Notifier<StudioState> {
+  int _pitchGeneration = 0;
+  ({int semitones, bool formants, int generation})? _pendingPitch;
+  Future<void>? _pitchFlight;
   bool _polling = false, _disposed = false;
   int _commands = 0;
   int _epoch = 0, _playbackRevision = 0;
@@ -293,8 +335,62 @@ class StudioController extends Notifier<StudioState> {
 
   Future<void> separate(String source, {bool allowDownload = false}) =>
       _start(() => _gateway.separate(source, allowDownload));
-  Future<void> applyPitch(int semitones, bool formants) =>
-      _start(() => _gateway.pitch(semitones, formants));
+  Future<void> applyPitch(int semitones, bool formants) {
+    if (state.session == null || state.livePitch == null || _disposed) {
+      return Future.value();
+    }
+    state = state.copyWith(
+      requestedPitch: semitones,
+      requestedFormants: formants,
+      clearError: true,
+    );
+    _pendingPitch = (
+      semitones: semitones,
+      formants: formants,
+      generation: _pitchGeneration,
+    );
+    return _pitchFlight ??= _drainPitch().whenComplete(
+      () => _pitchFlight = null,
+    );
+  }
+
+  Future<void> _drainPitch() async {
+    while (!_disposed && _pendingPitch != null) {
+      final target = _pendingPitch!;
+      _pendingPitch = null;
+      final previous = state.livePitch;
+      final session = state.session;
+      if (previous == null ||
+          session == null ||
+          target.generation != _pitchGeneration) {
+        continue;
+      }
+      try {
+        final accepted = await _gateway.livePitch(
+          session.id,
+          previous.epoch,
+          previous.revision + BigInt.one,
+          target.semitones,
+          target.formants,
+        );
+        if (!_disposed &&
+            target.generation == _pitchGeneration &&
+            accepted.sessionId == state.session?.id) {
+          state = state.copyWith(livePitch: accepted);
+        }
+      } catch (error) {
+        if (!_disposed && target.generation == _pitchGeneration) {
+          state = state.copyWith(
+            error: error.toString(),
+            requestedPitch: _pendingPitch == null ? previous.semitones : null,
+            requestedFormants:
+                _pendingPitch == null ? previous.preserveFormants : null,
+          );
+        }
+      }
+    }
+  }
+
   Future<void> resumeSavedJob(String id) => _start(() => _gateway.resume(id));
   Future<void> discardSavedJob(String id) => _guard(() async {
     await _gateway.discard(id);
@@ -308,17 +404,30 @@ class StudioController extends Notifier<StudioState> {
     int channels,
     int bits,
     bool normalize,
-  ) => _start(
-    () => _gateway.export(
-      destination,
-      stems,
-      format,
-      rate,
-      channels,
-      bits,
-      normalize,
-    ),
-  );
+  ) {
+    final pitch =
+        state.livePitch == null || state.session == null
+            ? null
+            : native.UiPitchExportDto(
+              sessionId: state.session!.id,
+              epoch: state.livePitch!.epoch,
+              semitones: state.requestedPitch,
+              preserveFormants: state.requestedFormants,
+            );
+    return _start(
+      () => _gateway.export(
+        destination,
+        stems,
+        format,
+        rate,
+        channels,
+        bits,
+        normalize,
+        pitch: pitch,
+      ),
+    );
+  }
+
   Future<void> cancel() => _guard(() async {
     final id = state.job?.id;
     if (id != null) {
@@ -340,6 +449,12 @@ class StudioController extends Notifier<StudioState> {
   }
 
   Future<void> _accept(native.UiSessionDto session, int epoch) async {
+    _pitchGeneration++;
+    _pendingPitch = null;
+    final livePitch = await _gateway.livePitchStatus();
+    if (_disposed || epoch != _epoch || livePitch.sessionId != session.id) {
+      return;
+    }
     final same = state.session?.id == session.id;
     final tracks = {
       for (final track in session.tracks)
@@ -355,6 +470,10 @@ class StudioController extends Notifier<StudioState> {
     if (!_disposed && epoch == _epoch) {
       state = state.copyWith(
         session: session,
+        clearError: true,
+        livePitch: livePitch,
+        requestedPitch: livePitch.semitones,
+        requestedFormants: livePitch.preserveFormants,
         tracks: Map.unmodifiable(tracks),
         playing: false,
         peak: 0,

@@ -50,3 +50,65 @@ fn rejects_legacy_roots_and_uses_a_valid_local_default() {
         policy.default_projects_dir().canonicalize().unwrap()
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn inaccessible_legacy_default_falls_back_to_native_projects_and_repairs_preferences() {
+    use std::process::Command;
+    struct DeniedFolder(PathBuf);
+    impl Drop for DeniedFolder {
+        fn drop(&mut self) {
+            let _ = Command::new("icacls")
+                .arg(&self.0)
+                .args(["/remove:d", "*S-1-1-0"])
+                .output();
+        }
+    }
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let legacy = root.0.join("Separador Vocal/Separador Vocal/projects");
+    std::fs::create_dir_all(&legacy).unwrap();
+    let sentinel = legacy.join("existing-session.json");
+    std::fs::write(&sentinel, b"original session").unwrap();
+    let policy = WorkspacePathPolicy::from_local_data_dir(&root.0);
+    std::fs::create_dir_all(policy.app_data_root()).unwrap();
+    std::fs::write(
+        policy.app_data_root().join("settings.json"),
+        serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    let denial = Command::new("icacls")
+        .arg(&legacy)
+        .args(["/deny", "*S-1-1-0:(OI)(CI)(W)"])
+        .output()
+        .unwrap();
+    assert!(
+        denial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&denial.stderr)
+    );
+    let restore_permissions = DeniedFolder(legacy.clone());
+    assert!(WorkspacePathPolicy::validate_projects_destination(&legacy).is_err());
+    let preferences = ProjectsPreferences::new(policy.clone(), Legacy(vec![legacy.clone()]));
+    let loaded = preferences
+        .load()
+        .expect("a denied legacy folder must not block startup/import");
+    assert_eq!(
+        loaded,
+        policy
+            .app_data_root()
+            .join("projects")
+            .canonicalize()
+            .unwrap()
+    );
+    let saved: PathBuf = serde_json::from_slice(
+        &std::fs::read(policy.app_data_root().join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved, loaded);
+    assert!(preferences.save(&legacy).is_err());
+    assert_eq!(preferences.load().unwrap(), loaded);
+    // Windows generic-write denial also denies Synchronize, used by normal
+    // read handles. Restore this fixture's ACL before checking original bytes.
+    drop(restore_permissions);
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"original session");
+}

@@ -25,6 +25,37 @@ fn main() -> Result<(), String> {
         if (api::playback_status()?.position_seconds - paused).abs() > 0.001 {
             return Err("paused clock advanced".into());
         }
+        let mut pitch = api::live_pitch_status()?;
+        for (semitones, formants) in [(12, true), (-12, true), (7, false), (0, true)] {
+            let before = api::playback_status()?.position_seconds;
+            pitch = api::set_live_pitch(
+                session.id.clone(),
+                pitch.epoch,
+                pitch.revision + 1,
+                semitones,
+                formants,
+            )?;
+            api::play()?;
+            let started = Instant::now();
+            std::thread::sleep(Duration::from_millis(450));
+            let status = api::playback_status()?;
+            if status.failure.is_some() || !status.playing {
+                return Err(format!(
+                    "live pitch interrupted playback: {:?}",
+                    status.failure
+                ));
+            }
+            let advanced = status.position_seconds - before;
+            if (advanced - started.elapsed().as_secs_f64()).abs() > 0.10 {
+                return Err(format!(
+                    "pitch changed the playback clock: advanced {advanced}"
+                ));
+            }
+            if api::live_pitch_status()?.applied_revision != pitch.revision {
+                return Err("pitch revision was not consumed by the callback".into());
+            }
+            api::pause()?;
+        }
         for position in [duration * 0.5, 0.1, duration * 0.25] {
             api::seek(position)?;
             api::play()?;
@@ -51,7 +82,8 @@ fn main() -> Result<(), String> {
         println!(
             "{}",
             serde_json::json!({"tracks":session.tracks.len(),"duration_seconds":duration,
-            "physical_callback":true,"master_gain":0,"pause_seek_eof":true,"auditory_quality_evaluated":false})
+            "physical_callback":true,"master_gain":0,"pause_seek_eof":true,
+            "live_pitch_without_clock_change":true,"pitch_revision_consumed":true,"auditory_quality_evaluated":false})
         );
         Ok(())
     })();

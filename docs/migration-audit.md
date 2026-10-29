@@ -52,7 +52,7 @@ La caché antigua también estaba mal localizada: Python usa
 | Reproducción | Mezcla sincronizada | CPAL sin API ni transporte completo | Play, pausa, stop, búsqueda común, fin de reproducción; cargado y controlado desde Flutter |
 | Mezcla | Ganancia, mute/solo, panorama, master | Controles internos sin conexión | Controles conectados; master antes de clipping y medidor master basado en las muestras mezcladas |
 | Formas de onda/zoom | Ondas y desplazamiento común | Cuadrícula decorativa | Picos reales desde Rust, playhead y búsqueda sobre la onda, regla temporal y zoom común 100–400 % |
-| Pitch | ±12, Rubber Band, tempo constante, formantes | Ajuste de velocidad que altera duración | Render offline Rubber Band con tempo 1.0 y formantes opcionales; usa originales, publica lote completo y mantiene posición/mezcla; 0 restaura originales |
+| Pitch | ±12, Rubber Band, tempo constante, formantes | Ajuste de velocidad que altera duración | Desde 0.7.0: Signalsmith integrado, cinco stems alineados, controles en vivo sin Apply ni render, tempo constante, formantes opcionales, originales inmutables y ajustes locales. Se conserva la API offline anterior para compatibilidad. Evidencia y límites en [interactive-pitch.md](interactive-pitch.md) |
 | Exportación | WAV/FLAC/MP3, selección y opciones | Solo puerto WAV | Lote transaccional de stems seleccionados, 44.1/48 kHz, mono/estéreo, WAV 16/24 bits o float32, FLAC 16/24 bits, MP3 320 kbps, loudnorm opcional y pitch activo |
 | Proyectos | Carpeta configurable y QSettings | Política de rutas | Selector de carpeta escribible y preferencia JSON persistida en AppData; adopción no destructiva de carpetas antiguas |
 | Puente | No aplica | Metadatos solamente | API generada con FRB **2.8.0**, trabajos, sesiones, transporte y mezcla; audio PCM permanece en Rust |
@@ -115,6 +115,14 @@ El producto y su paquete siguen sin Python.
 Las cuotas de caché son de retención, no límites sobre artefactos activos. Los
 presupuestos de RAM son estimaciones conservadoras de admisión, no un límite de
 RSS impuesto por Windows ni contabilidad exacta del allocator de ONNX Runtime.
+La admisión CPU permite una ruta compacta cuando no quedan los 3 GiB libres
+estimados para retener dos sesiones: libera modelos ONNX inactivos, limita su
+caché a una sesión y vuelve a consultar la memoria del sistema. Exige al menos
+2 GiB disponibles después de reservar 512 MiB para el sistema; no cambia modelos,
+precisión, FFT ni hilos de inferencia. La caché reducida permanece así durante
+la vida del pool. No elimina sesiones prestadas ni permite trabajos simultáneos.
+La regresión con los cuatro modelos reales compara esta ruta con el baseline de
+dos sesiones y exige error máximo por muestra `<=1e-6` en los cinco stems.
 El espacio libre se verifica antes de trabajar y el proceso FFmpeg conserva un
 margen de seguridad. Los cachés históricos en proyectos anteriores se preservan;
 los nuevos renders de pitch se guardan en la caché nativa central.

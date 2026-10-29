@@ -6,7 +6,7 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<List<UiRecoverableJobDto>> recoverableJobs() =>
     RustLib.instance.api.crateApiRecoverableJobs();
@@ -60,6 +60,23 @@ Future<String> startPitch({
   preserveFormants: preserveFormants,
 );
 
+Future<UiLivePitchDto> livePitchStatus() =>
+    RustLib.instance.api.crateApiLivePitchStatus();
+
+Future<UiLivePitchDto> setLivePitch({
+  required String sessionId,
+  required BigInt epoch,
+  required BigInt revision,
+  required int semitones,
+  required bool preserveFormants,
+}) => RustLib.instance.api.crateApiSetLivePitch(
+  sessionId: sessionId,
+  epoch: epoch,
+  revision: revision,
+  semitones: semitones,
+  preserveFormants: preserveFormants,
+);
+
 Future<String> startExport({
   required String destination,
   required List<String> selectedStems,
@@ -76,6 +93,26 @@ Future<String> startExport({
   channels: channels,
   bitDepth: bitDepth,
   normalize: normalize,
+);
+
+Future<String> startExportWithPitch({
+  required String destination,
+  required List<String> selectedStems,
+  required String format,
+  required int sampleRate,
+  required int channels,
+  required int bitDepth,
+  required bool normalize,
+  UiPitchExportDto? pitch,
+}) => RustLib.instance.api.crateApiStartExportWithPitch(
+  destination: destination,
+  selectedStems: selectedStems,
+  format: format,
+  sampleRate: sampleRate,
+  channels: channels,
+  bitDepth: bitDepth,
+  normalize: normalize,
+  pitch: pitch,
 );
 
 Future<UiPlaybackDto> playbackStatus() =>
@@ -184,6 +221,78 @@ enum UiJobStatus {
   failed,
   recoverable,
   completed,
+}
+
+class UiLivePitchDto {
+  final String sessionId;
+  final BigInt epoch;
+  final BigInt revision;
+
+  /// Revision consumed by the audio callback, not a physical latency measurement.
+  final BigInt appliedRevision;
+  final int semitones;
+  final bool preserveFormants;
+
+  const UiLivePitchDto({
+    required this.sessionId,
+    required this.epoch,
+    required this.revision,
+    required this.appliedRevision,
+    required this.semitones,
+    required this.preserveFormants,
+  });
+
+  @override
+  int get hashCode =>
+      sessionId.hashCode ^
+      epoch.hashCode ^
+      revision.hashCode ^
+      appliedRevision.hashCode ^
+      semitones.hashCode ^
+      preserveFormants.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiLivePitchDto &&
+          runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
+          epoch == other.epoch &&
+          revision == other.revision &&
+          appliedRevision == other.appliedRevision &&
+          semitones == other.semitones &&
+          preserveFormants == other.preserveFormants;
+}
+
+class UiPitchExportDto {
+  final String sessionId;
+  final BigInt epoch;
+  final int semitones;
+  final bool preserveFormants;
+
+  const UiPitchExportDto({
+    required this.sessionId,
+    required this.epoch,
+    required this.semitones,
+    required this.preserveFormants,
+  });
+
+  @override
+  int get hashCode =>
+      sessionId.hashCode ^
+      epoch.hashCode ^
+      semitones.hashCode ^
+      preserveFormants.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiPitchExportDto &&
+          runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
+          epoch == other.epoch &&
+          semitones == other.semitones &&
+          preserveFormants == other.preserveFormants;
 }
 
 class UiPlaybackDto {

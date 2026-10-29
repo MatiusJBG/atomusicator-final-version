@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipInstaller,
+    [switch]$PrepareDebug,
     [string]$FfmpegRuntimeDirectory,
     [string]$InnoCompiler
 )
@@ -13,6 +14,9 @@ $rustManifest = Join-Path $repoRoot 'rust_core\Cargo.toml'
 $rustReleaseDirectory = $null
 $installerDefinition = Join-Path $PSScriptRoot 'Atomusicator.iss'
 $installerOutput = Join-Path $PSScriptRoot 'dist'
+$versionLine = Select-String -LiteralPath (Join-Path $repoRoot 'pubspec.yaml') -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+\d+)?\s*$'
+if (-not $versionLine) { throw 'Could not read the application version from pubspec.yaml.' }
+$appVersion = $versionLine.Matches[0].Groups[1].Value
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
@@ -84,6 +88,28 @@ foreach ($required in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'
 }
 
 # Record exactly what is distributed, without including the manifest in itself.
+$pitchVendor = Join-Path $repoRoot 'rust_core\crates\infrastructure\native\vendor'
+$pitchLicenses = Join-Path $releaseDirectory 'licenses\signalsmith'
+New-Item -ItemType Directory -Path $pitchLicenses -Force | Out-Null
+foreach ($entry in @(
+    @{source='STRETCH-LICENSE.txt'; target='STRETCH-LICENSE.txt'},
+    @{source='signalsmith-linear\LICENSE.txt'; target='LINEAR-LICENSE.txt'},
+    @{source='PROVENANCE.json'; target='PROVENANCE.json'}
+)) {
+    Copy-Item -LiteralPath (Join-Path $pitchVendor $entry.source) -Destination (Join-Path $pitchLicenses $entry.target) -Force
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $releaseDirectory -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $releaseDirectory -Force
+
+# Bundled helper EXEs can inherit a Low label from the build workspace too.
+# Medium is normal user integrity, not administrator elevation. Keep directory
+# permissions and the labels on TEMP/AppData untouched.
+foreach ($name in @('atomusicator.exe', 'audio-tools\bin\ffmpeg.exe', 'audio-tools\bin\ffprobe.exe')) {
+    $executable = Join-Path $releaseDirectory $name
+    & "$env:SystemRoot\System32\icacls.exe" $executable /setintegritylevel M | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not set normal integrity on $executable." }
+}
+
 $releaseRoot = [System.IO.Path]::GetFullPath($releaseDirectory)
 $manifest = Get-ChildItem -LiteralPath $releaseRoot -File -Recurse |
     Where-Object { $_.Name -ne 'release-manifest.json' } |
@@ -119,8 +145,32 @@ if (-not $SkipInstaller) {
     if (-not $compiler) { throw 'Inno Setup 6 was not found. Install it or pass -SkipInstaller to prepare the release folder only.' }
 
     New-Item -ItemType Directory -Path $installerOutput -Force | Out-Null
-    & $compiler.Source "/DAppVersion=0.6.0" "/DReleaseDir=$releaseDirectory" "/DOutputDir=$installerOutput" $installerDefinition
+    & $compiler.Source "/DAppVersion=$appVersion" "/DReleaseDir=$releaseDirectory" "/DOutputDir=$installerOutput" $installerDefinition
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+    $installerExecutable = Join-Path $installerOutput "Atomusicator-Setup-$appVersion.exe"
+    & "$env:SystemRoot\System32\icacls.exe" $installerExecutable /setintegritylevel M | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set normal integrity on the generated installer.' }
+}
+
+if ($PrepareDebug) {
+    Push-Location $repoRoot
+    try {
+        flutter build windows --debug
+        if ($LASTEXITCODE -ne 0) { throw 'Flutter Windows debug build failed.' }
+    } finally { Pop-Location }
+    $debugDirectory = Join-Path $repoRoot 'build\windows\x64\runner\Debug'
+    Get-ChildItem -LiteralPath $releaseDirectory -File -Filter '*.dll' |
+        Where-Object Name -Match '^(atomusicator_bootstrap_ffi|onnxruntime.*|msvcp140.*|vcruntime140.*|concrt140)\.dll$' |
+        Copy-Item -Destination $debugDirectory -Force
+    $debugAudioTools = Join-Path $debugDirectory 'audio-tools'
+    New-Item -ItemType Directory -Path $debugAudioTools -Force | Out-Null
+    Copy-Item -Path (Join-Path $audioTools '*') -Destination $debugAudioTools -Recurse -Force
+    foreach ($name in @('atomusicator.exe', 'audio-tools\bin\ffmpeg.exe', 'audio-tools\bin\ffprobe.exe')) {
+        $executable = Join-Path $debugDirectory $name
+        & "$env:SystemRoot\System32\icacls.exe" $executable /setintegritylevel M | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not set normal integrity on $executable." }
+    }
+    Write-Host "Debug runtime prepared for flutter run: $debugDirectory"
 }
 
 Write-Host "Windows release files: $releaseDirectory"

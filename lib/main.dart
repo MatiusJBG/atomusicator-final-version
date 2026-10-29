@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/theme/app_theme.dart';
+import 'core/di/desktop_studio_state.dart';
 import 'src/features/workbench/audio_workbench.dart';
 
 Future<void> main() async {
@@ -13,10 +14,12 @@ Future<void> main() async {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
       const WindowOptions(
-        size: Size(1440, 920),
+        size: Size(1440, 900),
         minimumSize: Size(920, 640),
         center: true,
         title: 'Atomusicator',
+        titleBarStyle: TitleBarStyle.hidden,
+        windowButtonVisibility: false,
         backgroundColor: AppColors.canvas,
       ),
       () async {
@@ -28,11 +31,12 @@ Future<void> main() async {
   runApp(const ProviderScope(child: AtomusicatorApp()));
 }
 
-class AtomusicatorApp extends StatelessWidget {
+class AtomusicatorApp extends ConsumerWidget {
   const AtomusicatorApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(desktopPreferencesLoadProvider);
     return MaterialApp(
       title: 'Atomusicator',
       debugShowCheckedModeBanner: false,

@@ -21,7 +21,9 @@ foreach ($entry in $manifest.files) {
 foreach ($required in @('atomusicator.exe', 'atomusicator_bootstrap_ffi.dll', 'flutter_windows.dll',
     'onnxruntime.dll', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
     'data\icudtl.dat', 'data\app.so', 'audio-tools\bin\ffmpeg.exe',
-    'audio-tools\bin\ffprobe.exe', 'audio-tools\LICENSE', 'audio-tools\runtime-manifest.json')) {
+    'audio-tools\bin\ffprobe.exe', 'audio-tools\LICENSE', 'audio-tools\runtime-manifest.json',
+    'licenses\signalsmith\STRETCH-LICENSE.txt', 'licenses\signalsmith\LINEAR-LICENSE.txt',
+    'licenses\signalsmith\PROVENANCE.json', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
     if (-not (Test-Path -LiteralPath (Join-Path $releaseRoot $required) -PathType Leaf)) { throw "Missing runtime file: $required" }
 }
 if (Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Where-Object { $_.Extension -in @('.py', '.pyc', '.pyd') -or $_.Name -match '^python.*\.(exe|dll)$' }) {

@@ -20,12 +20,13 @@ pub struct AlignedFrame {
     pub generation: u64,
     pub position_seconds: f64,
     pub samples: [[f32; 2]; 5],
+    pub pitch_revision: u64,
 }
 pub struct AlignedProducer {
-    cancel: Arc<AtomicBool>,
+    pub(super) cancel: Arc<AtomicBool>,
     pub finished: Arc<AtomicBool>,
     pub failed: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    pub(super) worker: Option<JoinHandle<()>>,
 }
 pub struct AlignedStream {
     pub consumer: Consumer<AlignedFrame>,
@@ -41,6 +42,15 @@ impl Drop for AlignedProducer {
     }
 }
 impl AlignedStream {
+    pub fn open_pitched(
+        paths: &[PathBuf],
+        seek_seconds: f64,
+        output_rate: u32,
+        generation: u64,
+        control: Arc<crate::live_pitch_control::LivePitchControl>,
+    ) -> Result<Self, DomainError> {
+        super::pitch_stream::open(paths, seek_seconds, output_rate, generation, control)
+    }
     pub fn open(
         paths: &[PathBuf],
         seek_seconds: f64,
@@ -131,6 +141,7 @@ impl AlignedStream {
                             }
                         }
                         let mut frame = AlignedFrame {
+                            pitch_revision: 0,
                             generation,
                             position_seconds: (seek + (index + 1) as f64 / rate).min(duration),
                             samples,
