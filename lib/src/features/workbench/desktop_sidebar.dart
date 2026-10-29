@@ -32,7 +32,7 @@ class _DesktopTitleBar extends ConsumerWidget {
                       ref.watch(
                             studioProvider.select((s) => s.session?.name),
                           ) ??
-                          'Atomusicator',
+                          'Estudio de audio',
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 11,
@@ -218,11 +218,11 @@ void _showStudioHelp(BuildContext context) => showDialog<void>(
   context: context,
   builder:
       (context) => AlertDialog(
-        title: const Text('Formatos y límites'),
+        title: const Text('Atomusicator · Estudio de audio'),
         content: const SizedBox(
           width: 470,
           child: Text(
-            'Importa WAV, MP3, FLAC o M4A. También puedes arrastrar archivos o copiarlos en el Explorador y pegarlos con Ctrl+V.\n\nLa separación genera cinco stems en este equipo. Los modelos se descargan una sola vez con tu autorización. Conserva el audio original para reabrir el proyecto.',
+            'Extrae cinco pistas de una mezcla, reprodúcelas de forma sincronizada, ajusta su mezcla y tono, y exporta el resultado.\n\nImporta WAV, MP3, FLAC o M4A. También puedes arrastrar archivos o copiarlos en el Explorador y pegarlos con Ctrl+V.\n\nLa extracción se realiza en este equipo. Los modelos se descargan una sola vez con tu autorización. Conserva el audio original para reabrir el proyecto.',
           ),
         ),
         actions: [
