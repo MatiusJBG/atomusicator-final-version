@@ -10,7 +10,6 @@ use directories::BaseDirs;
 use crate::errors::InfrastructureError;
 
 pub const APP_DIRECTORY_NAME: &str = "Atomusicator";
-pub const LEGACY_APP_DIRECTORY_NAME: &str = "Separador Vocal";
 
 static NEXT_PROBE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -18,7 +17,7 @@ static NEXT_PROBE_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspacePathPolicy {
     app_data_root: PathBuf,
-    legacy_data_root: Option<PathBuf>,
+    legacy_data_roots: Vec<PathBuf>,
 }
 
 impl WorkspacePathPolicy {
@@ -32,16 +31,9 @@ impl WorkspacePathPolicy {
     /// Constructor for deterministic tests and callers with an explicit OS data directory.
     pub fn from_local_data_dir(local_data_dir: impl Into<PathBuf>) -> Self {
         let local_data_dir = local_data_dir.into();
-        let flat_legacy = local_data_dir.join(LEGACY_APP_DIRECTORY_NAME);
-        let nested_legacy = flat_legacy.join(LEGACY_APP_DIRECTORY_NAME);
-        let legacy_root = if nested_legacy.is_dir() {
-            nested_legacy
-        } else {
-            flat_legacy
-        };
         Self {
+            legacy_data_roots: super::legacy_import::data_roots(&local_data_dir),
             app_data_root: local_data_dir.join(APP_DIRECTORY_NAME),
-            legacy_data_root: legacy_root.is_dir().then_some(legacy_root),
         }
     }
 
@@ -58,15 +50,36 @@ impl WorkspacePathPolicy {
     }
 
     pub fn default_projects_dir(&self) -> PathBuf {
-        if let Some(legacy_projects) = self
-            .legacy_data_root
-            .as_ref()
-            .map(|legacy_root| legacy_root.join("projects"))
-            .filter(|path| path.is_dir())
-        {
-            return legacy_projects;
-        }
         self.native_projects_dir()
+    }
+
+    pub fn legacy_project_dirs(&self) -> Vec<PathBuf> {
+        self.legacy_data_roots
+            .iter()
+            .map(|root| root.join("projects"))
+            .filter(|path| path.is_dir())
+            .collect()
+    }
+
+    pub fn is_historical_projects_path(&self, path: &Path) -> bool {
+        let candidate = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.legacy_project_dirs().iter().any(|root| {
+            root.canonicalize()
+                .is_ok_and(|root| candidate.starts_with(root))
+        })
+    }
+
+    /// Resume requests may contain a formerly active managed destination.
+    pub fn active_projects_destination(&self, path: &Path) -> PathBuf {
+        if self.is_historical_projects_path(path) {
+            self.native_projects_dir()
+        } else {
+            path.to_path_buf()
+        }
+    }
+
+    pub fn import_legacy_projects(&self) -> Result<usize, InfrastructureError> {
+        super::legacy_import::import_projects(self)
     }
 
     /// App-owned fallback, independent of historical folders and their permissions.
@@ -88,7 +101,7 @@ impl WorkspacePathPolicy {
         }
 
         let mut candidates = vec![self.models_dir().join(file_name)];
-        if let Some(legacy_root) = &self.legacy_data_root {
+        for legacy_root in &self.legacy_data_roots {
             candidates.push(legacy_root.join("models").join(file_name));
         }
         Ok(candidates)

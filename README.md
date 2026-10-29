@@ -59,8 +59,10 @@ binary simply because it has a similar name.
    to resume or discard it. Keep original audio available for rebuilding stages.
 
 Native data defaults under `%LOCALAPPDATA%\Atomusicator`; project preferences
-can adopt an existing legacy project location. The application reuses compatible
-verified legacy models without moving them. No Python installation is required.
+can retain a custom project location. Atomusicator-managed projects and models
+use its own application directory. Completed historical sessions are imported
+without overwriting originals; compatible historical models are verified and
+copied into the native model directory when needed. No Python installation is required.
 
 Live pitch uses an embedded MIT-licensed Signalsmith engine with bounded
 streaming buffers and two DSP workers for five independent stereo stems.
@@ -271,7 +273,7 @@ See the audit for exact compatibility limits and measured evidence.
 | Flutter cannot find Visual Studio or Windows | Install Desktop development with C++, Windows SDK and CMake tools; rerun `flutter doctor -v` |
 | Missing native DLL / audio tools | Run `packaging/build_windows.ps1 -SkipInstaller`; launch the complete release folder |
 | `_createDevFS` / `PathAccessException` creating a directory in `%TEMP%`, alongside AppData access errors | An executable built in a Low-integrity workspace may inherit Low integrity. Rebuild with the updated Windows runner; it labels the application for normal Medium-integrity execution. `packaging/build_windows.ps1 -SkipInstaller -PrepareDebug` also prepares native DLLs and audio helpers. Restart the app; do not loosen TEMP/AppData permissions. See [Windows integrity diagnosis](docs/windows-integrity.md). |
-| Access denied in `Separador Vocal/.../projects/.atomusicator-write-probe-*` | Rebuild and restart the app. If the historical workspace is not writable, the backend validates `%LOCALAPPDATA%\Atomusicator\projects` and saves it as the new destination. Historical projects remain in place; a manually selected unwritable directory is still rejected. The native destination also requires write access. |
+| Historical workspace selected by an older configuration | Rebuild and restart the app. Managed projects use `%LOCALAPPDATA%\Atomusicator\projects`; completed historical sessions are imported and old bookmarks resolve to those copies. Originals remain untouched. A custom workspace outside historical managed folders is retained and must be writable. |
 | Model download denied / model unavailable | Grant download consent, check network and available disk; do not bypass SHA-256 checks |
 | FLAC invisible in the picker | Rebuild/use the updated app; it uses an explicit WAV/MP3/FLAC/M4A filter |
 | Ctrl+V imports nothing | Copy actual files in Explorer, focus the workbench and paste; copying a filename as text is a different clipboard format |

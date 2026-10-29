@@ -20,7 +20,7 @@ class _DesktopTitleBar extends ConsumerWidget {
                   ),
                   const SizedBox(width: 8),
                   const Text(
-                    'Separador Vocal',
+                    'Atomusicator',
                     style: TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,

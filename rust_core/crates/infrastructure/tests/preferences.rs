@@ -1,3 +1,4 @@
+use atomusicator_infrastructure::storage::legacy_import::PREVIOUS_APP_DIRECTORY;
 use atomusicator_infrastructure::{
     audio_tools::TemporaryDirectory,
     preferences::{LegacyProjectsReader, ProjectsPreferences},
@@ -65,7 +66,11 @@ fn inaccessible_legacy_default_falls_back_to_native_projects_and_repairs_prefere
         }
     }
     let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
-    let legacy = root.0.join("Separador Vocal/Separador Vocal/projects");
+    let legacy = root
+        .0
+        .join(PREVIOUS_APP_DIRECTORY)
+        .join(PREVIOUS_APP_DIRECTORY)
+        .join("projects");
     std::fs::create_dir_all(&legacy).unwrap();
     let sentinel = legacy.join("existing-session.json");
     std::fs::write(&sentinel, b"original session").unwrap();

@@ -46,6 +46,7 @@ void main() {
     'Penpot navigation starts at Inicio and opens empty Atomizador without a mixer dock',
     (tester) async {
       final container = await mount(tester);
+      expect(find.text('Atomusicator'), findsNWidgets(2));
       expect(find.text('Tus proyectos y mezclas recientes'), findsOneWidget);
       await tester.tap(find.byTooltip('Atomizador'));
       await tester.pump();

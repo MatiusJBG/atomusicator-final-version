@@ -1,6 +1,6 @@
 # Penpot desktop implementation
 
-Reference: `Separador Vocal · UI`, file `4b7520f4-628e-8193-8008-d4b8c22582c9`,
+Reference: Atomusicator desktop UI, file `4b7520f4-628e-8193-8008-d4b8c22582c9`,
 page `4b7520f4-628e-8193-8008-d4b8c22582ca`. The boards were inspected through
 Penpot's rendered SVG, including actual coordinates, type sizes and fill colors.
 
