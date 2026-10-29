@@ -1,5 +1,41 @@
 use super::*;
 impl Studio {
+    pub(super) fn restore_pitch_settings(
+        &self,
+        dto: &UiSessionDto,
+        key: &str,
+        policy: &WorkspacePathPolicy,
+    ) -> Result<Option<PitchShiftSpec>, String> {
+        let saved = self.live_pitch_store.load(key).map_err(err)?;
+        if saved.is_some() {
+            return Ok(saved);
+        }
+        let Some(source) = atomusicator_infrastructure::storage::legacy_import::historical_source(
+            policy,
+            Path::new(&dto.directory),
+        ) else {
+            return Ok(None);
+        };
+        let previous = atomusicator_infrastructure::session_reader::read_session_files(
+            &source,
+            &CancellationToken::default(),
+        )
+        .map_err(err)?;
+        let mut old = dto.clone();
+        old.directory = previous.directory.to_string_lossy().into_owned();
+        for track in &mut old.tracks {
+            let kind = parse_stem(&track.stem_type)?;
+            if let Some((_, file)) = previous.stems.iter().find(|(stem, _)| *stem == kind) {
+                track.file_path = file.to_string_lossy().into_owned();
+            }
+        }
+        let old_key = pitch_persistence_key(&old)?;
+        let saved = self.live_pitch_store.load(&old_key).map_err(err)?;
+        if let Some(spec) = saved {
+            self.live_pitch_store.queue(key.into(), spec).map_err(err)?;
+        }
+        Ok(saved)
+    }
     pub fn live_pitch_status(&self) -> Result<crate::api::UiLivePitchDto, String> {
         let loaded = self.loaded.lock().map_err(err)?;
         let loaded = loaded.as_ref().ok_or("no session loaded")?;

@@ -1,4 +1,6 @@
 //! Composition and background job ownership. The bridge passes paths/peaks, never PCM.
+#[cfg(test)]
+mod identity_tests;
 mod live_pitch;
 use crate::api::{UiJobDto, UiPlaybackDto, UiPlaybackFailure, UiSessionDto, UiTrackMeterDto};
 use crate::session_preparation::stem_key;
@@ -236,7 +238,7 @@ impl Studio {
                             error,
                         )
                     })?;
-                    backend.jobs.output(id, directory)?;
+                    backend.jobs.output(id, PathBuf::from(&session.directory))?;
                     Ok(Some(session))
                 },
             )?
@@ -279,8 +281,9 @@ impl Studio {
         if !source.is_file() {
             return Err("source audio does not exist".into());
         }
-        let projects =
-            WorkspacePathPolicy::validate_projects_destination(&projects).map_err(err)?;
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        let active = policy.active_projects_destination(&projects);
+        let projects = WorkspacePathPolicy::validate_projects_destination(&active).map_err(err)?;
         let request = atomusicator_infrastructure::job_journal::JobRequest::Separation {
             source: source.clone(),
             projects: projects.clone(),
@@ -386,12 +389,24 @@ impl Studio {
             .map_err(err)
     }
     fn load_directory(&self, path: &Path) -> Result<UiSessionDto, String> {
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        self.load_directory_with_policy(path, &policy)
+    }
+    fn load_directory_with_policy(
+        &self,
+        path: &Path,
+        policy: &WorkspacePathPolicy,
+    ) -> Result<UiSessionDto, String> {
         let mut loaded_slot = self.loaded.lock().map_err(err)?;
         if let Err(error) = self.live_pitch_store.flush() {
             eprintln!("Pitch settings flush failed: {error}");
         }
+
+        let active_path =
+            atomusicator_infrastructure::storage::legacy_import::resolve_session(policy, path)
+                .map_err(err)?;
         let files = atomusicator_infrastructure::session_reader::read_session_files(
-            path,
+            &active_path,
             &CancellationToken::default(),
         )
         .map_err(err)?;
@@ -409,7 +424,7 @@ impl Studio {
         )?;
         let mut dto = prepared.dto;
         let pitch_key = pitch_persistence_key(&dto)?;
-        match self.live_pitch_store.load(&pitch_key) {
+        match self.restore_pitch_settings(&dto, &pitch_key, policy) {
             Ok(Some(spec)) => {
                 let epoch = self.mixer.live_pitch().snapshot().epoch;
                 self.mixer.live_pitch().set(epoch, 1, spec).map_err(err)?;
@@ -658,7 +673,7 @@ mod tests {
     use atomusicator_domain::{AudioBufferF32, AudioFormat};
     use atomusicator_infrastructure::audio_io::wav_codec::write_wav_f32;
     use std::time::{Duration, Instant};
-    fn backend(root: &Path) -> Arc<Studio> {
+    pub(super) fn backend(root: &Path) -> Arc<Studio> {
         Arc::new(Studio {
             mixer: CpalRealtimeMixer::new().unwrap(),
             jobs: Arc::new(crate::jobs::JobRegistry::new(
@@ -700,7 +715,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    fn legacy_session(root: &Path) {
+    pub(super) fn legacy_session(root: &Path) {
         let audio =
             AudioBufferF32::new(AudioFormat::new(44100, 2).unwrap(), vec![0.1; 88200]).unwrap();
         let mut stems = Vec::new();
