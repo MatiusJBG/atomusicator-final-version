@@ -30,22 +30,45 @@ pub enum ExecutionProviderKind {
 }
 
 pub struct OrtSessionPool {
-    sessions: SessionPool<Mutex<Session>, SessionKey>,
+    sessions: SessionPool<Mutex<PooledSession>, SessionKey>,
     provider_order: Vec<ExecutionProviderKind>,
     intra_threads: AtomicUsize,
     profiling_directory: Option<PathBuf>,
     playback_probe: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     diagnostics: Mutex<BTreeMap<String, SessionDiagnostic>>,
+    quarantined: Mutex<BTreeMap<PathBuf, String>>,
+    device_id: u32,
+    require_accelerator: bool,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct SessionKey {
     path: PathBuf,
     threads: usize,
+    force_cpu: bool,
+}
+pub struct PooledSession {
+    session: Session,
+    provider: ExecutionProviderKind,
+    diagnostic_key: String,
+}
+impl std::ops::Deref for PooledSession {
+    type Target = Session;
+    fn deref(&self) -> &Session {
+        &self.session
+    }
+}
+impl std::ops::DerefMut for PooledSession {
+    fn deref_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionDiagnostic {
+    pub gpu_memory: Option<crate::gpu_probe::AdapterMemory>,
+    pub sampled_peak_gpu_process_bytes: Option<u64>,
+    pub device_id: Option<u32>,
     pub intra_threads: usize,
     pub provider_registered: ExecutionProviderKind,
     /// CPU-only sessions have an unambiguous assignment. Accelerator sessions
@@ -73,6 +96,58 @@ impl Drop for IdleSessionScope {
 }
 
 impl OrtSessionPool {
+    pub fn gpu_device_id(&self) -> Option<u32> {
+        self.provider_order
+            .contains(&ExecutionProviderKind::DirectMl)
+            .then_some(self.device_id)
+    }
+    pub fn using_execution_options(
+        self,
+        options: crate::preferences::ExecutionOptions,
+    ) -> Result<Self, InfrastructureError> {
+        use crate::preferences::ExecutionMode;
+        if options.mode == ExecutionMode::Cpu {
+            return self.using_provider_order(vec![ExecutionProviderKind::Cpu]);
+        }
+        // Qualification and admission currently cover one resident model. Do
+        // not retain an unused accelerated model beside its successor.
+        self.sessions.trim(1)?;
+        let mut device = options.device_id;
+        if options.mode == ExecutionMode::Auto {
+            let mut candidates = Vec::new();
+            for index in 0..16 {
+                match crate::gpu_probe::adapter(index) {
+                    Ok(Some(adapter)) if !adapter.software => candidates.push(adapter),
+                    Ok(Some(_)) => {}
+                    _ => break,
+                }
+            }
+            if let Some(best) = candidates
+                .into_iter()
+                .max_by_key(|value| value.dedicated_bytes)
+            {
+                device = best.index;
+            }
+        }
+        self.with_device_id(device)?.using_provider_order(vec![
+            ExecutionProviderKind::DirectMl,
+            ExecutionProviderKind::Cpu,
+        ])
+    }
+    /// Job admission serializes this reset against every offline inference.
+    pub fn begin_job_diagnostics(&self) -> Result<(), InfrastructureError> {
+        self.diagnostics
+            .lock()
+            .map_err(|_| InfrastructureError::OnnxRuntime("diagnostic lock poisoned".into()))?
+            .clear();
+        self.quarantined
+            .lock()
+            .map_err(|_| {
+                InfrastructureError::OnnxRuntime("provider quarantine lock poisoned".into())
+            })?
+            .clear();
+        Ok(())
+    }
     pub fn idle_scope(self: &Arc<Self>) -> IdleSessionScope {
         IdleSessionScope { pool: self.clone() }
     }
@@ -92,7 +167,15 @@ impl OrtSessionPool {
             profiling_directory: None,
             playback_probe: None,
             diagnostics: Mutex::new(BTreeMap::new()),
+            quarantined: Mutex::new(BTreeMap::new()),
+            device_id: 0,
+            require_accelerator: false,
         })
+    }
+    /// Qualification runs must not silently measure CPU after GPU failure.
+    pub fn requiring_accelerator(mut self) -> Self {
+        self.require_accelerator = true;
+        self
     }
 
     /// Opt-in diagnostic traces; normal application runs do not generate them.
@@ -187,15 +270,38 @@ impl OrtSessionPool {
     pub fn load_session(
         &self,
         model_path: &Path,
-    ) -> Result<Arc<Mutex<Session>>, InfrastructureError> {
+    ) -> Result<Arc<Mutex<PooledSession>>, InfrastructureError> {
+        self.load_session_mode(model_path, false)
+    }
+    fn load_session_mode(
+        &self,
+        model_path: &Path,
+        force_cpu: bool,
+    ) -> Result<Arc<Mutex<PooledSession>>, InfrastructureError> {
         let canonical_path = model_path
             .canonicalize()
             .map_err(|error| InfrastructureError::io(model_path, error))?;
         let threads = self.effective_intra_threads();
-        self.sessions.load(SessionKey { path: canonical_path.clone(), threads }, || {
+        let quarantined = self
+            .quarantined
+            .lock()
+            .map_err(|_| {
+                InfrastructureError::OnnxRuntime("provider quarantine lock poisoned".into())
+            })?
+            .get(&canonical_path)
+            .cloned();
+        let force_cpu = force_cpu || quarantined.is_some();
+        self.sessions.load(SessionKey { path: canonical_path.clone(), threads, force_cpu }, || {
             let started = Instant::now();
-            let mut failures = Vec::new();
-            for provider in self.provider_order.iter().copied() {
+            let mut failures: Vec<String> = quarantined.into_iter().collect();
+            let providers = if force_cpu { &[ExecutionProviderKind::Cpu][..] } else { &self.provider_order };
+            for provider in providers.iter().copied() {
+            if self.require_accelerator && provider==ExecutionProviderKind::Cpu {
+                return Err(format!("qualification requires an accelerator; CPU fallback refused: {}",failures.join("; ")));
+            }
+            if provider == ExecutionProviderKind::DirectMl && let Some(reason) = self.directml_admission_reason() {
+                failures.push(format!("DirectMl admission: {reason}")); continue;
+            }
             let result = SessionBuilder::new()
                 .and_then(|builder| match &self.profiling_directory {
                     Some(directory) => builder.with_profiling(directory.join(crate::audio_tools::unique_id())),
@@ -209,11 +315,14 @@ impl OrtSessionPool {
                 .and_then(|builder| {
                     builder.with_memory_pattern(provider != ExecutionProviderKind::DirectMl)
                 })
-                .and_then(|builder| builder.with_execution_providers([provider_dispatch(provider).error_on_failure()]))
+                .and_then(|builder| builder.with_execution_providers([provider_dispatch(provider, self.device_id).error_on_failure()]))
                 .and_then(|builder| builder.commit_from_file(&canonical_path));
             match result {
                 Ok(session) => {
                     let diagnostic = SessionDiagnostic {
+                        gpu_memory: if provider == ExecutionProviderKind::DirectMl { crate::gpu_probe::adapter(self.device_id).ok().flatten() } else { None },
+                        sampled_peak_gpu_process_bytes: None,
+                        device_id: (provider == ExecutionProviderKind::DirectMl).then_some(self.device_id),
                         intra_threads: threads,
                         provider_registered: provider,
                         provider_effective: (provider == ExecutionProviderKind::Cpu).then(|| "CPUExecutionProvider".into()),
@@ -224,15 +333,89 @@ impl OrtSessionPool {
                     if let Ok(mut diagnostics) = self.diagnostics.lock() {
                         // Bound telemetry independently of the model paths seen.
                         if diagnostics.len() >= 64 { diagnostics.clear(); }
-                        diagnostics.insert(format!("{}#{threads}", canonical_path.display()), diagnostic);
+                        let key=format!("{}#{threads}#{force_cpu}", canonical_path.display());
+                        let mut diagnostic=diagnostic;
+                        diagnostic.sampled_peak_gpu_process_bytes=diagnostics.get(&key).and_then(|v|v.sampled_peak_gpu_process_bytes);
+                        diagnostics.insert(key, diagnostic);
                     }
-                    return Ok(Mutex::new(session));
+                    return Ok(Mutex::new(PooledSession { session, provider, diagnostic_key:format!("{}#{threads}#{force_cpu}",canonical_path.display()) }));
                 }
                 Err(error) => failures.push(format!("{provider:?}: {error}")),
             }
             }
             Err(failures.join("; "))
         })
+    }
+    pub fn with_device_id(mut self, index: u32) -> Result<Self, InfrastructureError> {
+        if index > i32::MAX as u32 {
+            return Err(InfrastructureError::InvalidManifest(
+                "GPU adapter index exceeds i32".into(),
+            ));
+        }
+        self.device_id = index;
+        Ok(self)
+    }
+    fn directml_admission_reason(&self) -> Option<String> {
+        use atomusicator_application::gpu_admission::{GpuBudget, admission_reason};
+        let adapter = match crate::gpu_probe::adapter(self.device_id) {
+            Ok(value) => value,
+            Err(error) => return Some(error.to_string()),
+        };
+        let budget = adapter.and_then(|v| {
+            Some(GpuBudget {
+                dedicated_bytes: v.dedicated_bytes,
+                software: v.software,
+                budget_bytes: v.budget_bytes?,
+                used_bytes: v.current_process_usage_bytes?,
+            })
+        });
+        let ram = match crate::resource_probe::available_memory_bytes() {
+            Ok(value) => value,
+            Err(error) => return Some(error.to_string()),
+        };
+        admission_reason(budget, ram).map(str::to_owned)
+    }
+    fn quarantine(
+        &self,
+        path: &Path,
+        error: &InfrastructureError,
+    ) -> Result<(), InfrastructureError> {
+        if self.require_accelerator {
+            return Err(InfrastructureError::OnnxRuntime(
+                "qualification requires an accelerator; CPU retry refused".into(),
+            ));
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|e| InfrastructureError::io(path, e))?;
+        let mut map = self.quarantined.lock().map_err(|_| {
+            InfrastructureError::OnnxRuntime("provider quarantine lock poisoned".into())
+        })?;
+        if map.len() >= 64 {
+            map.clear();
+        }
+        map.insert(path, format!("accelerator Run failed; CPU retry: {error}"));
+        drop(map);
+        self.sessions.trim(self.capacity()?)?;
+        crate::resource_probe::ensure_memory(1536 * 1024 * 1024, 512 * 1024 * 1024)
+            .map_err(|e| InfrastructureError::OnnxRuntime(e.to_string()))?;
+        Ok(())
+    }
+    fn observe_gpu_memory(&self, key: &str) {
+        if let Ok(Some(info)) = crate::gpu_probe::adapter(self.device_id)
+            && let Ok(mut diagnostics) = self.diagnostics.lock()
+            && let Some(diagnostic) = diagnostics.get_mut(key)
+        {
+            if let Some(bytes) = info.current_process_usage_bytes {
+                diagnostic.sampled_peak_gpu_process_bytes = Some(
+                    diagnostic
+                        .sampled_peak_gpu_process_bytes
+                        .unwrap_or(0)
+                        .max(bytes),
+                );
+            }
+            diagnostic.gpu_memory = Some(info);
+        }
     }
 
     pub fn diagnostics(&self) -> Vec<SessionDiagnostic> {
@@ -261,11 +444,13 @@ impl OrtSessionPool {
 
 fn provider_dispatch(
     provider: ExecutionProviderKind,
+    device_id: u32,
 ) -> ort::execution_providers::ExecutionProviderDispatch {
     match provider {
-        ExecutionProviderKind::DirectMl => {
-            DirectMLExecutionProvider::default().build().fail_silently()
-        }
+        ExecutionProviderKind::DirectMl => DirectMLExecutionProvider::default()
+            .with_device_id(device_id as i32)
+            .build()
+            .fail_silently(),
         ExecutionProviderKind::Cuda => CUDAExecutionProvider::default().build().fail_silently(),
         ExecutionProviderKind::CoreMl => CoreMLExecutionProvider::default().build().fail_silently(),
         ExecutionProviderKind::Cpu => CPUExecutionProvider::default().build().fail_silently(),
@@ -274,6 +459,13 @@ fn provider_dispatch(
 
 pub struct OnnxSessionRunner {
     pool: Arc<OrtSessionPool>,
+}
+struct TensorRequest<'a> {
+    model_path: &'a Path,
+    input_name: &'a str,
+    shape: &'a [i64],
+    input: &'a mut [f32],
+    destination: &'a mut Vec<f32>,
 }
 
 impl OnnxSessionRunner {
@@ -334,7 +526,36 @@ impl OnnxSessionRunner {
                 "tensor input contains non-finite values".into(),
             ));
         }
-        let session = self.pool.load_session(model_path)?;
+        let mut request = TensorRequest {
+            model_path,
+            input_name,
+            shape,
+            input,
+            destination,
+        };
+        crate::provider_retry::run_with_fallback(
+            |force_cpu| {
+                let mut provider = None;
+                self.run_once(&mut request, force_cpu, &mut provider)
+                    .map_err(|error| crate::provider_retry::AttemptFailure { error, provider })
+            },
+            |error| self.pool.quarantine(model_path, error),
+        )
+    }
+    fn run_once(
+        &self,
+        request: &mut TensorRequest<'_>,
+        force_cpu: bool,
+        provider: &mut Option<ExecutionProviderKind>,
+    ) -> Result<(), InfrastructureError> {
+        let TensorRequest {
+            model_path,
+            input_name,
+            shape,
+            input,
+            destination,
+        } = request;
+        let session = self.pool.load_session_mode(model_path, force_cpu)?;
         let session = session.lock().map_err(|_| {
             InfrastructureError::OnnxRuntime("ONNX session lock was poisoned".into())
         })?;
@@ -353,10 +574,23 @@ impl OnnxSessionRunner {
         let tensor: TensorRefMut<'_, f32> =
             unsafe { TensorRefMut::from_raw(info, input.as_mut_ptr().cast(), shape.to_vec()) }
                 .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
-        let inputs = vec![(input_name, tensor)];
-        let outputs = session
-            .run(inputs)
-            .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        let inputs = vec![(*input_name, tensor)];
+        let outputs = session.run(inputs).map_err(|error| {
+            // Invalid models/arguments are permanent caller errors, not a
+            // reason to retry work or disable an otherwise healthy GPU.
+            if !matches!(
+                error.code(),
+                ort::ErrorCode::InvalidArgument
+                    | ort::ErrorCode::InvalidGraph
+                    | ort::ErrorCode::InvalidProtobuf
+                    | ort::ErrorCode::NoSuchFile
+                    | ort::ErrorCode::NoModel
+            ) {
+                *provider = Some(session.provider);
+            }
+            InfrastructureError::OnnxRuntime(error.to_string())
+        })?;
+        *provider = Some(session.provider);
         let (_, output) = outputs.iter().next().ok_or_else(|| {
             InfrastructureError::OnnxRuntime("ONNX model returned no output tensors".into())
         })?;
@@ -371,6 +605,9 @@ impl OnnxSessionRunner {
                 ));
             }
             *target = *value;
+        }
+        if session.provider == ExecutionProviderKind::DirectMl {
+            self.pool.observe_gpu_memory(&session.diagnostic_key);
         }
         Ok(())
     }

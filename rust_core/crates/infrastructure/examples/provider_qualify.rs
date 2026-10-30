@@ -14,6 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .ok_or("usage: provider_qualify <local-report-directory>")?;
     std::fs::create_dir_all(&directory)?;
+    let device_id = std::env::args()
+        .nth(2)
+        .map(|v| v.parse::<u32>())
+        .transpose()?
+        .unwrap_or(0);
     let manager =
         ManifestModelManager::from_embedded_manifest(WorkspacePathPolicy::system_default()?)?;
     let runtime = tokio::runtime::Runtime::new()?;
@@ -26,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             1,
             vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
         )?
+        .with_device_id(device_id)?
         .with_profiling_directory(directory.join("traces"))?,
     );
     let mut results = Vec::new();

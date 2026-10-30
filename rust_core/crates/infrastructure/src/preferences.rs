@@ -8,6 +8,101 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    #[default]
+    Cpu,
+    #[serde(rename = "directml")]
+    DirectMl,
+    Auto,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExecutionOptions {
+    pub mode: ExecutionMode,
+    pub device_id: u32,
+}
+pub struct ExecutionPreferences {
+    root: PathBuf,
+}
+impl ExecutionPreferences {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+    pub fn load(&self) -> Result<ExecutionOptions, InfrastructureError> {
+        let path = self.root.join("execution.json");
+        let options = match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<ExecutionOptions>(&bytes).map_err(|e| {
+                InfrastructureError::InvalidManifest(format!("Invalid execution preference: {e}"))
+            })?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ExecutionOptions::default(),
+            Err(e) => return Err(InfrastructureError::io(&path, e)),
+        };
+        validate_execution(options)?;
+        Ok(options)
+    }
+    pub fn save(&self, options: ExecutionOptions) -> Result<(), InfrastructureError> {
+        validate_execution(options)?;
+        fs::create_dir_all(&self.root).map_err(|e| InfrastructureError::io(&self.root, e))?;
+        let stage = TemporaryDirectory::new(&self.root)
+            .map_err(|e| InfrastructureError::Domain(e.to_string()))?;
+        let temporary = stage.0.join("execution.json");
+        let bytes = serde_json::to_vec(&options)
+            .map_err(|e| InfrastructureError::InvalidManifest(e.to_string()))?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| InfrastructureError::io(&temporary, e))?;
+        use std::io::Write;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|e| InfrastructureError::io(&temporary, e))?;
+        drop(file);
+        fs::rename(&temporary, self.root.join("execution.json"))
+            .map_err(|e| InfrastructureError::io(&temporary, e))
+    }
+    pub fn startup(&self) -> Result<ExecutionOptions, InfrastructureError> {
+        let mut options = self.load()?;
+        if let Some(value) = environment_value("ATOMUSICATOR_EXECUTION_PROVIDER")? {
+            options.mode = match value.as_str() {
+                "cpu" => ExecutionMode::Cpu,
+                "directml" => ExecutionMode::DirectMl,
+                "auto" => ExecutionMode::Auto,
+                _ => {
+                    return Err(InfrastructureError::InvalidManifest(
+                        "execution provider must be cpu, directml or auto".into(),
+                    ));
+                }
+            };
+        }
+        if let Some(value) = environment_value("ATOMUSICATOR_GPU_DEVICE_ID")? {
+            options.device_id = value.parse().map_err(|_| {
+                InfrastructureError::InvalidManifest("GPU device index must be unsigned".into())
+            })?;
+        }
+        validate_execution(options)?;
+        Ok(options)
+    }
+}
+fn environment_value(name: &str) -> Result<Option<String>, InfrastructureError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(e) => Err(InfrastructureError::InvalidManifest(e.to_string())),
+    }
+}
+fn validate_execution(options: ExecutionOptions) -> Result<(), InfrastructureError> {
+    if options.device_id > i32::MAX as u32 {
+        Err(InfrastructureError::InvalidManifest(
+            "GPU device index exceeds i32".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Separate from project-path preferences to preserve their historical format.
 pub struct ComputePreferences {
     root: PathBuf,

@@ -3,6 +3,55 @@ use std::path::Path;
 use atomusicator_infrastructure::onnx::{ExecutionProviderKind, OnnxSessionRunner, OrtSessionPool};
 
 #[test]
+#[ignore = "requires locally cached ONNX model"]
+fn unavailable_gpu_budget_falls_back_to_cpu_with_an_observable_reason() {
+    use atomusicator_infrastructure::{
+        models::manifest_manager::ManifestModelManager, storage::paths::WorkspacePathPolicy,
+    };
+    let policy = WorkspacePathPolicy::system_default().unwrap();
+    let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).unwrap();
+    let path = policy
+        .model_candidates(&manager.manifest().models[0].filename)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.is_file())
+        .expect("cached model required");
+    let pool = OrtSessionPool::with_provider_order(
+        1,
+        vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
+    )
+    .unwrap()
+    .with_device_id(1_000_000)
+    .unwrap();
+    let _session = pool.load_session(&path).unwrap();
+    let diagnostics = pool.diagnostics();
+    assert_eq!(
+        diagnostics[0].provider_registered,
+        ExecutionProviderKind::Cpu
+    );
+    assert!(
+        diagnostics[0]
+            .fallback_errors
+            .iter()
+            .any(|message| message.contains("admission"))
+    );
+    assert!(diagnostics[0].device_id.is_none());
+    let strict = OrtSessionPool::with_provider_order(
+        1,
+        vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
+    )
+    .unwrap()
+    .with_device_id(1_000_000)
+    .unwrap()
+    .requiring_accelerator();
+    let error = strict
+        .load_session(&path)
+        .err()
+        .expect("qualification must not load CPU");
+    assert!(error.to_string().contains("CPU fallback refused"));
+}
+
+#[test]
 fn playback_limits_thread_budget_without_changing_requested_profile() {
     use atomusicator_application::compute_policy::ComputeProfile;
     use std::sync::{
