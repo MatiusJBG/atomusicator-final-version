@@ -17,6 +17,7 @@ pub mod live_pitch_store;
 pub mod mdx;
 pub mod mdx_bounded;
 mod mdx_overlap;
+pub mod mdx_pipeline;
 pub mod model_downloader;
 pub mod models;
 pub mod onnx;
