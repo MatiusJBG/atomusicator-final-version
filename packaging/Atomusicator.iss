@@ -21,6 +21,7 @@
 AppId={#InstallerAppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppMutex=Local\Atomusicator.Running
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}

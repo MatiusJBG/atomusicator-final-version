@@ -1,3 +1,4 @@
+#requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$ReleaseDirectory,
@@ -48,18 +49,46 @@ try {
     # Developer toolchains and model/repository folders cannot satisfy DLL lookup here.
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     $env:ATOMUSICATOR_FFMPEG = $null
-    $ffmpeg = & (Join-Path $releaseRoot 'audio-tools\bin\ffmpeg.exe') -hide_banner -filters 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or $ffmpeg -notmatch '\brubberband\b') { throw 'Bundled FFmpeg lacks the pitch filter.' }
+    $ffmpegInfo = [Diagnostics.ProcessStartInfo]::new((Join-Path $releaseRoot 'audio-tools\bin\ffmpeg.exe'))
+    $ffmpegInfo.UseShellExecute = $false
+    $ffmpegInfo.CreateNoWindow = $true
+    $ffmpegInfo.RedirectStandardOutput = $true
+    $ffmpegInfo.RedirectStandardError = $true
+    $ffmpegInfo.WorkingDirectory = $releaseRoot
+    $ffmpegInfo.ArgumentList.Add('-hide_banner')
+    $ffmpegInfo.ArgumentList.Add('-filters')
+    $ffmpegProcess = [Diagnostics.Process]::new()
+    $ffmpegProcess.StartInfo = $ffmpegInfo
+    try {
+        if (-not $ffmpegProcess.Start()) { throw 'Bundled FFmpeg did not start.' }
+        $filterOutput = $ffmpegProcess.StandardOutput.ReadToEndAsync()
+        $filterErrors = $ffmpegProcess.StandardError.ReadToEndAsync()
+        if (-not $ffmpegProcess.WaitForExit(15000)) {
+            $ffmpegProcess.Kill(); $ffmpegProcess.WaitForExit()
+            throw 'Bundled FFmpeg filter qualification exceeded 15 seconds.'
+        }
+        $ffmpeg = $filterOutput.GetAwaiter().GetResult() + $filterErrors.GetAwaiter().GetResult()
+        if ($ffmpegProcess.ExitCode -ne 0 -or $ffmpeg -notmatch '\brubberband\b') { throw 'Bundled FFmpeg lacks the pitch filter.' }
+    } finally { $ffmpegProcess.Dispose() }
     if ($Launch) {
         $process = Start-Process -FilePath (Join-Path $releaseRoot 'atomusicator.exe') -WorkingDirectory $releaseRoot -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 5
         $process.Refresh()
         if ($process.HasExited) { throw "Desktop startup failed, exit code $($process.ExitCode)." }
+        $runningMarker = $null
+        try {
+            $runningMarker = [Threading.Mutex]::OpenExisting('Local\Atomusicator.Running')
+        } catch {
+            throw 'The running Windows app did not publish its installer safety mutex.'
+        } finally {
+            if ($runningMarker) { $runningMarker.Dispose() }
+        }
     }
     $result = [ordered]@{
         schema_version = 1
         verified_files = @($manifest.files).Count
         reduced_path_startup = [bool]$Launch
+        running_marker_observed = [bool]$Launch
         bundled_rubberband = $true
         public_distribution_ready = [bool]$licenseInventory.public_distribution_ready
         pending_distribution_obligations = @($licenseInventory.pending_obligations)
