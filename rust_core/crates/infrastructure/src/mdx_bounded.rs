@@ -1,6 +1,7 @@
 //! Duration-independent MDX overlap accumulator; window grid and f32 summation order are preserved.
 use crate::job_diagnostics::StageTimer;
 use crate::mdx::{MdxConfig, MdxFftWorkspace, MdxTransform};
+use crate::mdx_overlap::{MdxOverlap, OverlapLayout, WindowPosition};
 use atomusicator_application::{
     CancellationToken,
     ports::{AudioBlockSource, AudioBlockWriter},
@@ -17,7 +18,7 @@ pub fn run_bounded_mdx(
     run_bounded_mdx_observed(c, source, target, cancel, predict, None)
 }
 
-pub type MdxObserver<'a> = dyn Fn(&str, &[f32]) + 'a;
+pub use crate::mdx_overlap::MdxObserver;
 pub fn run_bounded_mdx_observed(
     c: MdxConfig,
     source: &dyn AudioBlockSource,
@@ -84,16 +85,22 @@ pub fn run_bounded_mdx_reusing(
         }
         return Ok(());
     }
-    let mut accumulator = vec![0.0f32; chunk * 2];
-    let mut weights = vec![0.0f32; chunk];
+    let mut overlap = MdxOverlap::new(
+        &transform,
+        c,
+        OverlapLayout {
+            frames,
+            padded,
+            step,
+            peak,
+        },
+        observe.is_some(),
+    );
     let mut raw = vec![0.0f32; chunk * 2];
     let mut normalized = vec![0.0f32; chunk * 2];
     let mut spectrum = vec![0.0f32; 4 * c.dim_f * c.dim_t];
     let mut prediction = Vec::with_capacity(spectrum.len());
-    let mut decoded = vec![0.0f32; chunk * 2];
     let mut fft_workspace = MdxFftWorkspace::new(&transform);
-    let mut output = Vec::with_capacity(step * 2);
-    let mut uncompensated = observe.map(|_| Vec::with_capacity(step * 2));
     for start in (0..padded).step_by(step) {
         check(cancel)?;
         let read_timer = StageTimer::new("read_and_normalize");
@@ -139,68 +146,14 @@ pub fn run_bounded_mdx_reusing(
             observe("tensor_output_spectral_units", &prediction);
         }
         check(cancel)?;
-        {
-            let _timer = StageTimer::new("fft_inverse");
-            transform.inverse_into(&prediction, &mut decoded, &mut fft_workspace)?;
-        }
-        if let Some(observe) = observe {
-            observe("post_istft_normalized_windows", &decoded);
-        }
-        let ola_timer = StageTimer::new("overlap_add");
-        for frame in 0..actual {
-            let weight = if actual > 1 {
-                0.5 - 0.5 * (2.0 * std::f32::consts::PI * frame as f32 / (actual - 1) as f32).cos()
-            } else {
-                1.0
-            };
-            weights[frame] += weight;
-            for channel in 0..2 {
-                accumulator[frame * 2 + channel] += decoded[frame * 2 + channel] * weight;
-            }
-        }
-        // No later window can contribute before the next grid position.
-        let flush = step.min((padded - start) as usize);
-        output.clear();
-        if let Some(values) = &mut uncompensated {
-            values.clear();
-        }
-        for frame in 0..flush {
-            let position = start + frame as u64;
-            if position < trim as u64 || position - trim as u64 >= frames {
-                continue;
-            }
-            if weights[frame] <= 0.0 {
-                return Err(fail("MDX overlap left an uncovered frame"));
-            }
-            for channel in 0..2 {
-                let restored = accumulator[frame * 2 + channel] / weights[frame] * peak;
-                if let Some(values) = &mut uncompensated {
-                    values.push(restored);
-                }
-                let value = restored * c.compensate;
-                output.push(if c.invert {
-                    raw[frame * 2 + channel] - value
-                } else {
-                    value
-                });
-            }
-        }
-        drop(ola_timer);
-        if let Some(observe) = observe {
-            observe(
-                "post_ola_restore_pre_comp_pcm",
-                uncompensated.as_ref().unwrap(),
-            );
-            observe("restored_compensated_pcm", &output);
-        }
-        {
-            let _timer = StageTimer::new("spool_write");
-            target.write(&output)?;
-        }
-        accumulator.copy_within(flush * 2.., 0);
-        accumulator[(chunk - flush) * 2..].fill(0.0);
-        weights.copy_within(flush.., 0);
-        weights[chunk - flush..].fill(0.0);
+        overlap.emit(
+            WindowPosition { start, actual },
+            &raw,
+            &prediction,
+            target,
+            observe,
+            &mut fft_workspace,
+        )?;
     }
     check(cancel)
 }
