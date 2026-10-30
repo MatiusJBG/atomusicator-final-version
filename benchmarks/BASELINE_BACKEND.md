@@ -165,3 +165,33 @@ execution. Hash-bound evidence is retained locally in
 `benchmarks/results/PROVIDER_PARITY_NVIDIA_GROUND_TRUTH.json` and
 `local_audio/closure-nvidia-{full,window}/`. This extends numerical adapter
 coverage; it does not certify long-duration stability or listening quality.
+
+### Duration and memory soak on the discrete adapter
+
+Ten fresh-process runs completed with native-v2 and strict DirectML adapter 1
+(two passes each). The input is the authorized reference mix repeated/trimmed
+without a gain change. Each report verifies input identity, five final WAV
+hashes, stereo reconstruction within 1e-5 and absence of CPU fallback.
+
+| Input duration | Processing RTF, pass 0 / 1 | Sampled process-tree peak RSS, MiB, pass 0 / 1 |
+|---|---:|---:|
+| 15 seconds | 0.5945 / 0.4045 | 391.1 / 392.5 |
+| 3 minutes | 0.2127 / 0.2027 | 399.6 / 397.7 |
+| 10 minutes | 0.2061 / 0.2315 | 386.0 / 388.7 |
+| 30 minutes | 0.2912 / 0.2052 | 373.4 / 378.9 |
+| 60 minutes | 0.3019 / 0.2991 | 377.2 / 383.7 |
+
+The largest reconstruction error was 2.384186e-7. The last 60-minute run's
+internal sampler observed 1,906,438,144 bytes peak current-process DXGI local
+segment usage, with maximum sampling gap 0.4383 seconds. These are sampled
+measurements, not allocation-exact guarantees. A Windows VM remained running;
+background load and OS caches were uncontrolled. Pass 1 is not a resident-model
+warm run and pass 0 does not establish a cold OS cache. The RTF values therefore
+are individual observations rather than isolated performance medians.
+
+Evidence is retained under ignored `local_audio/duration-validation-v3-serial/`:
+per-case reports, resource samples, JSONL stage diagnostics, input/executable
+provenance and the ten-case completion marker. Generated case working audio was
+removed only after successful report validation; original inputs remain local.
+This validates the tested duration range with bounded observed RSS, not musical
+corpus diversity, repeated in-process lifecycle behavior or physical devices.
