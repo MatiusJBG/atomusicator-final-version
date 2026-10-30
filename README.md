@@ -4,10 +4,13 @@ A Windows audio workbench with a Flutter interface and a Rust engine for
 five-stem separation, synchronized mixing, pitch processing and export.
 The application runs without Python or the legacy repository.
 
-**Release status:** Windows x64 CPU candidate, version 0.7.0. Independent vocal
-quality/listening, full 30–60 minute model runs, clean-Windows installation and
-physical device reconnection remain qualification gates. The current installer
-also needs the complete third-party notice/source bundle before publication.
+**Release status:** Windows x64 CPU candidate, version 0.7.0. The backend passed
+the documented 30–60 minute DirectML runs; a private candidate installed and
+rendered its home screen in a clean Windows VM. Full installer lifecycle/import
+qualification, independent vocal quality/listening and outstanding distribution
+source/provenance obligations remain pending. Physical USB reconnection testing
+was excluded from the requested closure scope; no reconnection certification is
+claimed. The candidate includes dependency notice inventories and a Rust SBOM.
 See [migration evidence](docs/migration-audit.md),
 [distribution requirements](docs/distribution-compliance.md) and the
 [manual release procedure](docs/manual-release.md).

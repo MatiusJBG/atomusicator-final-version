@@ -147,7 +147,12 @@ Additional opt-in checks compare borrowed and owned ORT tensors for all four
 verified models, and bounded/reference real-model outputs at <=1e-6. The kernel
 measurement and its limited scope are recorded in `benchmarks/BASELINE_BACKEND.md`.
 
-The Linux VM is not clean-Windows installer qualification, physical-device
-reconnection evidence, GPU parity qualification or the long model soak. Those
-require their own results. Private audio and detailed host reports remain in
-ignored local directories.
+Separate evidence now covers full-track AMD/NVIDIA numerical parity and ten
+duration runs up to 60 minutes; see `benchmarks/BASELINE_BACKEND.md`. The private
+Windows candidate installed per user in the supplied Windows 11 QEMU VM and
+rendered its home screen without a developer SDK. Import and uninstall lifecycle
+qualification remain incomplete. This VM has 4 GiB RAM and no configured audio
+device, so graphical startup does not certify model admission or mixer playback.
+Physical USB disconnect/reconnect testing was explicitly excluded by the owner
+on 2026-10-30 and is not a closure gate; it was not performed. Private audio and
+detailed host reports remain in ignored local directories.
