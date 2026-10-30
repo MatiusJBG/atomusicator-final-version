@@ -4,7 +4,8 @@ param(
     [switch]$SkipInstaller,
     [switch]$PrepareDebug,
     [string]$FfmpegRuntimeDirectory,
-    [string]$InnoCompiler
+    [string]$InnoCompiler,
+    [string]$InstallerOutputDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,13 @@ $installerOutput = Join-Path $PSScriptRoot 'dist'
 $versionLine = Select-String -LiteralPath (Join-Path $repoRoot 'pubspec.yaml') -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+\d+)?\s*$'
 if (-not $versionLine) { throw 'Could not read the application version from pubspec.yaml.' }
 $appVersion = $versionLine.Matches[0].Groups[1].Value
+# Keep each candidate immutable. Previously published/labeled installers must
+# not be overwritten by a compiler running with inherited workspace integrity.
+$installerOutput = if ($InstallerOutputDirectory) {
+    [IO.Path]::GetFullPath($InstallerOutputDirectory)
+} else {
+    Join-Path $installerOutput ($appVersion + '-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+}
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'

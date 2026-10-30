@@ -156,7 +156,7 @@ Outputs:
 | --- | --- |
 | Complete runnable app | `build/windows/x64/runner/Release/` |
 | App executable | `build/windows/x64/runner/Release/atomusicator.exe` |
-| Windows installer | `packaging/dist/Atomusicator-Setup-0.7.0.exe` |
+| Windows installer | `packaging/dist/<version>-<build-id>/Atomusicator-Setup-<version>.exe` (exact directory printed by the build) |
 | Runtime checksum inventory | `build/windows/x64/runner/Release/release-manifest.json` |
 
 Keep the **whole release folder** together when running or creating a portable
