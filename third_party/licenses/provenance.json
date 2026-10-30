@@ -1,0 +1,50 @@
+[
+  {
+    "repository": "pdeljanov/Symphonia",
+    "path": "third_party\\licenses\\symphonia\\LICENSE",
+    "sha256": "c76f740d1521b9bed9ca7a04ad526c310493c62621b1341d623b431736533b30",
+    "url": "https://raw.githubusercontent.com/pdeljanov/Symphonia/6d533f26150953a882a6a111ebd13f0abf7129d5/LICENSE",
+    "commit": "6d533f26150953a882a6a111ebd13f0abf7129d5",
+    "family": "symphonia"
+  },
+  {
+    "repository": "fzyzcjy/flutter_rust_bridge",
+    "path": "third_party\\licenses\\flutter_rust_bridge\\LICENSE",
+    "sha256": "d56622df159a9967bd6a16c726823a2cbe8546c1f18437617283c9da27000390",
+    "url": "https://raw.githubusercontent.com/fzyzcjy/flutter_rust_bridge/5dead4fc73a537e42673242eb47543287a696eeb/LICENSE",
+    "commit": "5dead4fc73a537e42673242eb47543287a696eeb",
+    "family": "flutter_rust_bridge"
+  },
+  {
+    "repository": "rustaudio/sample",
+    "path": "third_party\\licenses\\dasp_sample\\LICENSE-APACHE",
+    "sha256": "756c8d2ab2dc24f256e1455b5f03937f4933d83d7bc9f2d55009fc962377d512",
+    "url": "https://raw.githubusercontent.com/RustAudio/dasp/97c3bb9b2363c0b46ac1633858bf1054fd02a980/LICENSE-APACHE",
+    "commit": "97c3bb9b2363c0b46ac1633858bf1054fd02a980",
+    "family": "dasp_sample"
+  },
+  {
+    "repository": "rustaudio/sample",
+    "path": "third_party\\licenses\\dasp_sample\\LICENSE-MIT",
+    "sha256": "b1d6df41ed3aa96806e74c729444d7c121d90e6660a6aed01d298e03fde475a0",
+    "url": "https://raw.githubusercontent.com/RustAudio/dasp/97c3bb9b2363c0b46ac1633858bf1054fd02a980/LICENSE-MIT",
+    "commit": "97c3bb9b2363c0b46ac1633858bf1054fd02a980",
+    "family": "dasp_sample"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/c4fb724e810bb496165b9015c77f402727392933/LICENSE",
+    "repository": "microsoft/onnxruntime",
+    "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+    "path": "third_party\\licenses\\onnxruntime-1.20.0\\LICENSE",
+    "commit": "c4fb724e810bb496165b9015c77f402727392933",
+    "family": "onnxruntime-1.20.0"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/c4fb724e810bb496165b9015c77f402727392933/ThirdPartyNotices.txt",
+    "repository": "microsoft/onnxruntime",
+    "sha256": "cf7342f7ba482ef715ae58f5f497a8d3564fa255164175aea324cd293c5701a0",
+    "path": "third_party\\licenses\\onnxruntime-1.20.0\\ThirdPartyNotices.txt",
+    "commit": "c4fb724e810bb496165b9015c77f402727392933",
+    "family": "onnxruntime-1.20.0"
+  }
+]

@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$ReleaseDirectory,
     [switch]$Launch,
+    [switch]$RequireDistributionReady,
     [string]$Report
 )
 $ErrorActionPreference = 'Stop'
@@ -23,8 +24,19 @@ foreach ($required in @('atomusicator.exe', 'atomusicator_bootstrap_ffi.dll', 'f
     'data\icudtl.dat', 'data\app.so', 'audio-tools\bin\ffmpeg.exe',
     'audio-tools\bin\ffprobe.exe', 'audio-tools\LICENSE', 'audio-tools\runtime-manifest.json',
     'licenses\signalsmith\STRETCH-LICENSE.txt', 'licenses\signalsmith\LINEAR-LICENSE.txt',
-    'licenses\signalsmith\PROVENANCE.json', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
+    'licenses\signalsmith\PROVENANCE.json', 'THIRD_PARTY_NOTICES.md', 'LICENSE',
+    'sbom-rust.spdx.json', 'dependency-license-inventory.json', 'dependency-license-inventory-dart.json',
+    'licenses\flutter\ENGINE-THIRD-PARTY-LICENSES.txt', 'licenses\flutter\DART-LICENSE.txt',
+    'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $releaseRoot $required) -PathType Leaf)) { throw "Missing runtime file: $required" }
+}
+$licenseInventory = Get-Content -LiteralPath (Join-Path $releaseRoot 'dependency-license-inventory.json') -Raw | ConvertFrom-Json
+$dartLicenseInventory = Get-Content -LiteralPath (Join-Path $releaseRoot 'dependency-license-inventory-dart.json') -Raw | ConvertFrom-Json
+if (@($licenseInventory.missing_rust_license_texts).Count -or @($dartLicenseInventory.missing_license_texts).Count) {
+    throw 'Dependency license inventory is incomplete.'
+}
+if ($RequireDistributionReady -and -not $licenseInventory.public_distribution_ready) {
+    throw ('Public distribution remains blocked: ' + ($licenseInventory.pending_obligations -join '; '))
 }
 if (Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Where-Object { $_.Extension -in @('.py', '.pyc', '.pyd') -or $_.Name -match '^python.*\.(exe|dll)$' }) {
     throw 'Unexpected Python runtime in the native distribution.'
@@ -49,6 +61,8 @@ try {
         verified_files = @($manifest.files).Count
         reduced_path_startup = [bool]$Launch
         bundled_rubberband = $true
+        public_distribution_ready = [bool]$licenseInventory.public_distribution_ready
+        pending_distribution_obligations = @($licenseInventory.pending_obligations)
         clean_windows_qualification = $false
         explanation = 'Host smoke test; clean Windows and physical audio require separate evidence.'
     }

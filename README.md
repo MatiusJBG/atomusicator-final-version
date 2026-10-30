@@ -301,3 +301,11 @@ Installers and large dependency packages belong in
 [GitHub Releases](https://github.com/MatiusJBG/atomusicator-final-version/releases).
 The [manual release guide](docs/manual-release.md) explains branch pushes,
 qualification, tagging, assets and checksums. No publication is automated.
+
+Windows packaging also generates a Rust SPDX SBOM, Rust/Dart license inventories,
+full dependency notices and covered Rust source archives. Missing license texts
+stop packaging. These files do not establish distribution clearance by themselves:
+the inventory lists outstanding source and qualification obligations. Before
+publishing, run `packaging/validate_windows_release.ps1 -ReleaseDirectory
+build/windows/x64/runner/Release -RequireDistributionReady`; the gate rejects a
+candidate whose distribution audit is still pending.
