@@ -195,3 +195,31 @@ provenance and the ten-case completion marker. Generated case working audio was
 removed only after successful report validation; original inputs remain local.
 This validates the tested duration range with bounded observed RSS, not musical
 corpus diversity, repeated in-process lifecycle behavior or physical devices.
+
+### Batch-size decision
+
+The optional qualifier measured two warmup rounds and five timed rounds of four
+synthetic windows per model on the RTX 4060 Laptop. CPU window references and
+actual DirectML node traces passed for all four models with batches 1 and 2.
+
+| Model | Batch 2 runner time increase vs batch 1 | Maximum normalized PCM error | GPU usage after batch 1 / 2 trials, MiB |
+|---|---:|---:|---:|
+| Main | 8.482% | 1.619337e-7 | 1818 / 4270 |
+| Karaoke | 5.818% | 1.937151e-7 | 1013 / 2109 |
+| Drums | 7.217% | 3.396417e-8 | 997 / 2063 |
+| Bass | 5.671% | 2.831221e-7 | 997 / 2063 |
+
+These timings include tensor copies, session lookup and ORT profiling, exclude
+FFT/decode/publication, and are not full-pipeline RTF. GPU figures are post-trial
+current-process observations, not exact peaks. The batch-2 process completed
+successfully; its local report is `local_audio/batch-scaling-nvidia-max2/`.
+
+A separate experimental 1/2/4 run terminated with access violation 0xC0000005 in
+`onnxruntime.dll` (Windows event 1000, offset 0x11b6e4). Its trace includes 49
+completed model runs and final batch-4 DirectML convolution outputs. The exact
+internal native cause is unresolved; batch 4 is not certified. Raw crash
+evidence remains under `local_audio/batch-scaling-nvidia*`.
+
+The decision is to retain production batch 1: batch 2 provides no measured
+speed benefit, increases observed GPU memory substantially, and batch 4 failed
+stability. No production batching optimization is accepted from these probes.

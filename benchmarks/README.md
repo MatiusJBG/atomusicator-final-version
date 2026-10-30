@@ -189,3 +189,30 @@ evidence gates without models or audio and run in backend CI:
 ```powershell
 pwsh -File benchmarks/tests/provider-parity.ps1
 ```
+
+## Optional batch qualification
+
+The window qualifier accepts an explicit maximum batch size. Use a fresh empty
+report directory and the isolated pinned DirectML runtime folder described above:
+
+```powershell
+cargo build --locked --release --manifest-path rust_core/Cargo.toml -p atomusicator-infrastructure --example provider_qualify
+# Copy that executable into the prepared DirectML runtime folder first.
+./local_audio/bin-directml/provider_qualify.exe local_audio/batch-window-probe 1 --batch-scaling=2
+```
+
+The example measures batches 1 and 2 using two warmup rounds and five timed
+rounds, each processing four synthetic windows. It refuses CPU fallback, checks
+every output window against CPU PCM and records post-trial DXGI memory usage.
+The measurements include tensor copies, session lookup and profiling; they are
+ONNX runner throughput, not full-pipeline RTF or musical-corpus certification.
+Per-batch checkpoints and per-trial progress survive a later native failure.
+`--batch-scaling=1` measures only the baseline; omitting the option retains the
+ordinary single-window node/parity qualification.
+
+On the tested RTX 4060 Laptop runtime, batch 2 was slower and used more GPU
+memory. Batch 4 caused a native ONNX Runtime access violation in an experimental
+run. `--batch-scaling=4` explicitly exercises that unqualified path and may
+terminate the probe process; preserve its process report and Windows event log.
+Neither batch size is enabled in production. See the recorded evidence and
+limitations in `BASELINE_BACKEND.md`.
