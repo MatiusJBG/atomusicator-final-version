@@ -146,12 +146,46 @@ fn benchmark_pool(
         "directml" => vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
         _ => return Err("provider must be cpu or directml".into()),
     };
-    Ok(OrtSessionPool::with_cpu_threads(1, threads)?.using_provider_order(order)?)
+    let pool = OrtSessionPool::with_cpu_threads(1, threads)?.using_provider_order(order)?;
+    Ok(if provider == "directml" {
+        pool.requiring_accelerator()
+    } else {
+        pool
+    })
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().collect();
-    if !(3..=5).contains(&args.len()) {
-        return Err("usage: audio_bench <corpus.json> <new-output-directory> [cpu|directml] [intra-threads]".into());
+    if let Some(output) = args.get(2) {
+        let directory = PathBuf::from(output).with_extension("diagnostics");
+        let gpu_device = if args.get(3).and_then(|v| v.to_str()) == Some("directml") {
+            Some(
+                args.get(5)
+                    .map(|v| {
+                        v.to_str()
+                            .ok_or("invalid device index")?
+                            .parse::<u32>()
+                            .map_err(|_| "invalid device index")
+                    })
+                    .transpose()?
+                    .unwrap_or(0),
+            )
+        } else {
+            None
+        };
+        return atomusicator_infrastructure::job_diagnostics::run_job(
+            &directory,
+            "benchmark",
+            atomusicator_infrastructure::job_diagnostics::DiagnosticOptions::from_env()?
+                .with_gpu_device(gpu_device),
+            benchmark_main,
+        )?;
+    }
+    benchmark_main()
+}
+fn benchmark_main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args_os().collect();
+    if !(3..=6).contains(&args.len()) {
+        return Err("usage: audio_bench <corpus.json> <new-output-directory> [cpu|directml] [intra-threads] [device-id]".into());
     }
     let path = Path::new(&args[1]);
     let corpus: Corpus = serde_json::from_slice(&fs::read(path)?)?;
@@ -189,9 +223,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .transpose()?
         .unwrap_or(2);
-    let pool = Arc::new(benchmark_pool(provider, threads)?);
+    let device_id = args
+        .get(5)
+        .map(|v| {
+            v.to_str()
+                .ok_or("invalid device index")?
+                .parse::<u32>()
+                .map_err(|_| "invalid device index")
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let pool = Arc::new(benchmark_pool(provider, threads)?.with_device_id(device_id)?);
     let mut reports = Vec::new();
     for case in corpus.cases {
+        let _case_span = tracing::info_span!("case", case_id = case.id.as_str()).entered();
         if case.id.is_empty()
             || !case
                 .id

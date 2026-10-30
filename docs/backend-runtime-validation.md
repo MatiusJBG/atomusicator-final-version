@@ -78,6 +78,57 @@ $env:ATOMUSICATOR_CPU_PROFILE = 'throughput'
 The host-specific matrix and its measurement limits are in
 `benchmarks/BASELINE_BACKEND.md`.
 
+### Accelerator configuration and admission
+
+The startup preference `%LOCALAPPDATA%/Atomusicator/execution.json` accepts
+`{"mode":"cpu","device_id":0}`, with modes `cpu`, `directml` or `auto`.
+CPU remains the default. `ATOMUSICATOR_EXECUTION_PROVIDER` and
+`ATOMUSICATOR_GPU_DEVICE_ID` override that file for the launch; restart the app
+after changing execution mode. Unknown values and out-of-range indices fail
+explicitly. Auto selects a physical adapter, preferring dedicated video memory.
+It still falls back to CPU if admission or provider registration fails. GPU modes
+remain experimental pending duration/device qualification. Accelerated jobs use
+one resident-model slot, matching the measured memory configuration.
+
+DirectML requires an observable DXGI budget with 2.5 GiB headroom and at least
+2 GiB available system RAM. Adapters with less than 2.5 GiB dedicated memory
+reserve an additional 2.5 GiB of system RAM (4.5 GiB total), because shared GPU
+memory consumes that same RAM. These are conservative estimates, not hard OS
+reservations. Other processes can change availability after the observation.
+
+DXGI records the adapter index/name, dedicated/shared capacity, budget and the
+calling process's usage. After-window samples and the optional 100 ms sampler
+report observed GPU-process peaks; neither measures allocation-exact peaks nor
+global GPU usage. The default adapter on the tested host is the Radeon 780M
+(index 0); RTX 4060 Laptop is index 1. Adapter ordinals are machine-specific.
+
+If accelerated `Run` fails, its session lease is released and the model is
+quarantined to CPU for that job. The cache key distinguishes forced-CPU sessions,
+so retry cannot reuse the failed accelerated session. Idle sessions are released
+and CPU memory admission is checked before one CPU retry. CPU and permanent
+argument/model errors are not retried. Both failure messages remain available
+if retry fails. No partially produced block is published.
+
+### Per-job diagnostics
+
+Each offline job writes `jobs/<job-id>.diagnostics.jsonl` beside its journal.
+Tracing is scoped to the worker thread; no global subscriber or audio callback
+logging is installed. The file contains stage wall times, session registration
+and fallback reasons, outcome, and sampled current-process RSS. RSS excludes
+FFmpeg child processes and VRAM; external process-tree measurements remain
+separate. GPU samples have their own explicit scope. Panics still close a valid
+JSON summary, and telemetry does not swallow the original operation failure.
+
+`ATOMUSICATOR_DIAGNOSTICS=false` disables files; `ATOMUSICATOR_LOG_LEVEL` selects
+TRACE/DEBUG/INFO/WARN/ERROR (default INFO). Use INFO to retain stage and memory
+summaries. Invalid settings fail explicitly. CPU jobs do not probe or wake GPU
+adapters merely for telemetry. Phase names distinguish nested `mdx_total` from
+read/normalization, FFT, inference, overlap-add, spool writes and finalization;
+do not add parent totals to their child durations.
+
+The benchmark uses a separate `<output>.diagnostics/` directory and optionally
+accepts a final adapter index after its CPU-thread argument.
+
 ### Platform checks
 
 Windows full workspace after the CPU settings bridge: 150 tests passed, 12

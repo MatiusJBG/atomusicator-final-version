@@ -339,6 +339,8 @@ impl MdxInference {
         audio: &AudioBufferF32,
         cancel: &CancellationToken,
     ) -> Result<AudioBufferF32, DomainError> {
+        let _model_span = tracing::info_span!("mdx", model_profile = id).entered();
+        let _total = crate::job_diagnostics::StageTimer::new("mdx_buffer_total");
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
         }
@@ -411,6 +413,7 @@ impl MdxInference {
             if cancel.is_cancelled() {
                 return Err(DomainError::SeparationCancelled);
             }
+            let read_timer = crate::job_diagnostics::StageTimer::new("read_and_normalize");
             let actual = chunk.min(padded_frames - start);
             input.fill(0.0);
             for frame in 0..actual {
@@ -420,11 +423,17 @@ impl MdxInference {
                     input[frame * 2 + 1] = audio.samples()[(source - trim) * 2 + 1] / peak;
                 }
             }
-            transform.forward_into(&input, &mut spectrum, &mut workspace)?;
+            drop(read_timer);
+            {
+                let _timer = crate::job_diagnostics::StageTimer::new("fft_forward");
+                transform.forward_into(&input, &mut spectrum, &mut workspace)?;
+            }
             for component in 0..4 {
                 spectrum[component * c.dim_f * c.dim_t..(component * c.dim_f + 3) * c.dim_t]
                     .fill(0.0);
             }
+            let prediction_timer =
+                crate::job_diagnostics::StageTimer::new("onnx_run_including_session_lookup");
             self.runner
                 .run_f32_into(
                     path,
@@ -434,13 +443,18 @@ impl MdxInference {
                     &mut prediction,
                 )
                 .map_err(|e| fail(&e.to_string()))?;
+            drop(prediction_timer);
             if let Some(diagnostics) = &self.diagnostics {
                 diagnostics.record(&format!("{id}/tensor_output_spectral_units"), &prediction);
             }
-            transform.inverse_into(&prediction, &mut decoded, &mut workspace)?;
+            {
+                let _timer = crate::job_diagnostics::StageTimer::new("fft_inverse");
+                transform.inverse_into(&prediction, &mut decoded, &mut workspace)?;
+            }
             if let Some(diagnostics) = &self.diagnostics {
                 diagnostics.record(&format!("{id}/post_istft_normalized_windows"), &decoded);
             }
+            let ola_timer = crate::job_diagnostics::StageTimer::new("overlap_add");
             for frame in 0..actual {
                 let weight = if actual > 1 {
                     0.5 - 0.5
@@ -453,10 +467,12 @@ impl MdxInference {
                     out[(start + frame) * 2 + channel] += decoded[frame * 2 + channel] * weight;
                 }
             }
+            drop(ola_timer);
         }
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
         }
+        let restore_timer = crate::job_diagnostics::StageTimer::new("amplitude_restore");
         let mut result = vec![0.0; audio.samples().len()];
         for frame in 0..audio.frames() {
             let position = trim + frame;
@@ -473,6 +489,7 @@ impl MdxInference {
             }
         }
         let result = AudioBufferF32::new(audio.format(), result)?;
+        drop(restore_timer);
         if let Some(cache) = &self.cache {
             cache.store_checkpoint_non_fatal(&key, &result);
         }
@@ -528,6 +545,7 @@ impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
         let id = block_profile(stage);
+        let _model_span = tracing::info_span!("mdx", model_profile = id).entered();
         let (path, _) = self
             .models
             .get(id)

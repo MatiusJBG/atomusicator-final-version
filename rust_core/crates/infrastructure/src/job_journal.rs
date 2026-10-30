@@ -48,6 +48,9 @@ pub struct JobJournal {
     root: PathBuf,
 }
 impl JobJournal {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     pub fn hash_source(
         path: &Path,
         cancel: &atomusicator_application::CancellationToken,

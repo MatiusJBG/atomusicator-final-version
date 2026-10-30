@@ -64,8 +64,15 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                 Err(error) => return Err(err(error)),
             };
             let mixer = CpalRealtimeMixer::new().map_err(err)?;
+            let execution = atomusicator_infrastructure::preferences::ExecutionPreferences::new(
+                policy.app_data_root().to_path_buf(),
+            )
+            .startup()
+            .map_err(err)?;
             let sessions = Arc::new(
                 OrtSessionPool::with_compute_profile(2, profile)
+                    .map_err(err)?
+                    .using_execution_options(execution)
                     .map_err(err)?
                     .with_playback_probe(mixer.playback_probe()),
             );
@@ -183,7 +190,13 @@ impl Studio {
     ) -> Result<String, String> {
         let backend = Arc::clone(self);
         let id = self.jobs.start(request, retry_of, move |id, cancel| {
-            operation(&backend, id, cancel)
+            let options=atomusicator_infrastructure::job_diagnostics::DiagnosticOptions::from_env().map_err(err)?.with_gpu_device(backend.sessions.gpu_device_id());
+            backend.sessions.begin_job_diagnostics().map_err(err)?;
+            atomusicator_infrastructure::job_diagnostics::run_job(backend.jobs.journal.root(),id,options,||{
+                let result=operation(&backend,id,cancel);
+                tracing::info!(success=result.is_ok(),cancelled=cancel.is_cancelled(),providers=?backend.sessions.diagnostics(),"job finished");
+                result
+            }).map_err(err)?
         })?;
         self.mixer.pause();
         Ok(id)
@@ -362,8 +375,11 @@ impl Studio {
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
             let work = TemporaryDirectory::for_job(&projects,id).map_err(err)?;
             backend.jobs.work_directory(id,work.0.clone())?;
-            let audio = Arc::new(AudioTools::discover().map_err(err)?
-                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?);
+            let audio = {
+                let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("decode");
+                Arc::new(AudioTools::discover().map_err(err)?
+                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?)
+            };
             use atomusicator_application::ports::AudioBlockSource;
             atomusicator_infrastructure::audio_io::wav_codec::validate_block_wav_size(audio.metadata()).map_err(crate::jobs::JobFailure::from_domain)?;
             let working_bytes=audio.metadata().frame_count.checked_mul(8*15).ok_or("audio working size overflow")?;
@@ -375,7 +391,10 @@ impl Studio {
             let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
             let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store).with_rhythm_policy(rhythm_policy);
-            let result = pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?;
+            let result = {
+                let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("separation");
+                pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?
+            };
             check_cancel(cancel)?;
             if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
                 return Err("Source content changed during separation; result was not published".into());
@@ -388,7 +407,7 @@ impl Studio {
             let engine=serde_json::json!({"name":"Atomusicator native MDX","models":usages,
                 "source_sha256":source_hash,"profile":profile,
                 "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
-                "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),
+                "compute":{"provider_requested":backend.sessions.provider_order(),"intra_threads":backend.sessions.intra_threads(),
                     "session_diagnostics":backend.sessions.diagnostics(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
             backend.jobs.output(id,projects.join(id))?;

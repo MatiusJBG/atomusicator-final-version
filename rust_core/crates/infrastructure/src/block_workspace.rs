@@ -27,6 +27,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
     cancel: &CancellationToken,
     hooks: PublicationHooks<S, C>,
 ) -> Result<WorkspaceSession, DomainError> {
+    let _timer = crate::job_diagnostics::StageTimer::new("publication");
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(failure("invalid session id"));
     }

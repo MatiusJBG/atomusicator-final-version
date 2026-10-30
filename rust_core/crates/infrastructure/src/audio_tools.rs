@@ -177,6 +177,7 @@ impl AudioTools {
         target: &Path,
         cancel: &CancellationToken,
     ) -> Result<crate::storage::float_spool::FloatSpool, DomainError> {
+        let _timer = crate::job_diagnostics::StageTimer::new("decode_audio");
         self.run(
             &[
                 "-i".into(),

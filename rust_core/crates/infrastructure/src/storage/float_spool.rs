@@ -437,6 +437,7 @@ impl AudioBlockWriter for SpoolWriter {
         Ok(())
     }
     fn finish(mut self: Box<Self>) -> Result<Arc<dyn AudioBlockSource>, DomainError> {
+        let _timer = crate::job_diagnostics::StageTimer::new("spool_finalize_sync");
         let expected = self.expected.frame_count * u64::from(self.expected.format.channels);
         if self.failed || self.samples != expected {
             return Err(failure("incomplete audio spool"));

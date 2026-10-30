@@ -1,4 +1,5 @@
 //! Duration-independent MDX overlap accumulator; window grid and f32 summation order are preserved.
+use crate::job_diagnostics::StageTimer;
 use crate::mdx::{MdxConfig, MdxFftWorkspace, MdxTransform};
 use atomusicator_application::{
     CancellationToken,
@@ -47,6 +48,7 @@ pub fn run_bounded_mdx_reusing(
     mut predict: impl FnMut(&mut [f32], &mut Vec<f32>) -> Result<(), DomainError>,
     observe: Option<&MdxObserver<'_>>,
 ) -> Result<(), DomainError> {
+    let _total = StageTimer::new("mdx_total");
     let metadata = source.metadata();
     if metadata.format.sample_rate_hz != 44100
         || metadata.format.channels != 2
@@ -94,6 +96,7 @@ pub fn run_bounded_mdx_reusing(
     let mut uncompensated = observe.map(|_| Vec::with_capacity(step * 2));
     for start in (0..padded).step_by(step) {
         check(cancel)?;
+        let read_timer = StageTimer::new("read_and_normalize");
         let actual = (padded - start).min(chunk as u64) as usize;
         raw.fill(0.0);
         let first = start.max(trim as u64);
@@ -112,10 +115,14 @@ pub fn run_bounded_mdx_reusing(
         for (normalized, raw) in normalized.iter_mut().zip(&raw) {
             *normalized = raw / peak;
         }
+        drop(read_timer);
         if let Some(observe) = observe {
             observe("input_pcm_windows", &raw);
         }
-        transform.forward_into(&normalized, &mut spectrum, &mut fft_workspace)?;
+        {
+            let _timer = StageTimer::new("fft_forward");
+            transform.forward_into(&normalized, &mut spectrum, &mut fft_workspace)?;
+        }
         for component in 0..4 {
             spectrum
                 [component * c.dim_f * c.dim_t..(component * c.dim_f + 3.min(c.dim_f)) * c.dim_t]
@@ -124,15 +131,22 @@ pub fn run_bounded_mdx_reusing(
         if let Some(observe) = observe {
             observe("tensor_input_spectral_units", &spectrum);
         }
-        predict(&mut spectrum, &mut prediction)?;
+        {
+            let _timer = StageTimer::new("onnx_run_including_session_lookup");
+            predict(&mut spectrum, &mut prediction)?;
+        }
         if let Some(observe) = observe {
             observe("tensor_output_spectral_units", &prediction);
         }
         check(cancel)?;
-        transform.inverse_into(&prediction, &mut decoded, &mut fft_workspace)?;
+        {
+            let _timer = StageTimer::new("fft_inverse");
+            transform.inverse_into(&prediction, &mut decoded, &mut fft_workspace)?;
+        }
         if let Some(observe) = observe {
             observe("post_istft_normalized_windows", &decoded);
         }
+        let ola_timer = StageTimer::new("overlap_add");
         for frame in 0..actual {
             let weight = if actual > 1 {
                 0.5 - 0.5 * (2.0 * std::f32::consts::PI * frame as f32 / (actual - 1) as f32).cos()
@@ -171,6 +185,7 @@ pub fn run_bounded_mdx_reusing(
                 });
             }
         }
+        drop(ola_timer);
         if let Some(observe) = observe {
             observe(
                 "post_ola_restore_pre_comp_pcm",
@@ -178,7 +193,10 @@ pub fn run_bounded_mdx_reusing(
             );
             observe("restored_compensated_pcm", &output);
         }
-        target.write(&output)?;
+        {
+            let _timer = StageTimer::new("spool_write");
+            target.write(&output)?;
+        }
         accumulator.copy_within(flush * 2.., 0);
         accumulator[(chunk - flush) * 2..].fill(0.0);
         weights.copy_within(flush.., 0);

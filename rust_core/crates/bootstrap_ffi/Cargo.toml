@@ -15,4 +15,5 @@ atomusicator-infrastructure = { path = "../infrastructure" }
 flutter_rust_bridge.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 tokio.workspace = true
