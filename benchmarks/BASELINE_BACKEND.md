@@ -142,7 +142,26 @@ Backing-vocal isolation remains a quality concern with this reference set.
 
 Detailed evidence remains local: `benchmarks/results/PROVIDER_PARITY_GROUND_TRUTH.json`,
 `local_audio/ground-truth-v2-{cpu6,directml6}/report.json`, resource samples and
-`local_audio/provider-full-runtime-manifest.json`. DirectML still requires adapter
-and VRAM admission, runtime-error fallback, batching and extended device/soak
-qualification before production enablement. This is one reference set and does
+`local_audio/provider-full-runtime-manifest.json`. Adapter/VRAM admission and
+runtime-error fallback have since been implemented and
+tested; batching and extended device/soak qualification remain pending before
+production enablement. This is one reference set and does
 not replace independent corpus diversity or listening review.
+
+### Discrete NVIDIA adapter cross-check
+
+The same full reference set and native-v2 routing also passed on adapter 1,
+NVIDIA GeForce RTX 4060 Laptop GPU, using the pinned DirectML runtime. Processing
+took 53.388 seconds (RTF 0.2044), a single observation rather than a median.
+The external sampler observed 417,841,152 bytes peak process-tree RSS; internal
+DXGI sampling observed 1,906,438,144 bytes of current-process local-segment GPU
+usage. These sampled observations can miss transient peaks and do not establish
+global free VRAM or a duration-independent memory guarantee.
+
+The final WAV comparator verified all five CPU/NVIDIA pairs, with maximum
+absolute sample error 1.838431e-6 and maximum per-channel SI-SDR difference
+4.656331e-7 dB. Four model traces also established actual DirectML kernel
+execution. Hash-bound evidence is retained locally in
+`benchmarks/results/PROVIDER_PARITY_NVIDIA_GROUND_TRUTH.json` and
+`local_audio/closure-nvidia-{full,window}/`. This extends numerical adapter
+coverage; it does not certify long-duration stability or listening quality.
