@@ -1,4 +1,7 @@
-# Manual push and first Windows release
+# Manual push and Windows release
+
+The current stable tag is `v0.7.0`. `v0.6.0` remains the previous release and
+must not be moved. The steps below still apply to any later version.
 
 The owner performs all remote mutations. These instructions do not publish
 anything automatically. Implementation plans and private test evidence stay

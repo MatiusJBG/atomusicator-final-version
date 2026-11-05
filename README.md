@@ -4,14 +4,11 @@ A Windows audio workbench with a Flutter interface and a Rust engine for
 five-stem separation, synchronized mixing, pitch processing and export.
 The application runs without Python or the legacy repository.
 
-**Release status:** Windows x64 CPU candidate, version 0.7.0. The backend passed
-the documented 30–60 minute DirectML runs; a private candidate installed and
-rendered its home screen in a clean Windows VM. Full installer lifecycle/import
-qualification, independent vocal quality/listening and outstanding distribution
-source/provenance obligations remain pending. Physical USB reconnection testing
-was excluded from the requested closure scope; no reconnection certification is
-claimed. The candidate includes dependency notice inventories and a Rust SBOM.
-See [migration evidence](docs/migration-audit.md),
+**Release status:** Windows x64, version 0.7.0. This is the current stable
+release. Inference in the installer is CPU-only. Live pitch changes the key
+without a formant control. Models download on demand and are not inside the
+installer. Physical USB reconnection is not certified. See the
+[changelog](CHANGELOG.md), [migration evidence](docs/migration-audit.md),
 [distribution requirements](docs/distribution-compliance.md) and the
 [manual release procedure](docs/manual-release.md).
 
@@ -31,11 +28,11 @@ The qualified distribution target is **Windows x64 with CPU inference**. Other
 platform folders exist in the Flutter project but are not qualified releases.
 GPU acceleration remains unqualified.
 
-When a release is published, download its installer from
+Download **Atomusicator 0.7.0** from
 [GitHub Releases](https://github.com/MatiusJBG/atomusicator-final-version/releases)
-and verify its SHA-256 against the accompanying checksum file. Until then,
-build the application using the steps below. Do not download an unrelated
-binary simply because it has a similar name.
+and verify its SHA-256 against the accompanying checksum file. Do not download
+an unrelated binary simply because it has a similar name. The development build
+steps below remain available for contributors.
 
 1. Launch Atomusicator. Import **WAV, MP3, FLAC or M4A**, drop files anywhere in
    the workbench, or copy files in Windows Explorer and press **Ctrl+V** in the
@@ -48,10 +45,10 @@ binary simply because it has a similar name.
    pause, stop, seek, gain, mute, solo, pan and master volume. Waveforms share a
    synchronized timeline with 100–400% zoom.
 4. Adjust **Live pitch** from −12 to +12 semitones. Changes take effect during
-   playback without an Apply button,
-   render job or loading screen, and keep the tempo unchanged. Reset returns to
-   the original pitch. Settings are saved locally for the session; original
-   stems remain unchanged. A short audio-buffer response is unavoidable.
+   playback without an Apply button, a render job or a loading screen, and keep
+   the tempo unchanged. There is no formant switch. Reset returns to the
+   original pitch. Settings are saved locally for the session; original stems
+   remain unchanged. A short audio-buffer response is unavoidable.
 5. Export selected stems as WAV, FLAC or MP3. WAV supports 16/24-bit PCM and
    32-bit float; FLAC supports 16/24-bit; MP3 uses 320 kbps. Choose 44.1/48 kHz,
    mono/stereo and optional loudness normalization. Float WAV preserves
