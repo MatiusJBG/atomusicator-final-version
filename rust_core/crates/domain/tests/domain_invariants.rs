@@ -39,18 +39,18 @@ fn audio_format_rejects_unsupported_sample_rates_and_channel_counts() {
 #[test]
 fn pitch_shift_spec_accepts_inclusive_bounds_and_rejects_invalid_values() {
     assert_eq!(
-        PitchShiftSpec::try_new(-12.0, false).unwrap().semitones(),
+        PitchShiftSpec::try_new(-12.0).unwrap().semitones(),
         -12.0
     );
     assert_eq!(
-        PitchShiftSpec::try_new(12.0, true).unwrap().semitones(),
+        PitchShiftSpec::try_new(12.0).unwrap().semitones(),
         12.0
     );
     assert_eq!(
-        PitchShiftSpec::try_new(12.01, false),
+        PitchShiftSpec::try_new(12.01),
         Err(DomainError::PitchOutOfBounds(12.01))
     );
-    assert!(PitchShiftSpec::try_new(f32::NAN, false).is_err());
+    assert!(PitchShiftSpec::try_new(f32::NAN).is_err());
 }
 
 #[test]

@@ -3,14 +3,28 @@ use atomusicator_domain::{DomainError, PitchShiftSpec};
 use std::ptr::NonNull;
 
 pub const PITCH_BLOCK: usize = 256;
-pub const ENGINE_ID: &str = "signalsmith-1.3.2-88061fd4-window3072-hop512-fft8192-v1";
+pub const TONALITY_HZ: f32 = 8000.0;
+/// Previous production window. Musical profiles never go shorter than this.
+const MIN_BLOCK: u32 = 3072;
+pub const ENGINE_ID: &str =
+    "signalsmith-1.3.2-88061fd4-block0.12sr-hop0.03sr-tonality8k-fft8192-v2";
+
+/// Signalsmith `presetDefault` sizes (0.12 s block, 0.03 s hop), never shorter
+/// than the previous 3072-sample window.
+pub fn musical_profile(sample_rate: u32) -> (u32, u32) {
+    let rate = f64::from(sample_rate);
+    let block = (rate * 0.12).round() as u32;
+    let block = block.clamp(MIN_BLOCK, 8192);
+    let interval = ((rate * 0.03).round() as u32).clamp(64, block);
+    (block, interval)
+}
 
 unsafe extern "C" {
     fn atom_pitch_create(rate: u32, window: u32, interval: u32) -> *mut std::ffi::c_void;
     fn atom_pitch_destroy(pitch: *mut std::ffi::c_void);
     fn atom_pitch_delay(pitch: *mut std::ffi::c_void) -> u32;
     fn atom_pitch_output_delay(pitch: *mut std::ffi::c_void) -> u32;
-    fn atom_pitch_set(pitch: *mut std::ffi::c_void, semitones: f32, preserve: bool);
+    fn atom_pitch_set(pitch: *mut std::ffi::c_void, semitones: f32);
     fn atom_pitch_process(
         pitch: *mut std::ffi::c_void,
         input: *const f32,
@@ -28,7 +42,8 @@ pub struct LivePitchProcessor {
 unsafe impl Send for LivePitchProcessor {}
 impl LivePitchProcessor {
     pub fn new(sample_rate: u32) -> Result<Self, DomainError> {
-        Self::with_profile(sample_rate, 3072, 512)
+        let (window, interval) = musical_profile(sample_rate);
+        Self::with_profile(sample_rate, window, interval)
     }
     /// Controlled qualification only; the application uses the fixed profile.
     pub fn with_profile(sample_rate: u32, window: u32, interval: u32) -> Result<Self, DomainError> {
@@ -45,13 +60,7 @@ impl LivePitchProcessor {
     }
     pub fn set_spec(&mut self, spec: PitchShiftSpec) {
         // SAFETY: exclusively owned valid instance; domain validates parameters.
-        unsafe {
-            atom_pitch_set(
-                self.handle.as_ptr(),
-                spec.semitones(),
-                spec.preserve_formants(),
-            )
-        }
+        unsafe { atom_pitch_set(self.handle.as_ptr(), spec.semitones()) }
     }
     pub fn latency_frames(&self) -> usize {
         // SAFETY: live instance, read-only query.

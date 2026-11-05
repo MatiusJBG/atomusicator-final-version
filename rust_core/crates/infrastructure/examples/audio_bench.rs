@@ -28,6 +28,48 @@ use std::{
     time::Instant,
 };
 type Source = Arc<dyn AudioBlockSource>;
+/// Mirrors Studio's job boundary, after case-local runners and sources drop.
+struct CaseLifecycle {
+    pool: Arc<OrtSessionPool>,
+    idle: Option<atomusicator_infrastructure::onnx::IdleSessionScope>,
+}
+impl CaseLifecycle {
+    fn new(pool: Arc<OrtSessionPool>) -> Self {
+        if tracing::enabled!(tracing::Level::INFO) {
+            tracing::info!(
+                rss_before_case_bytes =
+                    atomusicator_infrastructure::process_memory::resident_bytes(),
+                "case resource scope started"
+            );
+        }
+        let idle = Some(pool.idle_scope());
+        Self { pool, idle }
+    }
+}
+impl Drop for CaseLifecycle {
+    fn drop(&mut self) {
+        drop(self.idle.take());
+        if !tracing::enabled!(tracing::Level::INFO) {
+            return;
+        }
+        let rss = atomusicator_infrastructure::process_memory::resident_bytes();
+        let gpu = self.pool.gpu_device_id().and_then(|index| {
+            match atomusicator_infrastructure::gpu_probe::adapter(index) {
+                Ok(adapter) => adapter.and_then(|adapter| adapter.current_process_usage_bytes),
+                Err(error) => {
+                    tracing::warn!(%error,"post-case GPU memory observation unavailable");
+                    None
+                }
+            }
+        });
+        tracing::info!(
+            rss_after_cleanup_attempt_bytes = rss,
+            rss_observation_available = rss.is_some(),
+            gpu_usage_after_cleanup_attempt_bytes = gpu,
+            "case resource scope ended"
+        );
+    }
+}
 #[derive(Deserialize)]
 struct Corpus {
     #[serde(default)]
@@ -237,6 +279,7 @@ fn benchmark_main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reports = Vec::new();
     for case in corpus.cases {
         let _case_span = tracing::info_span!("case", case_id = case.id.as_str()).entered();
+        let _case_lifecycle = CaseLifecycle::new(pool.clone());
         if case.id.is_empty()
             || !case
                 .id
@@ -378,6 +421,35 @@ fn benchmark_main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn case_cleanup_emits_a_memory_observation_even_when_the_case_fails() {
+        use atomusicator_infrastructure::{
+            audio_tools::TemporaryDirectory,
+            job_diagnostics::{DiagnosticOptions, run_job},
+        };
+        let directory = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let pool = std::sync::Arc::new(super::benchmark_pool("cpu", 1).unwrap());
+        let result = run_job(
+            &directory.0,
+            "cycle",
+            DiagnosticOptions::parse(None, None).unwrap(),
+            || {
+                let _case = super::CaseLifecycle::new(pool);
+                Err::<(), _>("expected failure")
+            },
+        )
+        .unwrap();
+        assert_eq!(result, Err("expected failure"));
+        let log = std::fs::read_to_string(directory.0.join("cycle.diagnostics.jsonl")).unwrap();
+        let row = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|row| row["fields"]["message"] == "case resource scope ended")
+            .unwrap();
+        if row["fields"]["rss_observation_available"] == true {
+            assert!(row["fields"]["rss_after_cleanup_attempt_bytes"].is_u64());
+        }
+    }
     #[test]
     fn quality_profiles_and_providers_are_explicit() {
         assert_eq!(super::quality_profile(None).unwrap().id, "native-v1");

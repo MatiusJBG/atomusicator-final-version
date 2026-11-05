@@ -156,13 +156,15 @@ impl AudioFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct PitchShiftSpec {
     semitones: f32,
-    preserve_formants: bool,
 }
 
 #[derive(Deserialize)]
 struct PitchShiftSpecRepr {
     semitones: f32,
-    preserve_formants: bool,
+    /// Older settings files stored this flag. It is ignored so a saved semitone
+    /// still loads, and formant compensation is never applied.
+    #[serde(default)]
+    preserve_formants: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for PitchShiftSpec {
@@ -171,27 +173,21 @@ impl<'de> Deserialize<'de> for PitchShiftSpec {
         D: serde::Deserializer<'de>,
     {
         let repr = PitchShiftSpecRepr::deserialize(deserializer)?;
-        Self::try_new(repr.semitones, repr.preserve_formants).map_err(serde::de::Error::custom)
+        let _ignored = repr.preserve_formants;
+        Self::try_new(repr.semitones).map_err(serde::de::Error::custom)
     }
 }
 
 impl PitchShiftSpec {
-    pub fn try_new(semitones: f32, preserve_formants: bool) -> Result<Self, DomainError> {
+    pub fn try_new(semitones: f32) -> Result<Self, DomainError> {
         if !(-12.0..=12.0).contains(&semitones) {
             return Err(DomainError::PitchOutOfBounds(semitones));
         }
-        Ok(Self {
-            semitones,
-            preserve_formants,
-        })
+        Ok(Self { semitones })
     }
 
     pub fn semitones(&self) -> f32 {
         self.semitones
-    }
-
-    pub fn preserve_formants(&self) -> bool {
-        self.preserve_formants
     }
 }
 

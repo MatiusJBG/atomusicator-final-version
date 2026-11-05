@@ -12,7 +12,7 @@ fn latest_settings_are_saved_outside_the_audio_thread_and_reopen_safely() {
         store
             .queue(
                 "session-a".into(),
-                PitchShiftSpec::try_new((i % 25) as f32 - 12.0, true).unwrap(),
+                PitchShiftSpec::try_new((i % 25) as f32 - 12.0).unwrap(),
             )
             .unwrap();
     }
@@ -28,7 +28,7 @@ fn incompatible_and_invalid_saved_settings_cannot_reach_the_live_processor() {
     store
         .queue(
             "session".into(),
-            PitchShiftSpec::try_new(7.0, true).unwrap(),
+            PitchShiftSpec::try_new(7.0).unwrap(),
         )
         .unwrap();
     store.flush().unwrap();

@@ -47,8 +47,8 @@ binary simply because it has a similar name.
 3. Mix lead vocals, backing vocals, drums, bass and instrumental using play,
    pause, stop, seek, gain, mute, solo, pan and master volume. Waveforms share a
    synchronized timeline with 100–400% zoom.
-4. Adjust **Live pitch** from −12 to +12 semitones, with optional formant
-   preservation. Changes take effect during playback without an Apply button,
+4. Adjust **Live pitch** from −12 to +12 semitones. Changes take effect during
+   playback without an Apply button,
    render job or loading screen, and keep the tempo unchanged. Reset returns to
    the original pitch. Settings are saved locally for the session; original
    stems remain unchanged. A short audio-buffer response is unavoidable.

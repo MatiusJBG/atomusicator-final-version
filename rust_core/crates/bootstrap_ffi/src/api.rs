@@ -3,6 +3,37 @@
 use atomusicator_domain::StemType;
 
 #[derive(Debug, Clone)]
+pub struct UiCacheSettingsDto {
+    pub retained_bytes: u64,
+    pub used_bytes: u64,
+    pub directory: String,
+}
+pub fn cache_settings() -> Result<UiCacheSettingsDto, String> {
+    crate::studio::studio()?.cache_settings()
+}
+pub fn set_cache_retained_bytes(bytes: u64) -> Result<(), String> {
+    crate::studio::studio()?.set_cache_retained_bytes(bytes)
+}
+pub fn clean_retained_cache() -> Result<u64, String> {
+    crate::studio::studio()?.clean_retained_cache()
+}
+
+#[derive(Debug, Clone)]
+pub struct UiExecutionSettingsDto {
+    pub next_startup_mode: String,
+    pub diagnostics_json: String,
+}
+
+pub fn execution_settings() -> Result<UiExecutionSettingsDto, String> {
+    crate::studio::studio()?.execution_settings()
+}
+
+/// Runtime sessions keep their provider. The saved choice applies after restart.
+pub fn set_execution_mode(mode: String) -> Result<(), String> {
+    crate::studio::studio()?.set_execution_mode(&mode)
+}
+
+#[derive(Debug, Clone)]
 pub struct UiComputeSettingsDto {
     pub profile: String,
     pub available_profiles: Vec<String>,
@@ -122,11 +153,18 @@ pub fn start_separation(source_path: String, allow_model_download: bool) -> Resu
 pub fn job_status(job_id: String) -> Result<UiJobDto, String> {
     crate::studio::studio()?.job(&job_id)
 }
+/// Waits for a native job transition. Timeout bounds an abandoned bridge call.
+pub fn wait_job_change(previous: UiJobDto) -> Result<UiJobDto, String> {
+    crate::studio::studio()?.wait_job_change(previous)
+}
 pub fn cancel_job(job_id: String) -> Result<(), String> {
     crate::studio::studio()?.cancel(&job_id)
 }
 pub fn open_audio_session(directory: String) -> Result<UiSessionDto, String> {
     crate::studio::studio()?.open(std::path::Path::new(&directory))
+}
+pub fn close_audio_session() -> Result<(), String> {
+    crate::studio::studio()?.close_session()
 }
 pub fn projects_directory() -> Result<String, String> {
     crate::studio::studio()?.projects_directory()
@@ -134,8 +172,8 @@ pub fn projects_directory() -> Result<String, String> {
 pub fn set_projects_directory(directory: String) -> Result<(), String> {
     crate::studio::studio()?.set_projects_directory(std::path::Path::new(&directory))
 }
-pub fn start_pitch(semitones: i32, preserve_formants: bool) -> Result<String, String> {
-    crate::studio::studio()?.pitch(semitones, preserve_formants)
+pub fn start_pitch(semitones: i32) -> Result<String, String> {
+    crate::studio::studio()?.pitch(semitones)
 }
 
 #[derive(Debug, Clone)]
@@ -146,7 +184,6 @@ pub struct UiLivePitchDto {
     /// Revision consumed by the audio callback, not a physical latency measurement.
     pub applied_revision: u64,
     pub semitones: i32,
-    pub preserve_formants: bool,
 }
 pub fn live_pitch_status() -> Result<UiLivePitchDto, String> {
     crate::studio::studio()?.live_pitch_status()
@@ -156,15 +193,8 @@ pub fn set_live_pitch(
     epoch: u64,
     revision: u64,
     semitones: i32,
-    preserve_formants: bool,
 ) -> Result<UiLivePitchDto, String> {
-    crate::studio::studio()?.set_live_pitch(
-        &session_id,
-        epoch,
-        revision,
-        semitones,
-        preserve_formants,
-    )
+    crate::studio::studio()?.set_live_pitch(&session_id, epoch, revision, semitones)
 }
 pub fn start_export(
     destination: String,
@@ -191,7 +221,6 @@ pub struct UiPitchExportDto {
     pub session_id: String,
     pub epoch: u64,
     pub semitones: i32,
-    pub preserve_formants: bool,
 }
 // Keep the generated bridge's existing export arguments compatible; the
 // optional snapshot is validated and converted into domain options below.

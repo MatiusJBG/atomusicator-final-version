@@ -29,7 +29,7 @@ fn pruning_retains_live_pitch_batches_and_never_deletes_originals_or_unowned_fol
     let batch = cache
         .get_or_render(
             &sources,
-            PitchShiftSpec::try_new(1.0, false).unwrap(),
+            PitchShiftSpec::try_new(1.0).unwrap(),
             "runtime",
             &CancellationToken::default(),
             |source, target| {
@@ -58,7 +58,7 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
     let sources = originals(&root.0);
     let cache = PitchRenderCache::new(root.0.join("renders"));
     let cancel = CancellationToken::default();
-    let spec = PitchShiftSpec::try_new(2.0, true).unwrap();
+    let spec = PitchShiftSpec::try_new(2.0).unwrap();
     let mut calls = 0;
     let mut render = |source: &std::path::Path, target: &std::path::Path| {
         calls += 1;
@@ -113,24 +113,24 @@ fn renders_are_reused_only_when_every_identity_and_output_hash_matches() {
     let shifted = cache
         .get_or_render(
             &sources,
-            PitchShiftSpec::try_new(3.0, true).unwrap(),
+            PitchShiftSpec::try_new(3.0).unwrap(),
             "ffmpeg-sha-B/rubberband-v1",
             &cancel,
             &mut render,
         )
         .unwrap();
     assert_ne!(other.paths, shifted.paths);
-    let formants = cache
+    let again_shifted = cache
         .get_or_render(
             &sources,
-            PitchShiftSpec::try_new(3.0, false).unwrap(),
+            PitchShiftSpec::try_new(3.0).unwrap(),
             "ffmpeg-sha-B/rubberband-v1",
             &cancel,
             &mut render,
         )
         .unwrap();
-    assert_ne!(shifted.paths, formants.paths);
-    assert_eq!(calls, 25);
+    assert_eq!(shifted.paths, again_shifted.paths);
+    assert_eq!(calls, 20);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn cancellation_never_publishes_a_partial_batch_or_changes_originals() {
     let cancel = CancellationToken::default();
     let result = cache.get_or_render(
         &sources,
-        PitchShiftSpec::try_new(2.0, false).unwrap(),
+        PitchShiftSpec::try_new(2.0).unwrap(),
         "runtime",
         &cancel,
         |source, target| {
@@ -174,7 +174,7 @@ fn changing_an_original_during_render_does_not_publish_a_stale_cache_key() {
     let mut first = true;
     let result = cache.get_or_render(
         &sources,
-        PitchShiftSpec::try_new(2.0, true).unwrap(),
+        PitchShiftSpec::try_new(2.0).unwrap(),
         "runtime",
         &cancel,
         |source, target| {

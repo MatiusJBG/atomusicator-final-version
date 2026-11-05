@@ -210,13 +210,8 @@ impl AudioTools {
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
         let filter = format!(
-            "rubberband=pitch={:.12}:tempo=1.0:formant={}",
+            "rubberband=pitch={:.12}:tempo=1.0:formant=shifted",
             2.0f64.powf(f64::from(spec.semitones()) / 12.0),
-            if spec.preserve_formants() {
-                "preserved"
-            } else {
-                "shifted"
-            }
         );
         self.run(
             &[
