@@ -61,7 +61,7 @@ fn main() {
         let cancel = export_cancel.clone();
         let target = root.0.join("own-export-load.wav");
         std::thread::spawn(move || {
-            let spec = PitchShiftSpec::try_new(7.0, true).unwrap();
+            let spec = PitchShiftSpec::try_new(7.0).unwrap();
             let mut completed = 0;
             while !cancel.is_cancelled() {
                 match atomusicator_infrastructure::live_pitch::render_file(
@@ -146,7 +146,7 @@ fn main() {
                 .set(
                     0,
                     revision,
-                    PitchShiftSpec::try_new(semitones, true).unwrap(),
+                    PitchShiftSpec::try_new(semitones).unwrap(),
                 )
                 .unwrap();
             waiting = Some((started.elapsed().as_secs_f64(), semitones));

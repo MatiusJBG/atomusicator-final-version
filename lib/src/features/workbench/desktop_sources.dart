@@ -12,8 +12,8 @@ class _AtomizerScreen extends ConsumerWidget {
           source == null
               ? 720
               : MediaQuery.sizeOf(context).width < 1150
-              ? 860
-              : 690,
+              ? 1020
+              : 850,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -585,11 +585,13 @@ class _SourceReview extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const _SectionLabel('RESUMEN'),
+                      const SizedBox(height: 12),
+                      const ComputeSettingsPanel(compact: true),
                       const SizedBox(height: 18),
                       const _SummaryLine('Modelo', 'UVR / Kuielab · MDX'),
                       const _SummaryLine(
                         'Dispositivo',
-                        'CPU · procesamiento local',
+                        'ONNX Runtime · procesamiento local',
                       ),
                       _SummaryLine(
                         'Calidad',

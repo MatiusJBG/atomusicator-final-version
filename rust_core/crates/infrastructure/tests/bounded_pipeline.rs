@@ -102,6 +102,57 @@ impl SeparationProgressPort for Progress {
     fn report(&self, _: u8, _: u8, _: &str) {}
 }
 #[test]
+fn production_rhythm_profile_uses_original_mix_for_bass_without_changing_other_stems() {
+    use atomusicator_application::use_cases::bounded_separation::RhythmPolicy;
+    use atomusicator_domain::{StemType, quality::SeparationProfile};
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::new(root.0.clone());
+    let metadata = AudioAssetMetadata {
+        format: AudioFormat::new(44100, 2).unwrap(),
+        frame_count: 32,
+    };
+    let samples: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin() * 0.4).collect();
+    let mut writer = store.create("source", metadata).unwrap();
+    writer.write(&samples).unwrap();
+    let source = writer.finish().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipeline = BoundedSeparation::new(Inference(calls), Progress, Gate, store);
+    let legacy = pipeline
+        .execute(source.clone(), &CancellationToken::default())
+        .unwrap();
+    let production = pipeline
+        .with_rhythm_policy(RhythmPolicy::OriginalMixBassV2)
+        .execute(source, &CancellationToken::default())
+        .unwrap();
+    let mut bass = vec![0.0; 64];
+    production[&StemType::Bass]
+        .read_frames(0, &mut bass)
+        .unwrap();
+    assert_eq!(bass, samples.iter().map(|v| v * 0.3).collect::<Vec<_>>());
+    for kind in [
+        StemType::LeadVocal,
+        StemType::BackingVocals,
+        StemType::Drums,
+    ] {
+        assert_eq!(
+            legacy[&kind].content_hash(),
+            production[&kind].content_hash()
+        );
+    }
+    assert_eq!(
+        RhythmPolicy::from_profile(&SeparationProfile::production()).unwrap(),
+        RhythmPolicy::OriginalMixBassV2
+    );
+    assert_eq!(
+        RhythmPolicy::from_profile(&SeparationProfile::compatibility()).unwrap(),
+        RhythmPolicy::CompatibilityV1
+    );
+    assert_ne!(
+        SeparationProfile::production(),
+        SeparationProfile::compatibility()
+    );
+}
+#[test]
 fn bounded_pipeline_preserves_vad_residual_order_and_reuses_verified_stages() {
     let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
     let store = FloatSpoolStore::new(root.0.clone());

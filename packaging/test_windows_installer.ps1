@@ -1,3 +1,4 @@
+#requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$ReleaseDirectory,
@@ -17,6 +18,10 @@ $testRoot = Join-Path $repoRoot "build\installer-qualification-$identity"
 $installRoot = Join-Path $testRoot 'Installed app ñ with spaces'
 $output = Join-Path $testRoot 'installers'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
+New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+# Model a normal Programs directory without changing the workspace or user ACLs.
+& "$env:SystemRoot\System32\icacls.exe" $installRoot /setintegritylevel '(OI)(CI)M' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not label the owned installation fixture for normal execution.' }
 # A unique AppId isolates registry/uninstall metadata from every real installation.
 $testAppId = '{{' + $identity + '}'
 $project = Join-Path $testRoot 'User projects ñ'
@@ -40,6 +45,11 @@ try {
         & $compiler "/DAppVersion=$version" "/DInstallerAppId=$testAppId" '/DInstallerCompression=zip' "/DReleaseDir=$releaseRoot" "/DOutputDir=$output" (Join-Path $PSScriptRoot 'Atomusicator.iss') *> (Join-Path $testRoot "compile-$version.log")
         if ($LASTEXITCODE -ne 0) { throw "Qualification installer $version did not compile." }
         $installer = Join-Path $output "Atomusicator-Setup-$version.exe"
+        # Match the production build's normal executable integrity. Otherwise
+        # a Low-label compiler workspace can make the fixture fail before logs
+        # or per-user registration are created, independently of the installer.
+        & "$env:SystemRoot\System32\icacls.exe" $installer /setintegritylevel M | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not label the generated qualification installer for normal execution.' }
         $arguments = @('/CURRENTUSER', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOICONS',
             ('/DIR="' + $installRoot + '"'), ('/LOG="' + (Join-Path $testRoot "install-$version.log") + '"'))
         $setup = Start-Process -FilePath $installer -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $testRoot "setup-$version.stdout.log") -RedirectStandardError (Join-Path $testRoot "setup-$version.stderr.log")
@@ -50,6 +60,32 @@ try {
     }
     $uninstaller = Join-Path $installRoot 'unins000.exe'
     if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Isolated uninstaller missing.' }
+    # Regression: uninstall must refuse while this exact test app is running.
+    # Never close unrelated application instances to make this test pass.
+    $runningApp = Start-Process -FilePath (Join-Path $installRoot 'atomusicator.exe') -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru
+    try {
+        $marker = $null
+        for ($probe = 0; $probe -lt 30 -and -not $marker; $probe++) {
+            try { $marker = [Threading.Mutex]::OpenExisting('Local\Atomusicator.Running') }
+            catch [Threading.WaitHandleCannotBeOpenedException] { Start-Sleep -Milliseconds 100 }
+        }
+        if (-not $marker) { throw 'Running app did not publish its installer mutex.' }
+        $marker.Dispose()
+        $blocked = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -WindowStyle Hidden -PassThru
+        if (-not $blocked.WaitForExit(30000)) { $blocked.Kill(); throw 'Blocked-uninstall probe did not exit.' }
+        $runningApp.Refresh()
+        if ($blocked.ExitCode -eq 0 -or $runningApp.HasExited -or
+            -not (Test-Path -LiteralPath (Join-Path $installRoot 'atomusicator.exe'))) {
+            throw 'Uninstaller failed to protect the running application.'
+        }
+        Assert-UserFiles
+    } finally {
+        if (-not $runningApp.HasExited) {
+            $null = $runningApp.CloseMainWindow()
+            if (-not $runningApp.WaitForExit(5000)) { $runningApp.Kill(); $runningApp.WaitForExit() }
+        }
+        $runningApp.Dispose()
+    }
     $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $testRoot 'uninstall.log') + '"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $testRoot 'uninstall.stdout.log') -RedirectStandardError (Join-Path $testRoot 'uninstall.stderr.log')
     if (-not $uninstall.WaitForExit(120000)) { $uninstall.Kill(); throw 'Uninstall exceeded two minutes; inspect its log.' }
     if ($uninstall.ExitCode -ne 0) { throw "Uninstall exited $($uninstall.ExitCode)." }
@@ -63,6 +99,7 @@ try {
         unicode_path_startup = $true
         user_projects_and_appdata_preserved = $true
         uninstall = $true
+        uninstall_refuses_running_app = $true
         clean_windows_qualification = $false
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $testRoot 'result.json') -Encoding utf8
     Write-Host "Installer qualification evidence: $testRoot"

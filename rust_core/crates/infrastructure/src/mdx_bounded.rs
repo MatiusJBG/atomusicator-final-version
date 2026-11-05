@@ -1,5 +1,7 @@
 //! Duration-independent MDX overlap accumulator; window grid and f32 summation order are preserved.
-use crate::mdx::{MdxConfig, MdxTransform};
+use crate::job_diagnostics::StageTimer;
+use crate::mdx::{MdxConfig, MdxFftWorkspace, MdxTransform};
+use crate::mdx_overlap::{MdxOverlap, OverlapLayout, WindowPosition};
 use atomusicator_application::{
     CancellationToken,
     ports::{AudioBlockSource, AudioBlockWriter},
@@ -11,8 +13,43 @@ pub fn run_bounded_mdx(
     source: &dyn AudioBlockSource,
     target: &mut dyn AudioBlockWriter,
     cancel: &CancellationToken,
-    mut predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
+    predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
 ) -> Result<(), DomainError> {
+    run_bounded_mdx_observed(c, source, target, cancel, predict, None)
+}
+
+pub use crate::mdx_overlap::MdxObserver;
+pub fn run_bounded_mdx_observed(
+    c: MdxConfig,
+    source: &dyn AudioBlockSource,
+    target: &mut dyn AudioBlockWriter,
+    cancel: &CancellationToken,
+    mut predict: impl FnMut(&[f32]) -> Result<Vec<f32>, DomainError>,
+    observe: Option<&MdxObserver<'_>>,
+) -> Result<(), DomainError> {
+    run_bounded_mdx_reusing(
+        c,
+        source,
+        target,
+        cancel,
+        |input, output| {
+            *output = predict(input)?;
+            Ok(())
+        },
+        observe,
+    )
+}
+
+/// Production path: caller and transform reuse all large per-window buffers.
+pub fn run_bounded_mdx_reusing(
+    c: MdxConfig,
+    source: &dyn AudioBlockSource,
+    target: &mut dyn AudioBlockWriter,
+    cancel: &CancellationToken,
+    mut predict: impl FnMut(&mut [f32], &mut Vec<f32>) -> Result<(), DomainError>,
+    observe: Option<&MdxObserver<'_>>,
+) -> Result<(), DomainError> {
+    let _total = StageTimer::new("mdx_total");
     let metadata = source.metadata();
     if metadata.format.sample_rate_hz != 44100
         || metadata.format.channels != 2
@@ -48,12 +85,27 @@ pub fn run_bounded_mdx(
         }
         return Ok(());
     }
-    let mut accumulator = vec![0.0f32; chunk * 2];
-    let mut weights = vec![0.0f32; chunk];
+    let mut overlap = MdxOverlap::new(
+        &transform,
+        c,
+        OverlapLayout {
+            frames,
+            padded,
+            step,
+            peak,
+        },
+        observe.is_some(),
+    );
+    let mut raw = vec![0.0f32; chunk * 2];
+    let mut normalized = vec![0.0f32; chunk * 2];
+    let mut spectrum = vec![0.0f32; 4 * c.dim_f * c.dim_t];
+    let mut prediction = Vec::with_capacity(spectrum.len());
+    let mut fft_workspace = MdxFftWorkspace::new(&transform);
     for start in (0..padded).step_by(step) {
         check(cancel)?;
+        let read_timer = StageTimer::new("read_and_normalize");
         let actual = (padded - start).min(chunk as u64) as usize;
-        let mut raw = vec![0.0f32; chunk * 2];
+        raw.fill(0.0);
         let first = start.max(trim as u64);
         let end = (start + actual as u64).min(trim as u64 + frames);
         if first < end {
@@ -67,52 +119,41 @@ pub fn run_bounded_mdx(
                 return Err(fail("MDX source ended before its declared frame count"));
             }
         }
-        let normalized: Vec<f32> = raw.iter().map(|v| v / peak).collect();
-        let mut spectrum = transform.forward(&normalized)?;
+        for (normalized, raw) in normalized.iter_mut().zip(&raw) {
+            *normalized = raw / peak;
+        }
+        drop(read_timer);
+        if let Some(observe) = observe {
+            observe("input_pcm_windows", &raw);
+        }
+        {
+            let _timer = StageTimer::new("fft_forward");
+            transform.forward_into(&normalized, &mut spectrum, &mut fft_workspace)?;
+        }
         for component in 0..4 {
             spectrum
                 [component * c.dim_f * c.dim_t..(component * c.dim_f + 3.min(c.dim_f)) * c.dim_t]
                 .fill(0.0);
         }
-        let prediction = predict(&spectrum)?;
+        if let Some(observe) = observe {
+            observe("tensor_input_spectral_units", &spectrum);
+        }
+        {
+            let _timer = StageTimer::new("onnx_run_including_session_lookup");
+            predict(&mut spectrum, &mut prediction)?;
+        }
+        if let Some(observe) = observe {
+            observe("tensor_output_spectral_units", &prediction);
+        }
         check(cancel)?;
-        let decoded = transform.inverse(&prediction)?;
-        for frame in 0..actual {
-            let weight = if actual > 1 {
-                0.5 - 0.5 * (2.0 * std::f32::consts::PI * frame as f32 / (actual - 1) as f32).cos()
-            } else {
-                1.0
-            };
-            weights[frame] += weight;
-            for channel in 0..2 {
-                accumulator[frame * 2 + channel] += decoded[frame * 2 + channel] * weight;
-            }
-        }
-        // No later window can contribute before the next grid position.
-        let flush = step.min((padded - start) as usize);
-        let mut output = Vec::with_capacity(flush * 2);
-        for frame in 0..flush {
-            let position = start + frame as u64;
-            if position < trim as u64 || position - trim as u64 >= frames {
-                continue;
-            }
-            if weights[frame] <= 0.0 {
-                return Err(fail("MDX overlap left an uncovered frame"));
-            }
-            for channel in 0..2 {
-                let value = accumulator[frame * 2 + channel] / weights[frame] * peak * c.compensate;
-                output.push(if c.invert {
-                    raw[frame * 2 + channel] - value
-                } else {
-                    value
-                });
-            }
-        }
-        target.write(&output)?;
-        accumulator.copy_within(flush * 2.., 0);
-        accumulator[(chunk - flush) * 2..].fill(0.0);
-        weights.copy_within(flush.., 0);
-        weights[chunk - flush..].fill(0.0);
+        overlap.emit(
+            WindowPosition { start, actual },
+            &raw,
+            &prediction,
+            target,
+            observe,
+            &mut fft_workspace,
+        )?;
     }
     check(cancel)
 }

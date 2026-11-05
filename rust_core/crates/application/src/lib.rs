@@ -1,5 +1,6 @@
 pub mod cancellation;
 pub mod compute_policy;
+pub mod gpu_admission;
 pub mod ports;
 pub mod resource_admission;
 pub mod use_cases;

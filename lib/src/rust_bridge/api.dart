@@ -6,7 +6,30 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+Future<UiCacheSettingsDto> cacheSettings() =>
+    RustLib.instance.api.crateApiCacheSettings();
+
+Future<void> setCacheRetainedBytes({required BigInt bytes}) =>
+    RustLib.instance.api.crateApiSetCacheRetainedBytes(bytes: bytes);
+
+Future<BigInt> cleanRetainedCache() =>
+    RustLib.instance.api.crateApiCleanRetainedCache();
+
+Future<UiExecutionSettingsDto> executionSettings() =>
+    RustLib.instance.api.crateApiExecutionSettings();
+
+/// Runtime sessions keep their provider. The saved choice applies after restart.
+Future<void> setExecutionMode({required String mode}) =>
+    RustLib.instance.api.crateApiSetExecutionMode(mode: mode);
+
+Future<UiComputeSettingsDto> computeSettings() =>
+    RustLib.instance.api.crateApiComputeSettings();
+
+/// Persists a profile for future jobs. Rejects changes while a job is active.
+Future<void> setComputeProfile({required String profile}) =>
+    RustLib.instance.api.crateApiSetComputeProfile(profile: profile);
 
 Future<List<UiRecoverableJobDto>> recoverableJobs() =>
     RustLib.instance.api.crateApiRecoverableJobs();
@@ -40,11 +63,18 @@ Future<String> startSeparation({
 Future<UiJobDto> jobStatus({required String jobId}) =>
     RustLib.instance.api.crateApiJobStatus(jobId: jobId);
 
+/// Waits for a native job transition. Timeout bounds an abandoned bridge call.
+Future<UiJobDto> waitJobChange({required UiJobDto previous}) =>
+    RustLib.instance.api.crateApiWaitJobChange(previous: previous);
+
 Future<void> cancelJob({required String jobId}) =>
     RustLib.instance.api.crateApiCancelJob(jobId: jobId);
 
 Future<UiSessionDto> openAudioSession({required String directory}) =>
     RustLib.instance.api.crateApiOpenAudioSession(directory: directory);
+
+Future<void> closeAudioSession() =>
+    RustLib.instance.api.crateApiCloseAudioSession();
 
 Future<String> projectsDirectory() =>
     RustLib.instance.api.crateApiProjectsDirectory();
@@ -52,13 +82,8 @@ Future<String> projectsDirectory() =>
 Future<void> setProjectsDirectory({required String directory}) =>
     RustLib.instance.api.crateApiSetProjectsDirectory(directory: directory);
 
-Future<String> startPitch({
-  required int semitones,
-  required bool preserveFormants,
-}) => RustLib.instance.api.crateApiStartPitch(
-  semitones: semitones,
-  preserveFormants: preserveFormants,
-);
+Future<String> startPitch({required int semitones}) =>
+    RustLib.instance.api.crateApiStartPitch(semitones: semitones);
 
 Future<UiLivePitchDto> livePitchStatus() =>
     RustLib.instance.api.crateApiLivePitchStatus();
@@ -68,13 +93,11 @@ Future<UiLivePitchDto> setLivePitch({
   required BigInt epoch,
   required BigInt revision,
   required int semitones,
-  required bool preserveFormants,
 }) => RustLib.instance.api.crateApiSetLivePitch(
   sessionId: sessionId,
   epoch: epoch,
   revision: revision,
   semitones: semitones,
-  preserveFormants: preserveFormants,
 );
 
 Future<String> startExport({
@@ -154,6 +177,83 @@ Future<String> applicationVersion() =>
 Future<List<String>> supportedStems() =>
     RustLib.instance.api.crateApiSupportedStems();
 
+class UiCacheSettingsDto {
+  final BigInt retainedBytes;
+  final BigInt usedBytes;
+  final String directory;
+
+  const UiCacheSettingsDto({
+    required this.retainedBytes,
+    required this.usedBytes,
+    required this.directory,
+  });
+
+  @override
+  int get hashCode =>
+      retainedBytes.hashCode ^ usedBytes.hashCode ^ directory.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiCacheSettingsDto &&
+          runtimeType == other.runtimeType &&
+          retainedBytes == other.retainedBytes &&
+          usedBytes == other.usedBytes &&
+          directory == other.directory;
+}
+
+class UiComputeSettingsDto {
+  final String profile;
+  final List<String> availableProfiles;
+  final int requestedThreads;
+  final int effectiveThreads;
+
+  const UiComputeSettingsDto({
+    required this.profile,
+    required this.availableProfiles,
+    required this.requestedThreads,
+    required this.effectiveThreads,
+  });
+
+  @override
+  int get hashCode =>
+      profile.hashCode ^
+      availableProfiles.hashCode ^
+      requestedThreads.hashCode ^
+      effectiveThreads.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiComputeSettingsDto &&
+          runtimeType == other.runtimeType &&
+          profile == other.profile &&
+          availableProfiles == other.availableProfiles &&
+          requestedThreads == other.requestedThreads &&
+          effectiveThreads == other.effectiveThreads;
+}
+
+class UiExecutionSettingsDto {
+  final String nextStartupMode;
+  final String diagnosticsJson;
+
+  const UiExecutionSettingsDto({
+    required this.nextStartupMode,
+    required this.diagnosticsJson,
+  });
+
+  @override
+  int get hashCode => nextStartupMode.hashCode ^ diagnosticsJson.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UiExecutionSettingsDto &&
+          runtimeType == other.runtimeType &&
+          nextStartupMode == other.nextStartupMode &&
+          diagnosticsJson == other.diagnosticsJson;
+}
+
 class UiJobDto {
   final String id;
   final UiJobStatus status;
@@ -231,7 +331,6 @@ class UiLivePitchDto {
   /// Revision consumed by the audio callback, not a physical latency measurement.
   final BigInt appliedRevision;
   final int semitones;
-  final bool preserveFormants;
 
   const UiLivePitchDto({
     required this.sessionId,
@@ -239,7 +338,6 @@ class UiLivePitchDto {
     required this.revision,
     required this.appliedRevision,
     required this.semitones,
-    required this.preserveFormants,
   });
 
   @override
@@ -248,8 +346,7 @@ class UiLivePitchDto {
       epoch.hashCode ^
       revision.hashCode ^
       appliedRevision.hashCode ^
-      semitones.hashCode ^
-      preserveFormants.hashCode;
+      semitones.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -260,29 +357,23 @@ class UiLivePitchDto {
           epoch == other.epoch &&
           revision == other.revision &&
           appliedRevision == other.appliedRevision &&
-          semitones == other.semitones &&
-          preserveFormants == other.preserveFormants;
+          semitones == other.semitones;
 }
 
 class UiPitchExportDto {
   final String sessionId;
   final BigInt epoch;
   final int semitones;
-  final bool preserveFormants;
 
   const UiPitchExportDto({
     required this.sessionId,
     required this.epoch,
     required this.semitones,
-    required this.preserveFormants,
   });
 
   @override
   int get hashCode =>
-      sessionId.hashCode ^
-      epoch.hashCode ^
-      semitones.hashCode ^
-      preserveFormants.hashCode;
+      sessionId.hashCode ^ epoch.hashCode ^ semitones.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -291,8 +382,7 @@ class UiPitchExportDto {
           runtimeType == other.runtimeType &&
           sessionId == other.sessionId &&
           epoch == other.epoch &&
-          semitones == other.semitones &&
-          preserveFormants == other.preserveFormants;
+          semitones == other.semitones;
 }
 
 class UiPlaybackDto {

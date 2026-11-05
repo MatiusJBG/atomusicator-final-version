@@ -26,7 +26,7 @@ fn imported_atomusicator_session_keeps_pitch_and_historical_bookmarks_work() {
         .live_pitch_store
         .queue(
             pitch_persistence_key(&old_dto).unwrap(),
-            PitchShiftSpec::try_new(7.0, false).unwrap(),
+            PitchShiftSpec::try_new(7.0).unwrap(),
         )
         .unwrap();
     backend.live_pitch_store.flush().unwrap();
@@ -36,7 +36,6 @@ fn imported_atomusicator_session_keeps_pitch_and_historical_bookmarks_work() {
         Path::new(&imported.directory)
             .starts_with(policy.native_projects_dir().canonicalize().unwrap())
     );
-    assert!(!backend.live_pitch_status().unwrap().preserve_formants);
     assert_eq!(
         backend
             .load_directory_with_policy(Path::new(&imported.directory), &policy)

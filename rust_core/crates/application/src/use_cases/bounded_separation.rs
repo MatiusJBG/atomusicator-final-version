@@ -11,11 +11,35 @@ use std::{collections::BTreeMap, sync::Arc};
 type Source = Arc<dyn AudioBlockSource>;
 const BLOCK: usize = 65536;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RhythmPolicy {
+    #[default]
+    CompatibilityV1,
+    OriginalMixBassV2,
+}
+impl RhythmPolicy {
+    pub fn from_profile(
+        profile: &atomusicator_domain::quality::SeparationProfile,
+    ) -> Result<Self, DomainError> {
+        use atomusicator_domain::quality::SeparationProfile;
+        if *profile == SeparationProfile::compatibility() {
+            Ok(Self::CompatibilityV1)
+        } else if *profile == SeparationProfile::production() {
+            Ok(Self::OriginalMixBassV2)
+        } else {
+            Err(DomainError::DspFailure(
+                "unsupported separation quality profile".into(),
+            ))
+        }
+    }
+}
+
 pub struct BoundedSeparation<I, P, G, S> {
     inference: I,
     progress: P,
     gate: G,
     store: S,
+    rhythm_policy: RhythmPolicy,
 }
 impl<I, P, G, S> BoundedSeparation<I, P, G, S>
 where
@@ -30,7 +54,12 @@ where
             progress,
             gate,
             store,
+            rhythm_policy: RhythmPolicy::CompatibilityV1,
         }
+    }
+    pub fn with_rhythm_policy(mut self, policy: RhythmPolicy) -> Self {
+        self.rhythm_policy = policy;
+        self
     }
     fn stage(
         &self,
@@ -226,16 +255,25 @@ where
         )?;
         self.progress.report(2, 5, "Separating drums");
         let drums = self.infer("drums", InferenceStage::Drums, Arc::clone(&master), cancel)?;
-        let drum_free = self.combine(
-            "drum-free",
-            &[Arc::clone(&master), Arc::clone(&drums)],
-            "subtract-v1",
-            cancel,
-            |v| v[0] - v[1],
-        )?;
-        self.progress
-            .report(3, 5, "Separating bass from drum-free residual");
-        let bass = self.infer("bass", InferenceStage::Bass, drum_free, cancel)?;
+        let bass_input = match self.rhythm_policy {
+            RhythmPolicy::CompatibilityV1 => self.combine(
+                "drum-free",
+                &[Arc::clone(&master), Arc::clone(&drums)],
+                "subtract-v1",
+                cancel,
+                |v| v[0] - v[1],
+            )?,
+            RhythmPolicy::OriginalMixBassV2 => Arc::clone(&mix),
+        };
+        self.progress.report(
+            3,
+            5,
+            match self.rhythm_policy {
+                RhythmPolicy::CompatibilityV1 => "Separating bass from drum-free residual",
+                RhythmPolicy::OriginalMixBassV2 => "Separating bass from original mix",
+            },
+        );
+        let bass = self.infer("bass", InferenceStage::Bass, bass_input, cancel)?;
         let instrumental = self.combine(
             "instrumental",
             &[master, Arc::clone(&drums), Arc::clone(&bass)],

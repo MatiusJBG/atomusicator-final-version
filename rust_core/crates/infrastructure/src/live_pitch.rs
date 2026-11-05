@@ -3,14 +3,28 @@ use atomusicator_domain::{DomainError, PitchShiftSpec};
 use std::ptr::NonNull;
 
 pub const PITCH_BLOCK: usize = 256;
-pub const ENGINE_ID: &str = "signalsmith-1.3.2-88061fd4-window3072-hop512-fft8192-v1";
+pub const TONALITY_HZ: f32 = 8000.0;
+/// Previous production window. Musical profiles never go shorter than this.
+const MIN_BLOCK: u32 = 3072;
+pub const ENGINE_ID: &str =
+    "signalsmith-1.3.2-88061fd4-block0.12sr-hop0.03sr-tonality8k-fft8192-v2";
+
+/// Signalsmith `presetDefault` sizes (0.12 s block, 0.03 s hop), never shorter
+/// than the previous 3072-sample window.
+pub fn musical_profile(sample_rate: u32) -> (u32, u32) {
+    let rate = f64::from(sample_rate);
+    let block = (rate * 0.12).round() as u32;
+    let block = block.clamp(MIN_BLOCK, 8192);
+    let interval = ((rate * 0.03).round() as u32).clamp(64, block);
+    (block, interval)
+}
 
 unsafe extern "C" {
     fn atom_pitch_create(rate: u32, window: u32, interval: u32) -> *mut std::ffi::c_void;
     fn atom_pitch_destroy(pitch: *mut std::ffi::c_void);
     fn atom_pitch_delay(pitch: *mut std::ffi::c_void) -> u32;
     fn atom_pitch_output_delay(pitch: *mut std::ffi::c_void) -> u32;
-    fn atom_pitch_set(pitch: *mut std::ffi::c_void, semitones: f32, preserve: bool);
+    fn atom_pitch_set(pitch: *mut std::ffi::c_void, semitones: f32);
     fn atom_pitch_process(
         pitch: *mut std::ffi::c_void,
         input: *const f32,
@@ -28,7 +42,8 @@ pub struct LivePitchProcessor {
 unsafe impl Send for LivePitchProcessor {}
 impl LivePitchProcessor {
     pub fn new(sample_rate: u32) -> Result<Self, DomainError> {
-        Self::with_profile(sample_rate, 3072, 512)
+        let (window, interval) = musical_profile(sample_rate);
+        Self::with_profile(sample_rate, window, interval)
     }
     /// Controlled qualification only; the application uses the fixed profile.
     pub fn with_profile(sample_rate: u32, window: u32, interval: u32) -> Result<Self, DomainError> {
@@ -45,13 +60,7 @@ impl LivePitchProcessor {
     }
     pub fn set_spec(&mut self, spec: PitchShiftSpec) {
         // SAFETY: exclusively owned valid instance; domain validates parameters.
-        unsafe {
-            atom_pitch_set(
-                self.handle.as_ptr(),
-                spec.semitones(),
-                spec.preserve_formants(),
-            )
-        }
+        unsafe { atom_pitch_set(self.handle.as_ptr(), spec.semitones()) }
     }
     pub fn latency_frames(&self) -> usize {
         // SAFETY: live instance, read-only query.
@@ -169,21 +178,8 @@ pub fn render_file(
     let mut processor = LivePitchProcessor::new(metadata.format.sample_rate_hz)?;
     processor.set_spec(spec);
     let delay = processor.latency_frames() as u64;
-    let wav = hound::WavSpec {
-        channels: metadata.format.channels,
-        sample_rate: metadata.format.sample_rate_hz,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let export_error = |e: hound::Error| DomainError::AudioExportFailure(e.to_string());
     // Never truncate a caller's existing file, including an original or alias.
-    let file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(target)
-        .map_err(|e| DomainError::AudioExportFailure(e.to_string()))?;
-    let mut writer =
-        hound::WavWriter::new(std::io::BufWriter::new(file), wav).map_err(export_error)?;
+    let mut writer = crate::audio_io::wav_stream::FloatWavWriter::create_new(target, metadata)?;
     let mut raw = [0.0f32; PITCH_BLOCK * 2];
     let mut input = [0.0f32; PITCH_BLOCK * 2];
     let mut output = [0.0f32; PITCH_BLOCK * 2];
@@ -199,18 +195,18 @@ pub fn render_file(
             input[i * 2 + 1] = raw[i * channels + channels - 1];
         }
         processor.process(&input, &mut output)?;
-        for offset in 0..PITCH_BLOCK {
-            if position + (offset as u64) < delay || written >= metadata.frame_count {
-                continue;
+        let first = delay.saturating_sub(position).min(PITCH_BLOCK as u64) as usize;
+        let count = (PITCH_BLOCK - first).min((metadata.frame_count - written) as usize);
+        if channels == 2 {
+            writer.write_samples(&output[first * 2..(first + count) * 2])?;
+        } else {
+            for index in 0..count {
+                raw[index] = output[(first + index) * 2];
             }
-            for channel in 0..channels {
-                writer
-                    .write_sample(output[offset * 2 + channel])
-                    .map_err(export_error)?;
-            }
-            written += 1;
+            writer.write_samples(&raw[..count])?;
         }
+        written += count as u64;
         position += PITCH_BLOCK as u64;
     }
-    writer.finalize().map_err(export_error)
+    writer.finish().map(|_| ())
 }

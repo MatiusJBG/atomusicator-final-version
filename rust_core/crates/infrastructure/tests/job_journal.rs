@@ -12,6 +12,30 @@ fn request() -> JobRequest {
     }
 }
 #[test]
+fn first_revision_pins_the_requested_quality_profile() {
+    use atomusicator_domain::quality::SeparationProfile;
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = JobJournal::new(root.0.clone());
+    let (new, _lease) = store
+        .create_leased("production", request(), None, None)
+        .unwrap();
+    assert_eq!(new.profile, SeparationProfile::production());
+    let (old, _lease) = store
+        .create_leased_profiled(
+            "legacy-retry",
+            request(),
+            Some("old".into()),
+            Some("hash".into()),
+            SeparationProfile::compatibility(),
+        )
+        .unwrap();
+    assert_eq!(old.revision, 0);
+    assert_eq!(
+        store.load("legacy-retry").unwrap().profile,
+        SeparationProfile::compatibility()
+    );
+}
+#[test]
 fn initial_revision_is_owned_and_already_contains_the_retry_source_identity() {
     let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
     let store = JobJournal::new(root.0.clone());

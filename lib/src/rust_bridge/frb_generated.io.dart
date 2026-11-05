@@ -25,6 +25,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  UiJobDto dco_decode_box_autoadd_ui_job_dto(dynamic raw);
+
+  @protected
   UiJobFailure dco_decode_box_autoadd_ui_job_failure(dynamic raw);
 
   @protected
@@ -93,6 +96,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_u_8(dynamic raw);
 
   @protected
+  UiCacheSettingsDto dco_decode_ui_cache_settings_dto(dynamic raw);
+
+  @protected
+  UiComputeSettingsDto dco_decode_ui_compute_settings_dto(dynamic raw);
+
+  @protected
+  UiExecutionSettingsDto dco_decode_ui_execution_settings_dto(dynamic raw);
+
+  @protected
   UiJobDto dco_decode_ui_job_dto(dynamic raw);
 
   @protected
@@ -133,6 +145,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  UiJobDto sse_decode_box_autoadd_ui_job_dto(SseDeserializer deserializer);
 
   @protected
   UiJobFailure sse_decode_box_autoadd_ui_job_failure(
@@ -223,6 +238,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_u_8(SseDeserializer deserializer);
 
   @protected
+  UiCacheSettingsDto sse_decode_ui_cache_settings_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UiComputeSettingsDto sse_decode_ui_compute_settings_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UiExecutionSettingsDto sse_decode_ui_execution_settings_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   UiJobDto sse_decode_ui_job_dto(SseDeserializer deserializer);
 
   @protected
@@ -267,6 +297,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_ui_job_dto(
+    UiJobDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_ui_job_failure(
@@ -372,6 +408,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ui_cache_settings_dto(
+    UiCacheSettingsDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ui_compute_settings_dto(
+    UiComputeSettingsDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ui_execution_settings_dto(
+    UiExecutionSettingsDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_ui_job_dto(UiJobDto self, SseSerializer serializer);

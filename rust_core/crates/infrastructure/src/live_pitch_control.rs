@@ -25,7 +25,7 @@ impl Default for LivePitchControl {
         Self {
             callback_frames: AtomicUsize::new(0),
             buffered_frames: AtomicUsize::new(0),
-            target: AtomicU64::new(12 | 64),
+            target: AtomicU64::new(12),
             applied: AtomicU64::new(0),
             epoch: AtomicU64::new(0),
             writer: Mutex::new(()),
@@ -64,7 +64,7 @@ impl LivePitchControl {
             epoch: self.epoch.load(Ordering::Acquire),
             revision: word >> 8,
             applied_revision: self.applied.load(Ordering::Acquire),
-            spec: PitchShiftSpec::try_new(((word & 63) as i32 - 12) as f32, word & 64 != 0)
+            spec: PitchShiftSpec::try_new(((word & 63) as i32 - 12) as f32)
                 .expect("validated packed pitch"),
         }
     }
@@ -88,9 +88,7 @@ impl LivePitchControl {
             return Err(fail("invalid pitch revision"));
         }
         if revision > self.target.load(Ordering::Acquire) >> 8 {
-            let word = (revision << 8)
-                | (spec.semitones() as i32 + 12) as u64
-                | if spec.preserve_formants() { 64 } else { 0 };
+            let word = (revision << 8) | (spec.semitones() as i32 + 12) as u64;
             self.target.store(word, Ordering::Release);
         }
         Ok(self.snapshot())
@@ -102,7 +100,7 @@ impl LivePitchControl {
             .lock()
             .map_err(|_| fail("pitch control state poisoned"))?;
         self.epoch.fetch_add(1, Ordering::AcqRel);
-        self.target.store(12 | 64, Ordering::Release);
+        self.target.store(12, Ordering::Release);
         self.applied.store(0, Ordering::Release);
         Ok(())
     }
@@ -139,16 +137,16 @@ mod tests {
     fn latest_revision_wins_and_old_sessions_cannot_change_new_audio() {
         let control = LivePitchControl::default();
         control
-            .set(0, 2, PitchShiftSpec::try_new(7.0, true).unwrap())
+            .set(0, 2, PitchShiftSpec::try_new(7.0).unwrap())
             .unwrap();
         control
-            .set(0, 1, PitchShiftSpec::try_new(-7.0, false).unwrap())
+            .set(0, 1, PitchShiftSpec::try_new(-7.0).unwrap())
             .unwrap();
         assert_eq!(control.snapshot().spec.semitones(), 7.0);
         control.reset_session().unwrap();
         assert!(
             control
-                .set(0, 3, PitchShiftSpec::try_new(12.0, true).unwrap())
+                .set(0, 3, PitchShiftSpec::try_new(12.0).unwrap())
                 .is_err()
         );
         assert_eq!(control.snapshot().spec.semitones(), 0.0);

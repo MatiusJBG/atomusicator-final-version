@@ -4,11 +4,11 @@ A Windows audio workbench with a Flutter interface and a Rust engine for
 five-stem separation, synchronized mixing, pitch processing and export.
 The application runs without Python or the legacy repository.
 
-**Release status:** Windows x64 CPU candidate, version 0.7.0. Independent vocal
-quality/listening, full 30–60 minute model runs, clean-Windows installation and
-physical device reconnection remain qualification gates. The current installer
-also needs the complete third-party notice/source bundle before publication.
-See [migration evidence](docs/migration-audit.md),
+**Release status:** Windows x64, version 0.7.0. This is the current stable
+release. Inference in the installer is CPU-only. Live pitch changes the key
+without a formant control. Models download on demand and are not inside the
+installer. Physical USB reconnection is not certified. See the
+[changelog](CHANGELOG.md), [migration evidence](docs/migration-audit.md),
 [distribution requirements](docs/distribution-compliance.md) and the
 [manual release procedure](docs/manual-release.md).
 
@@ -28,11 +28,11 @@ The qualified distribution target is **Windows x64 with CPU inference**. Other
 platform folders exist in the Flutter project but are not qualified releases.
 GPU acceleration remains unqualified.
 
-When a release is published, download its installer from
+Download **Atomusicator 0.7.0** from
 [GitHub Releases](https://github.com/MatiusJBG/atomusicator-final-version/releases)
-and verify its SHA-256 against the accompanying checksum file. Until then,
-build the application using the steps below. Do not download an unrelated
-binary simply because it has a similar name.
+and verify its SHA-256 against the accompanying checksum file. Do not download
+an unrelated binary simply because it has a similar name. The development build
+steps below remain available for contributors.
 
 1. Launch Atomusicator. Import **WAV, MP3, FLAC or M4A**, drop files anywhere in
    the workbench, or copy files in Windows Explorer and press **Ctrl+V** in the
@@ -44,11 +44,11 @@ binary simply because it has a similar name.
 3. Mix lead vocals, backing vocals, drums, bass and instrumental using play,
    pause, stop, seek, gain, mute, solo, pan and master volume. Waveforms share a
    synchronized timeline with 100–400% zoom.
-4. Adjust **Live pitch** from −12 to +12 semitones, with optional formant
-   preservation. Changes take effect during playback without an Apply button,
-   render job or loading screen, and keep the tempo unchanged. Reset returns to
-   the original pitch. Settings are saved locally for the session; original
-   stems remain unchanged. A short audio-buffer response is unavoidable.
+4. Adjust **Live pitch** from −12 to +12 semitones. Changes take effect during
+   playback without an Apply button, a render job or a loading screen, and keep
+   the tempo unchanged. There is no formant switch. Reset returns to the
+   original pitch. Settings are saved locally for the session; original stems
+   remain unchanged. A short audio-buffer response is unavoidable.
 5. Export selected stems as WAV, FLAC or MP3. WAV supports 16/24-bit PCM and
    32-bit float; FLAC supports 16/24-bit; MP3 uses 320 kbps. Choose 44.1/48 kHz,
    mono/stereo and optional loudness normalization. Float WAV preserves
@@ -156,7 +156,7 @@ Outputs:
 | --- | --- |
 | Complete runnable app | `build/windows/x64/runner/Release/` |
 | App executable | `build/windows/x64/runner/Release/atomusicator.exe` |
-| Windows installer | `packaging/dist/Atomusicator-Setup-0.7.0.exe` |
+| Windows installer | `packaging/dist/<version>-<build-id>/Atomusicator-Setup-<version>.exe` (exact directory printed by the build) |
 | Runtime checksum inventory | `build/windows/x64/runner/Release/release-manifest.json` |
 
 Keep the **whole release folder** together when running or creating a portable
@@ -229,6 +229,14 @@ that directory into the Flutter debug directory. Recopy after Rust changes;
 Flutter hot reload does not rebuild the Rust engine. Stop the app before
 replacing a DLL. When native APIs change, regenerate bindings as below.
 
+The backend supports `eco`, `balanced` (default), and `throughput` CPU profiles.
+The generated bridge exposes `computeSettings()` and `setComputeProfile(...)`;
+changes are persisted and accepted when no audio job is active. For a startup
+override in PowerShell, set `$env:ATOMUSICATOR_CPU_PROFILE = 'throughput'` before
+launching. Inference reduces its thread budget while the mixer is playing.
+See [runtime configuration and validation](docs/backend-runtime-validation.md)
+for limits and [benchmark procedures](benchmarks/README.md) for measured scope.
+
 ### Regenerate Flutter–Rust bindings
 
 Generated bindings are checked in; ordinary clones do not need regeneration.
@@ -293,3 +301,11 @@ Installers and large dependency packages belong in
 [GitHub Releases](https://github.com/MatiusJBG/atomusicator-final-version/releases).
 The [manual release guide](docs/manual-release.md) explains branch pushes,
 qualification, tagging, assets and checksums. No publication is automated.
+
+Windows packaging also generates a Rust SPDX SBOM, Rust/Dart license inventories,
+full dependency notices and covered Rust source archives. Missing license texts
+stop packaging. These files do not establish distribution clearance by themselves:
+the inventory lists outstanding source and qualification obligations. Before
+publishing, run `packaging/validate_windows_release.ps1 -ReleaseDirectory
+build/windows/x64/runner/Release -RequireDistributionReady`; the gate rejects a
+candidate whose distribution audit is still pending.

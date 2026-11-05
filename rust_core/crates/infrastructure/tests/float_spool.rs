@@ -77,3 +77,32 @@ fn cache_cleanup_cannot_remove_a_leased_audio_artifact() {
     drop(source);
     assert_eq!(store.prune(0).unwrap(), 128);
 }
+
+#[test]
+fn configurable_retention_reclaims_unleased_cache_on_the_next_stage() {
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::with_retention(root.0.clone(), 0);
+    let metadata = AudioAssetMetadata {
+        format: AudioFormat::new(44100, 2).unwrap(),
+        frame_count: 1,
+    };
+    let mut old = store.create("old", metadata).unwrap();
+    old.write(&[0.25, -0.25]).unwrap();
+    let old = old.finish().unwrap();
+    let mut live = store.create("live", metadata).unwrap();
+    live.write(&[0.5, -0.5]).unwrap();
+    let live = live.finish().unwrap();
+    drop(old);
+    let _next = store.create("next", metadata).unwrap();
+    assert_eq!(
+        std::fs::read_dir(&root.0)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|p| p.path().extension().is_some_and(|e| e == "f32"))
+            .count(),
+        1
+    );
+    let mut samples = [0.0; 2];
+    live.read_frames(0, &mut samples).unwrap();
+    assert_eq!(samples, [0.5, -0.5]);
+}

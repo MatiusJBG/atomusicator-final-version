@@ -6,7 +6,7 @@ use atomusicator_infrastructure::{
     audio_tools::unique_id,
     job_journal::{JobJournal, JobRequest, JournalRecord},
 };
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 #[derive(Debug)]
 pub(crate) struct JobFailure {
@@ -57,12 +57,14 @@ pub(crate) struct IdleGuard<'a> {
 }
 pub(crate) struct JobRegistry {
     active: Mutex<Option<Job>>,
+    changed: Condvar,
     pub journal: JobJournal,
 }
 impl JobRegistry {
     pub fn new(journal: JobJournal) -> Self {
         Self {
             active: Mutex::new(None),
+            changed: Condvar::new(),
             journal,
         }
     }
@@ -85,6 +87,25 @@ impl JobRegistry {
             .map(|j| j.dto.clone())
             .ok_or("job not found".into())
     }
+    pub fn wait_change(&self, previous: UiJobDto) -> Result<UiJobDto, String> {
+        let guard = self.active.lock().map_err(err)?;
+        let (guard, _) = self
+            .changed
+            .wait_timeout_while(guard, std::time::Duration::from_secs(2), |slot| {
+                slot.as_ref().is_some_and(|job| {
+                    job.dto.id == previous.id
+                        && job.dto.status == previous.status
+                        && job.dto.progress == previous.progress
+                        && job.dto.message == previous.message
+                })
+            })
+            .map_err(err)?;
+        guard
+            .as_ref()
+            .filter(|job| job.dto.id == previous.id)
+            .map(|job| job.dto.clone())
+            .ok_or("job changed".into())
+    }
     pub fn cancel(&self, id: &str) -> Result<(), String> {
         let mut guard = self.active.lock().map_err(err)?;
         let job = guard
@@ -97,6 +118,7 @@ impl JobRegistry {
             job.record = next;
             job.dto.status = status(job.record.lifecycle.status());
             job.cancel.cancel();
+            self.changed.notify_all();
         }
         Ok(())
     }
@@ -117,15 +139,20 @@ impl JobRegistry {
         {
             return Err("another audio job is already running".into());
         }
-        let expected_source = retry_of
+        let previous = retry_of
             .as_ref()
             .map(|id| self.journal.load(id))
             .transpose()
-            .map_err(err)?
-            .and_then(|record| record.source_sha256);
+            .map_err(err)?;
+        let expected_source = previous
+            .as_ref()
+            .and_then(|record| record.source_sha256.clone());
+        let profile = previous
+            .map(|record| record.profile)
+            .unwrap_or_else(atomusicator_domain::quality::SeparationProfile::production);
         let (mut record, lease) = self
             .journal
-            .create_leased(&id, request, retry_of.clone(), expected_source)
+            .create_leased_profiled(&id, request, retry_of.clone(), expected_source, profile)
             .map_err(err)?;
         record.lifecycle.start().map_err(err)?;
         self.journal.save(&mut record).map_err(err)?;
@@ -178,6 +205,7 @@ impl JobRegistry {
         {
             job.dto.progress = job.dto.progress.max(progress.clamp(0.0, 1.0));
             job.dto.message = message.into();
+            self.changed.notify_all();
         }
     }
     pub fn source_hash(&self, id: &str, hash: String) -> Result<(), String> {
@@ -221,6 +249,7 @@ impl JobRegistry {
         self.journal.save(&mut next).map_err(err)?;
         job.record = next;
         job.dto.status = UiJobStatus::Committing;
+        self.changed.notify_all();
         Ok(())
     }
     pub fn output(&self, id: &str, path: std::path::PathBuf) -> Result<(), String> {
@@ -275,6 +304,7 @@ impl JobRegistry {
         drop(lease);
         job.dto.status = status(job.record.lifecycle.status());
         job.dto.message = job.record.message.clone();
+        self.changed.notify_all();
         if let Err(error) = finish {
             job.dto.status = UiJobStatus::Failed;
             job.dto.failure = Some(UiJobFailure::Storage);

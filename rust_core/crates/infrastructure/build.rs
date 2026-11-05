@@ -1,4 +1,13 @@
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        cc::Build::new()
+            .cpp(true)
+            .std("c++17")
+            .debug(false)
+            .file("native/gpu_probe.cpp")
+            .compile("atomusicator_gpu_probe");
+        println!("cargo:rustc-link-lib=dxgi");
+    }
     println!("cargo:rerun-if-changed=native");
     // Preserve the pinned upstream headers. A narrowly scoped, recorded build
     // patch exposes Linear's existing zero-padding parameter independently of

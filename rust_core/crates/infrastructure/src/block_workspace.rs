@@ -1,10 +1,8 @@
 //! Writes and verifies a complete bundle before its single publication point.
 use crate::{
-    audio_io::wav_codec::write_block_wav,
-    audio_tools::TemporaryDirectory,
-    session_reader::stem_key,
-    session_workspace::WorkspaceSession,
-    storage::{checksum::file_hash, paths::WorkspacePathPolicy},
+    audio_io::wav_codec::write_block_wav_hashed, audio_tools::TemporaryDirectory,
+    session_reader::stem_key, session_workspace::WorkspaceSession,
+    storage::paths::WorkspacePathPolicy,
 };
 use atomusicator_application::{CancellationToken, ports::AudioBlockSource};
 use atomusicator_domain::{AudioAsset, DomainError, StemType};
@@ -29,6 +27,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
     cancel: &CancellationToken,
     hooks: PublicationHooks<S, C>,
 ) -> Result<WorkspaceSession, DomainError> {
+    let _timer = crate::job_diagnostics::StageTimer::new("publication");
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(failure("invalid session id"));
     }
@@ -53,8 +52,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
         let source = stems.get(&kind).ok_or(DomainError::MissingStem(kind))?;
         let key = stem_key(kind);
         let path = outputs.join(format!("{key}.wav"));
-        write_block_wav(&path, source.as_ref(), cancel)?;
-        let hash = file_hash(&path, cancel)?;
+        let hash = write_block_wav_hashed(&path, source.as_ref(), cancel)?;
         records.push(serde_json::json!({"kind":key,"path":format!("outputs/{key}.wav"),"frames":metadata.frame_count,
             "sample_rate_hz":metadata.format.sample_rate_hz,"channels":metadata.format.channels,"sha256":hash}));
     }

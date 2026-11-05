@@ -16,7 +16,7 @@ use atomusicator_infrastructure::{
     models::manifest_manager::ManifestModelManager,
     onnx::OrtSessionPool,
     pitch_cache::PitchRenderCache,
-    preferences::{NativeLegacyProjects, ProjectsPreferences},
+    preferences::{ComputePreferences, NativeLegacyProjects, ProjectsPreferences},
     storage::paths::WorkspacePathPolicy,
     use_case_adapters::StftSpectralBleedGate,
 };
@@ -35,6 +35,8 @@ pub struct Studio {
     projects: Mutex<PathBuf>,
     runtime: tokio::runtime::Runtime,
     sessions: Arc<OrtSessionPool>,
+    compute_profile: Mutex<atomusicator_application::compute_policy::ComputeProfile>,
+    compute_preferences: ComputePreferences,
     resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission,
     pitch_cache: PitchRenderCache,
     live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore,
@@ -55,8 +57,34 @@ pub fn studio() -> Result<Arc<Studio>, String> {
             let projects = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
                 .load()
                 .map_err(err)?;
+            let compute_preferences = ComputePreferences::new(policy.app_data_root().to_path_buf());
+            let profile = match std::env::var("ATOMUSICATOR_CPU_PROFILE") {
+                Ok(value) => value.parse().map_err(err)?,
+                Err(std::env::VarError::NotPresent) => compute_preferences.load().map_err(err)?,
+                Err(error) => return Err(err(error)),
+            };
+            let mixer = CpalRealtimeMixer::new().map_err(err)?;
+            let execution = atomusicator_infrastructure::preferences::ExecutionPreferences::new(
+                policy.app_data_root().to_path_buf(),
+            )
+            .startup()
+            .map_err(err)?;
+            let sessions = Arc::new(
+                OrtSessionPool::with_compute_profile(2, profile)
+                    .map_err(err)?
+                    .using_execution_options(execution)
+                    .map_err(err)?
+                    .with_playback_probe(mixer.playback_probe()),
+            );
+            let inference_threads =
+                atomusicator_application::compute_policy::ComputeBudget::for_profile(
+                    atomusicator_application::compute_policy::ComputeProfile::Throughput,
+                    std::thread::available_parallelism().map_or(1, usize::from),
+                    false,
+                )
+                .threads_per_inference();
             Ok(Arc::new(Studio {
-                mixer: CpalRealtimeMixer::new().map_err(err)?,
+                mixer,
                 jobs: Arc::new(crate::jobs::JobRegistry::new(
                     atomusicator_infrastructure::job_journal::JobJournal::new(
                         policy.app_data_root().join("jobs"),
@@ -69,7 +97,9 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .enable_all()
                     .build()
                     .map_err(err)?,
-                sessions: Arc::new(OrtSessionPool::new(2).map_err(err)?),
+                sessions,
+                compute_profile: Mutex::new(profile),
+                compute_preferences,
                 pitch_cache: PitchRenderCache::new(policy.stage_cache_dir().join("pitch-v1")),
                 live_pitch_store:
                     atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
@@ -78,10 +108,7 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     .map_err(err)?,
                 resources:
                     atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
-                        atomusicator_application::compute_policy::ComputeBudget::interactive(
-                            std::thread::available_parallelism().map_or(1, usize::from),
-                        )
-                        .threads_per_inference(),
+                        inference_threads,
                     )
                     .map_err(err)?,
             }))
@@ -89,6 +116,101 @@ pub fn studio() -> Result<Arc<Studio>, String> {
         .clone()
 }
 impl Studio {
+    pub fn close_session(&self) -> Result<(), String> {
+        let _idle = self.jobs.idle()?;
+        let mut loaded = self.loaded.lock().map_err(err)?;
+        self.mixer.unload_session().map_err(err)?;
+        *loaded = None;
+        self.sessions
+            .trim_idle_and_resize(self.sessions.capacity().map_err(err)?)
+            .map_err(err)
+    }
+    pub fn cache_settings(&self) -> Result<crate::api::UiCacheSettingsDto, String> {
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        let directory = policy.stage_cache_dir().join("bounded-v1");
+        let mut used_bytes = 0u64;
+        if directory.exists() {
+            for entry in fs::read_dir(&directory).map_err(err)? {
+                let entry = entry.map_err(err)?;
+                if entry.file_type().map_err(err)?.is_file() {
+                    used_bytes = used_bytes.saturating_add(entry.metadata().map_err(err)?.len());
+                }
+            }
+        }
+        Ok(crate::api::UiCacheSettingsDto {
+            retained_bytes: atomusicator_infrastructure::storage::cache_preferences::effective(
+                &policy,
+            )?,
+            used_bytes,
+            directory: directory.to_string_lossy().into_owned(),
+        })
+    }
+    pub fn set_cache_retained_bytes(&self, bytes: u64) -> Result<(), String> {
+        let _idle = self.jobs.idle()?;
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        atomusicator_infrastructure::storage::cache_preferences::save(policy.app_data_root(), bytes)
+    }
+    pub fn clean_retained_cache(&self) -> Result<u64, String> {
+        let _idle = self.jobs.idle()?;
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(
+            policy.stage_cache_dir().join("bounded-v1"),
+        )
+        .prune(0)
+        .map_err(err)
+    }
+    pub fn execution_settings(&self) -> Result<crate::api::UiExecutionSettingsDto, String> {
+        use atomusicator_infrastructure::preferences::{ExecutionMode, ExecutionPreferences};
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        let options = ExecutionPreferences::new(policy.app_data_root().to_path_buf())
+            .load()
+            .map_err(err)?;
+        Ok(crate::api::UiExecutionSettingsDto {
+            next_startup_mode: match options.mode {
+                ExecutionMode::Cpu => "cpu",
+                ExecutionMode::DirectMl => "directml",
+                ExecutionMode::Auto => "auto",
+            }
+            .into(),
+            diagnostics_json: serde_json::to_string(&self.sessions.diagnostics()).map_err(err)?,
+        })
+    }
+    pub fn set_execution_mode(&self, mode: &str) -> Result<(), String> {
+        use atomusicator_infrastructure::preferences::{
+            ExecutionMode, ExecutionOptions, ExecutionPreferences,
+        };
+        let mode = match mode {
+            "cpu" => ExecutionMode::Cpu,
+            "directml" => ExecutionMode::DirectMl,
+            "auto" => ExecutionMode::Auto,
+            _ => return Err("Unknown execution provider".into()),
+        };
+        let _idle = self.jobs.idle()?;
+        let policy = WorkspacePathPolicy::system_default().map_err(err)?;
+        let preferences = ExecutionPreferences::new(policy.app_data_root().to_path_buf());
+        let current = preferences.load().map_err(err)?;
+        preferences
+            .save(ExecutionOptions { mode, ..current })
+            .map_err(err)
+    }
+    pub fn compute_settings(&self) -> Result<crate::api::UiComputeSettingsDto, String> {
+        let profile = *self.compute_profile.lock().map_err(err)?;
+        Ok(crate::api::UiComputeSettingsDto {
+            profile: profile.as_str().into(),
+            available_profiles: vec!["eco".into(), "balanced".into(), "throughput".into()],
+            requested_threads: self.sessions.intra_threads() as u32,
+            effective_threads: self.sessions.effective_intra_threads() as u32,
+        })
+    }
+    pub fn set_compute_profile(&self, value: &str) -> Result<(), String> {
+        let profile = value.parse().map_err(err)?;
+        let _idle = self.jobs.idle()?;
+        let mut current = self.compute_profile.lock().map_err(err)?;
+        self.compute_preferences.save(profile).map_err(err)?;
+        self.sessions.set_compute_profile(profile);
+        *current = profile;
+        Ok(())
+    }
     pub fn projects_directory(&self) -> Result<String, String> {
         Ok(self
             .projects
@@ -108,6 +230,9 @@ impl Studio {
     }
     pub fn job(&self, id: &str) -> Result<UiJobDto, String> {
         self.jobs.snapshot(id)
+    }
+    pub fn wait_job_change(&self, previous: UiJobDto) -> Result<UiJobDto, String> {
+        self.jobs.wait_change(previous)
     }
     pub fn cancel(&self, id: &str) -> Result<(), String> {
         self.jobs.cancel(id)
@@ -145,7 +270,13 @@ impl Studio {
     ) -> Result<String, String> {
         let backend = Arc::clone(self);
         let id = self.jobs.start(request, retry_of, move |id, cancel| {
-            operation(&backend, id, cancel)
+            let options=atomusicator_infrastructure::job_diagnostics::DiagnosticOptions::from_env().map_err(err)?.with_gpu_device(backend.sessions.gpu_device_id());
+            backend.sessions.begin_job_diagnostics().map_err(err)?;
+            atomusicator_infrastructure::job_diagnostics::run_job(backend.jobs.journal.root(),id,options,||{
+                let result=operation(&backend,id,cancel);
+                tracing::info!(success=result.is_ok(),cancelled=cancel.is_cancelled(),providers=?backend.sessions.diagnostics(),"job finished");
+                result
+            }).map_err(err)?
         })?;
         self.mixer.pause();
         Ok(id)
@@ -188,7 +319,11 @@ impl Studio {
         {
             return Err("job cannot be resumed".into());
         }
-        if record.profile != atomusicator_domain::quality::SeparationProfile::compatibility() {
+        if atomusicator_application::use_cases::bounded_separation::RhythmPolicy::from_profile(
+            &record.profile,
+        )
+        .is_err()
+        {
             return Err("job quality profile is incompatible; start a new separation".into());
         }
         self.jobs.journal.cleanup_staging(&record).map_err(err)?;
@@ -290,7 +425,10 @@ impl Studio {
             download_allowed,
         };
         self.start_request(request, retry_of, move |backend,id,cancel| {
+            let profile=backend.jobs.journal.load(id).map_err(err)?.profile;
+            let rhythm_policy=atomusicator_application::use_cases::bounded_separation::RhythmPolicy::from_profile(&profile).map_err(err)?;
             let _resources=backend.resources.reserve_separation(&backend.sessions).map_err(crate::jobs::JobFailure::from_domain)?;
+            let _idle_sessions=backend.sessions.idle_scope();
             let source_hash = atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source, cancel).map_err(err)?;
             if expected_hash.is_some_and(|expected| expected != source_hash) {
                 return Err("Source content changed since the interrupted attempt; start a new separation".into());
@@ -317,19 +455,26 @@ impl Studio {
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
             let work = TemporaryDirectory::for_job(&projects,id).map_err(err)?;
             backend.jobs.work_directory(id,work.0.clone())?;
-            let audio = Arc::new(AudioTools::discover().map_err(err)?
-                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?);
+            let audio = {
+                let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("decode");
+                Arc::new(AudioTools::discover().map_err(err)?
+                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?)
+            };
             use atomusicator_application::ports::AudioBlockSource;
             atomusicator_infrastructure::audio_io::wav_codec::validate_block_wav_size(audio.metadata()).map_err(crate::jobs::JobFailure::from_domain)?;
             let working_bytes=audio.metadata().frame_count.checked_mul(8*15).ok_or("audio working size overflow")?;
             for destination in [&policy.stage_cache_dir(),&projects,&work.0] {
                 atomusicator_infrastructure::resource_probe::ensure_disk(destination,working_bytes).map_err(crate::jobs::JobFailure::from_domain)?;
             }
-            let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1"));
+            let retention=atomusicator_infrastructure::storage::cache_preferences::effective(&policy)?;
+            let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::with_retention(policy.stage_cache_dir().join("bounded-v1"),retention);
             let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
-            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store);
-            let result = pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?;
+            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store).with_rhythm_policy(rhythm_policy);
+            let result = {
+                let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("separation");
+                pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?
+            };
             check_cancel(cancel)?;
             if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
                 return Err("Source content changed during separation; result was not published".into());
@@ -340,9 +485,10 @@ impl Studio {
                 display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source,
             };
             let engine=serde_json::json!({"name":"Atomusicator native MDX","models":usages,
-                "source_sha256":source_hash,"profile":atomusicator_domain::quality::SeparationProfile::compatibility(),
+                "source_sha256":source_hash,"profile":profile,
                 "sample_rate":44100,"overlap":0.35,"residuals":"exact phase subtraction","vad_dbfs":-65,
-                "compute":{"provider":"CPUExecutionProvider","intra_threads":backend.sessions.intra_threads(),
+                "compute":{"provider_requested":backend.sessions.provider_order(),"intra_threads":backend.sessions.intra_threads(),
+                    "session_diagnostics":backend.sessions.diagnostics(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
             backend.jobs.output(id,projects.join(id))?;
             let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,id,&asset,&result,engine,cancel,
@@ -351,7 +497,7 @@ impl Studio {
                 }).map_err(crate::jobs::JobFailure::from_domain)?;
             let session = backend.load_directory(&published.directory)?;
             drop(result);
-            if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(4*1024*1024*1024) {
+            if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(retention) {
                 eprintln!("Nonfatal audio cache cleanup failure: {error}");
             }
             Ok(Some(session))
@@ -442,8 +588,8 @@ impl Studio {
         });
         Ok(dto)
     }
-    pub fn pitch(self: &Arc<Self>, semitones: i32, preserve: bool) -> Result<String, String> {
-        let spec = PitchShiftSpec::try_new(semitones as f32, preserve).map_err(err)?;
+    pub fn pitch(self: &Arc<Self>, semitones: i32) -> Result<String, String> {
+        let spec = PitchShiftSpec::try_new(semitones as f32).map_err(err)?;
         let loaded = self
             .loaded
             .lock()
@@ -540,8 +686,7 @@ impl Studio {
                 if pitch.session_id != loaded.dto.id || pitch.epoch != snapshot.epoch {
                     return Err("export pitch session changed".into());
                 }
-                PitchShiftSpec::try_new(pitch.semitones as f32, pitch.preserve_formants)
-                    .map_err(err)?
+                PitchShiftSpec::try_new(pitch.semitones as f32).map_err(err)?
             } else {
                 snapshot.spec
             };
@@ -603,7 +748,7 @@ impl Studio {
             let target = destination.join(format!("Atomusicator-export-{}", unique_id()));
             fs::write(stage.0.join("export.json"),serde_json::to_vec_pretty(&serde_json::json!({
                 "version":1,"source_session_id":loaded.dto.id,
-                "live_pitch":{"semitones":live_spec.semitones(),"preserve_formants":live_spec.preserve_formants(),"engine":atomusicator_infrastructure::live_pitch::ENGINE_ID},
+                "live_pitch":{"semitones":live_spec.semitones(),"engine":atomusicator_infrastructure::live_pitch::ENGINE_ID},
                 "format":options.format,"sample_rate":options.sample_rate,"channels":options.channels,"bit_depth":options.bit_depth,"normalize":options.normalize,
                 "selected_stems":selected
             })).map_err(err)?).map_err(err)?;
@@ -687,6 +832,8 @@ mod tests {
                 .build()
                 .unwrap(),
             sessions: Arc::new(OrtSessionPool::new(2).unwrap()),
+            compute_profile: Mutex::new(Default::default()),
+            compute_preferences: ComputePreferences::new(root.join("preferences")),
             pitch_cache: PitchRenderCache::new(root.join("pitch-cache")),
             live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
                 root.join("live-pitch"),
@@ -700,6 +847,36 @@ mod tests {
             )
             .unwrap(),
         })
+    }
+    #[test]
+    fn compute_settings_persist_and_reject_changes_during_active_jobs() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let backend = backend(&root.0);
+        backend.set_compute_profile("eco").unwrap();
+        assert_eq!(backend.compute_settings().unwrap().profile, "eco");
+        assert_eq!(backend.compute_preferences.load().unwrap().as_str(), "eco");
+        assert!(backend.set_compute_profile("invalid").is_err());
+        let (release, waiting) = std::sync::mpsc::sync_channel(1);
+        let id = backend
+            .jobs
+            .start(
+                atomusicator_infrastructure::job_journal::JobRequest::Ephemeral {
+                    operation: "test-profile-admission".into(),
+                },
+                None,
+                move |_, _| {
+                    waiting.recv().map_err(err)?;
+                    Ok(None)
+                },
+            )
+            .unwrap();
+        let rejected = backend.set_compute_profile("throughput");
+        release.send(()).unwrap();
+        wait(&backend, &id);
+        assert!(rejected.unwrap_err().contains("already running"));
+        assert_eq!(backend.compute_settings().unwrap().profile, "eco");
+        assert_eq!(backend.compute_preferences.load().unwrap().as_str(), "eco");
+        backend.set_compute_profile("balanced").unwrap();
     }
     fn wait(backend: &Studio, id: &str) -> UiJobDto {
         let deadline = Instant::now() + Duration::from_secs(120);
@@ -735,17 +912,16 @@ mod tests {
         let original = fs::read(&session.tracks[0].file_path).unwrap();
         let status = backend.live_pitch_status().unwrap();
         let accepted = backend
-            .set_live_pitch(&session.id, status.epoch, 1, 7, false)
+            .set_live_pitch(&session.id, status.epoch, 1, 7)
             .unwrap();
         assert_eq!(accepted.semitones, 7);
         assert!(backend.jobs.idle().is_ok());
         assert_eq!(backend.open(&root.0).unwrap().pitch_semitones, 7);
         let restored = backend.live_pitch_status().unwrap();
-        assert!(!restored.preserve_formants);
         assert!(restored.epoch > status.epoch);
         assert!(
             backend
-                .set_live_pitch(&session.id, status.epoch, 2, -7, true)
+                .set_live_pitch(&session.id, status.epoch, 2, -7)
                 .is_err()
         );
         assert_eq!(fs::read(&session.tracks[0].file_path).unwrap(), original);
@@ -767,12 +943,11 @@ mod tests {
                     session_id: session.id.clone(),
                     epoch: status.epoch,
                     semitones: 7,
-                    preserve_formants: true,
                 }),
             )
             .unwrap();
         backend
-            .set_live_pitch(&session.id, status.epoch, 1, -7, false)
+            .set_live_pitch(&session.id, status.epoch, 1, -7)
             .unwrap();
         let job = wait(&backend, &id);
         assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);

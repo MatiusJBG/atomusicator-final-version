@@ -3,6 +3,121 @@ use std::path::Path;
 use atomusicator_infrastructure::onnx::{ExecutionProviderKind, OnnxSessionRunner, OrtSessionPool};
 
 #[test]
+#[ignore = "requires locally cached ONNX model"]
+fn unavailable_gpu_budget_falls_back_to_cpu_with_an_observable_reason() {
+    use atomusicator_infrastructure::{
+        models::manifest_manager::ManifestModelManager, storage::paths::WorkspacePathPolicy,
+    };
+    let policy = WorkspacePathPolicy::system_default().unwrap();
+    let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).unwrap();
+    let path = policy
+        .model_candidates(&manager.manifest().models[0].filename)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.is_file())
+        .expect("cached model required");
+    let pool = OrtSessionPool::with_provider_order(
+        1,
+        vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
+    )
+    .unwrap()
+    .with_device_id(1_000_000)
+    .unwrap();
+    let _session = pool.load_session(&path).unwrap();
+    let diagnostics = pool.diagnostics();
+    assert_eq!(
+        diagnostics[0].provider_registered,
+        ExecutionProviderKind::Cpu
+    );
+    assert!(
+        diagnostics[0]
+            .fallback_errors
+            .iter()
+            .any(|message| message.contains("admission"))
+    );
+    assert!(diagnostics[0].device_id.is_none());
+    let strict = OrtSessionPool::with_provider_order(
+        1,
+        vec![ExecutionProviderKind::DirectMl, ExecutionProviderKind::Cpu],
+    )
+    .unwrap()
+    .with_device_id(1_000_000)
+    .unwrap()
+    .requiring_accelerator();
+    let error = strict
+        .load_session(&path)
+        .err()
+        .expect("qualification must not load CPU");
+    assert!(error.to_string().contains("CPU fallback refused"));
+}
+
+#[test]
+fn playback_limits_thread_budget_without_changing_requested_profile() {
+    use atomusicator_application::compute_policy::ComputeProfile;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let playing = Arc::new(AtomicBool::new(false));
+    let probe = playing.clone();
+    let pool = OrtSessionPool::with_compute_profile(1, ComputeProfile::Throughput)
+        .unwrap()
+        .with_playback_probe(Arc::new(move || probe.load(Ordering::Acquire)));
+    let requested = pool.intra_threads();
+    assert_eq!(pool.effective_intra_threads(), requested);
+    playing.store(true, Ordering::Release);
+    assert!(pool.effective_intra_threads() <= 6);
+    assert!(pool.effective_intra_threads() <= requested);
+    assert_eq!(pool.intra_threads(), requested);
+    playing.store(false, Ordering::Release);
+    assert_eq!(pool.effective_intra_threads(), requested);
+    pool.set_compute_profile(ComputeProfile::Eco);
+    assert!(pool.intra_threads() <= 2);
+}
+
+#[test]
+#[ignore = "requires locally cached ONNX model"]
+fn playback_thread_change_rebuilds_real_session_and_preserves_capacity() {
+    use atomusicator_application::compute_policy::ComputeProfile;
+    use atomusicator_infrastructure::{
+        models::manifest_manager::ManifestModelManager, storage::paths::WorkspacePathPolicy,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let policy = WorkspacePathPolicy::system_default().unwrap();
+    let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).unwrap();
+    let model = policy
+        .model_candidates(&manager.manifest().models[0].filename)
+        .unwrap()
+        .into_iter()
+        .find(|path| path.is_file())
+        .expect("cached model required");
+    let playing = Arc::new(AtomicBool::new(false));
+    let probe = playing.clone();
+    let pool = OrtSessionPool::with_compute_profile(1, ComputeProfile::Throughput)
+        .unwrap()
+        .with_playback_probe(Arc::new(move || probe.load(Ordering::Acquire)));
+    let first = pool.load_session(&model).unwrap();
+    let weak = Arc::downgrade(&first);
+    playing.store(true, Ordering::Release);
+    if pool.effective_intra_threads() == pool.intra_threads() {
+        return;
+    }
+    assert!(
+        pool.load_session(&model).is_err(),
+        "live old variant must count toward capacity"
+    );
+    drop(first);
+    let second = pool.load_session(&model).unwrap();
+    assert!(weak.upgrade().is_none(), "old workspace must be released");
+    assert_eq!(pool.capacity().unwrap(), 1);
+    assert_eq!(pool.diagnostics().len(), 2);
+    drop(second);
+}
+
+#[test]
 fn provider_order_requires_cpu_fallback() {
     assert!(OrtSessionPool::with_provider_order(1, vec![ExecutionProviderKind::Cuda]).is_err());
     assert!(
@@ -31,7 +146,7 @@ fn provider_pool_rejects_zero_capacity() {
 #[test]
 fn benchmark_cpu_threads_are_explicit_positive_and_bounded() {
     assert!(OrtSessionPool::with_cpu_threads(2, 0).is_err());
-    assert!(OrtSessionPool::with_cpu_threads(2, 7).is_err());
+    assert!(OrtSessionPool::with_cpu_threads(2, 13).is_err());
     let pool = OrtSessionPool::with_cpu_threads(2, 1).unwrap();
     assert_eq!(pool.intra_threads(), 1);
     assert_eq!(pool.provider_order(), &[ExecutionProviderKind::Cpu]);
@@ -66,8 +181,16 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
                 .expect("cached model required")
         })
         .collect::<Vec<_>>();
-    let pool = OrtSessionPool::new(1).unwrap();
+    let pool = std::sync::Arc::new(OrtSessionPool::new(1).unwrap());
     let live = pool.load_session(&paths[0]).unwrap();
+    let diagnostics = pool.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].provider_effective.as_deref(),
+        Some("CPUExecutionProvider")
+    );
+    assert!(diagnostics[0].fallback_errors.is_empty());
+    assert!(diagnostics[0].initialization_seconds > 0.0);
     pool.trim_idle_and_resize(1).unwrap();
     assert_eq!(pool.capacity().unwrap(), 1);
     assert!(std::sync::Arc::ptr_eq(
@@ -84,7 +207,7 @@ fn live_session_leases_cannot_exceed_the_pool_capacity() {
     let first = pool.load_session(&paths[0]).unwrap();
     let first_weak = std::sync::Arc::downgrade(&first);
     drop(first);
-    pool.trim_idle_and_resize(1).unwrap();
+    drop(pool.idle_scope());
     assert!(
         first_weak.upgrade().is_none(),
         "idle cached models must actually be released"
@@ -138,4 +261,96 @@ fn runner_rejects_non_finite_tensor_values_before_loading_a_model() {
         .unwrap_err();
 
     assert!(error.to_string().contains("non-finite values"));
+}
+
+#[test]
+fn borrowed_runner_validates_shape_and_finiteness_before_loading() {
+    let runner = OnnxSessionRunner::new(std::sync::Arc::new(OrtSessionPool::new(1).unwrap()));
+    let mut output = vec![9.0];
+    assert!(
+        runner
+            .run_f32_into(
+                Path::new("missing.onnx"),
+                "input",
+                &[1, 4],
+                &mut [0.0],
+                &mut output
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("describes 4")
+    );
+    assert!(
+        runner
+            .run_f32_into(
+                Path::new("missing.onnx"),
+                "input",
+                &[1],
+                &mut [f32::NAN],
+                &mut output
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("non-finite")
+    );
+    assert_eq!(output, vec![9.0]);
+}
+
+#[test]
+#[ignore = "requires the four verified local models; compares the borrowed path with ORT-owned tensors"]
+fn borrowed_inputs_match_owned_ort_tensors_and_reuse_output_capacity() {
+    use atomusicator_infrastructure::{
+        mdx::MdxConfig, models::manifest_manager::ManifestModelManager,
+        storage::paths::WorkspacePathPolicy,
+    };
+    let manager = ManifestModelManager::from_embedded_manifest(
+        WorkspacePathPolicy::system_default().unwrap(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let pool = std::sync::Arc::new(OrtSessionPool::with_cpu_threads(1, 2).unwrap());
+    let runner = OnnxSessionRunner::new(pool.clone());
+    for profile in &manager.manifest().models {
+        let model = runtime
+            .block_on(manager.cached_profile(&profile.profile_id))
+            .unwrap()
+            .unwrap();
+        let c = MdxConfig::for_profile(&profile.profile_id).unwrap();
+        let shape = vec![1, 4, c.dim_f as i64, c.dim_t as i64];
+        let mut input: Vec<f32> = (0..4 * c.dim_f * c.dim_t)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
+        let original = input.clone();
+        let expected = {
+            let session = pool.load_session(&model.local_path).unwrap();
+            let session = session.lock().unwrap();
+            let tensor: ort::value::Tensor<f32> =
+                (shape.clone(), input.clone()).try_into().unwrap();
+            let output = session
+                .run(ort::inputs! {"input"=>tensor}.unwrap())
+                .unwrap();
+            output
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .try_extract_tensor::<f32>()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let mut output = Vec::new();
+        runner
+            .run_f32_into(&model.local_path, "input", &shape, &mut input, &mut output)
+            .unwrap();
+        assert_eq!(output, expected);
+        assert_eq!(input, original);
+        let allocation = output.as_ptr();
+        runner
+            .run_f32_into(&model.local_path, "input", &shape, &mut input, &mut output)
+            .unwrap();
+        assert_eq!(allocation, output.as_ptr());
+        assert_eq!(output, expected);
+    }
 }

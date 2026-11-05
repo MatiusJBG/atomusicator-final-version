@@ -16,6 +16,25 @@ void main() {
       );
       final outputs = Directory('${directory.path}/outputs')..createSync();
       try {
+        final compute = await native.computeSettings();
+        expect(compute.availableProfiles, ['eco', 'balanced', 'throughput']);
+        expect(compute.availableProfiles, contains(compute.profile));
+        expect(compute.requestedThreads, inInclusiveRange(1, 12));
+        expect(
+          compute.effectiveThreads,
+          inInclusiveRange(1, compute.requestedThreads),
+        );
+        await expectLater(
+          native.setComputeProfile(profile: 'invalid'),
+          throwsA(
+            isA<String>().having(
+              (message) => message,
+              'message',
+              contains('CPU profile'),
+            ),
+          ),
+        );
+        expect((await native.computeSettings()).profile, compute.profile);
         final frames = 44100 * 4;
         final data = ByteData(44 + frames * 2 * 4);
         void ascii(int offset, String value) {
@@ -98,8 +117,8 @@ void main() {
         );
         Future<native.UiJobDto> finish(String id) async {
           final deadline = DateTime.now().add(const Duration(seconds: 90));
+          var job = await native.jobStatus(jobId: id);
           while (DateTime.now().isBefore(deadline)) {
-            final job = await native.jobStatus(jobId: id);
             if (!const {
               native.UiJobStatus.queued,
               native.UiJobStatus.running,
@@ -113,7 +132,7 @@ void main() {
               );
               return job;
             }
-            await Future<void>.delayed(const Duration(milliseconds: 50));
+            job = await native.waitJobChange(previous: job);
           }
           throw StateError('native job timed out');
         }
@@ -124,7 +143,6 @@ void main() {
           epoch: initialPitch.epoch,
           revision: initialPitch.revision + BigInt.one,
           semitones: 3,
-          preserveFormants: true,
         );
         expect(accepted.semitones, 3);
         expect((await native.livePitchStatus()).revision, accepted.revision);
@@ -139,7 +157,6 @@ void main() {
             epoch: live.epoch,
             revision: live.revision + BigInt.one,
             semitones: semitones,
-            preserveFormants: true,
           );
           await Future<void>.delayed(const Duration(milliseconds: 450));
           final playback = await native.playbackStatus();
@@ -179,7 +196,6 @@ void main() {
               sessionId: session.id,
               epoch: accepted.epoch,
               semitones: 3,
-              preserveFormants: true,
             ),
           ),
         );
@@ -211,7 +227,6 @@ void main() {
             epoch: original.epoch,
             revision: original.revision + BigInt.one,
             semitones: -7,
-            preserveFormants: true,
           );
           await native.setMaster(gain: 0);
           await native.play();
@@ -224,11 +239,21 @@ void main() {
             epoch: live.epoch,
             revision: live.revision + BigInt.one,
             semitones: original.semitones,
-            preserveFormants: original.preserveFormants,
           );
           await native.stop();
         }
         await native.stop();
+        expect(
+          (await native.computeSettings()).availableProfiles,
+          contains('balanced'),
+        );
+        expect((await native.executionSettings()).nextStartupMode, isNotEmpty);
+        expect(
+          (await native.cacheSettings()).retainedBytes,
+          greaterThanOrEqualTo(BigInt.zero),
+        );
+        await native.closeAudioSession();
+        await expectLater(native.livePitchStatus(), throwsA(anything));
       } finally {
         RustLib.dispose();
         directory.deleteSync(recursive: true);

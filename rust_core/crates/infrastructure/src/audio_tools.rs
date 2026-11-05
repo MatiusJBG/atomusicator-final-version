@@ -177,6 +177,7 @@ impl AudioTools {
         target: &Path,
         cancel: &CancellationToken,
     ) -> Result<crate::storage::float_spool::FloatSpool, DomainError> {
+        let _timer = crate::job_diagnostics::StageTimer::new("decode_audio");
         self.run(
             &[
                 "-i".into(),
@@ -209,13 +210,8 @@ impl AudioTools {
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
         let filter = format!(
-            "rubberband=pitch={:.12}:tempo=1.0:formant={}",
+            "rubberband=pitch={:.12}:tempo=1.0:formant=shifted",
             2.0f64.powf(f64::from(spec.semitones()) / 12.0),
-            if spec.preserve_formants() {
-                "preserved"
-            } else {
-                "shifted"
-            }
         );
         self.run(
             &[
@@ -278,6 +274,9 @@ impl AudioTools {
             ]),
             "mp3" => args.extend(["libmp3lame".into(), "-b:a".into(), "320k".into()]),
             _ => return Err(io_error("unsupported export format")),
+        }
+        if options.format == "wav" {
+            args.extend(["-rf64".into(), "auto".into()]);
         }
         args.push(target.as_os_str().into());
         self.run(&args, target, cancel)

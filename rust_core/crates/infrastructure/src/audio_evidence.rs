@@ -1,6 +1,8 @@
 //! Per-channel audio evidence. Undefined/perfect SDR are explicit, never NaN in JSON.
 use atomusicator_domain::{AudioBufferF32, DomainError};
 use serde::Serialize;
+mod streaming;
+pub use streaming::compare_sources;
 
 #[derive(Debug, Serialize)]
 pub struct SignalStatistics {
@@ -64,6 +66,8 @@ pub struct ChannelMetrics {
     pub max_abs_error: f64,
     pub estimate_peak: f64,
     pub si_sdr: Score,
+    /// Scale-dependent signal/error ratio, without BSS Eval filtering.
+    pub sdr: Score,
 }
 #[derive(Debug, Serialize)]
 pub struct AudioComparison {
@@ -144,6 +148,7 @@ pub fn compare_audio(
             max_abs_error: max_error,
             estimate_peak: peak,
             si_sdr,
+            sdr: energy_ratio(ref_energy, error_energy),
         });
     }
     Ok(AudioComparison {
@@ -151,4 +156,14 @@ pub fn compare_audio(
         sample_rate_hz: reference.format().sample_rate_hz,
         channels: metrics,
     })
+}
+
+fn energy_ratio(reference: f64, error: f64) -> Score {
+    if reference <= f64::MIN_POSITIVE {
+        Score::UndefinedReference
+    } else if error <= f64::EPSILON * reference {
+        Score::Perfect
+    } else {
+        Score::Decibels(10.0 * (reference.log10() - error.log10()))
+    }
 }

@@ -4,7 +4,8 @@ param(
     [switch]$SkipInstaller,
     [switch]$PrepareDebug,
     [string]$FfmpegRuntimeDirectory,
-    [string]$InnoCompiler
+    [string]$InnoCompiler,
+    [string]$InstallerOutputDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,13 @@ $installerOutput = Join-Path $PSScriptRoot 'dist'
 $versionLine = Select-String -LiteralPath (Join-Path $repoRoot 'pubspec.yaml') -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+\d+)?\s*$'
 if (-not $versionLine) { throw 'Could not read the application version from pubspec.yaml.' }
 $appVersion = $versionLine.Matches[0].Groups[1].Value
+# Keep each candidate immutable. Previously published/labeled installers must
+# not be overwritten by a compiler running with inherited workspace integrity.
+$installerOutput = if ($InstallerOutputDirectory) {
+    [IO.Path]::GetFullPath($InstallerOutputDirectory)
+} else {
+    Join-Path $installerOutput ($appVersion + '-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+}
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
@@ -100,6 +108,15 @@ foreach ($entry in @(
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $releaseDirectory -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $releaseDirectory -Force
+
+# Resolve the SDK actually used by pub, including custom installations/shims.
+$packageConfigPath = Join-Path $repoRoot '.dart_tool/package_config.json'
+$packageConfig = Get-Content -LiteralPath $packageConfigPath -Raw | ConvertFrom-Json
+$flutterPackage = @($packageConfig.packages | Where-Object name -eq 'flutter')[0]
+if (-not $flutterPackage) { throw 'Resolved Flutter SDK package was not found.' }
+$flutterPackagePath = ([Uri]::new([Uri]$packageConfigPath, [string]$flutterPackage.rootUri)).LocalPath.TrimEnd('\', '/')
+$resolvedFlutterRoot = Split-Path (Split-Path $flutterPackagePath -Parent) -Parent
+& (Join-Path $PSScriptRoot 'collect_dependency_notices.ps1') -ReleaseDirectory $releaseDirectory -FlutterRoot $resolvedFlutterRoot -Repository $repoRoot
 
 # Bundled helper EXEs can inherit a Low label from the build workspace too.
 # Medium is normal user integrity, not administrator elevation. Keep directory

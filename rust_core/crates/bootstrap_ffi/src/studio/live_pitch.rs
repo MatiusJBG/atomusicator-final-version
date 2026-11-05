@@ -50,9 +50,8 @@ impl Studio {
         epoch: u64,
         revision: u64,
         semitones: i32,
-        preserve: bool,
     ) -> Result<crate::api::UiLivePitchDto, String> {
-        let spec = PitchShiftSpec::try_new(semitones as f32, preserve).map_err(err)?;
+        let spec = PitchShiftSpec::try_new(semitones as f32).map_err(err)?;
         let loaded = self.loaded.lock().map_err(err)?;
         let loaded = loaded.as_ref().ok_or("no session loaded")?;
         if loaded.dto.id != session_id {
@@ -79,7 +78,6 @@ pub(super) fn live_pitch_dto(
         revision: snapshot.revision,
         applied_revision: snapshot.applied_revision,
         semitones: snapshot.spec.semitones() as i32,
-        preserve_formants: snapshot.spec.preserve_formants(),
     }
 }
 pub(super) fn pitch_persistence_key(dto: &UiSessionDto) -> Result<String, String> {

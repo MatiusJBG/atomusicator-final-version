@@ -14,10 +14,17 @@ struct Output {
 };
 struct Pitch {
     signalsmith::stretch::SignalsmithStretch<float> engine{42};
+    float tonality;
     Pitch(uint32_t rate, uint32_t window, uint32_t interval) {
-        engine.configure(2, window, interval, false, 8192);
+        uint32_t fft = 8192;
+        while (fft < window && fft < 65536u) fft *= 2;
+        engine.configure(2, window, interval, false, static_cast<int>(fft));
         engine.setFormantBase(0);
-        (void)rate;
+        // 8 kHz as a fraction of the sample rate, strictly below Nyquist (0.5).
+        float limit = 8000.0f / static_cast<float>(rate);
+        if (limit > 0.45f) limit = 0.45f;
+        if (limit < 0.02f) limit = 0.02f;
+        tonality = limit;
     }
 };
 }
@@ -33,10 +40,10 @@ uint32_t atom_pitch_delay(void *pitch) noexcept {
 uint32_t atom_pitch_output_delay(void *pitch) noexcept {
     return static_cast<Pitch *>(pitch)->engine.outputLatency();
 }
-void atom_pitch_set(void *pitch, float semitones, bool preserve) noexcept {
+void atom_pitch_set(void *pitch, float semitones) noexcept {
     auto &engine = static_cast<Pitch *>(pitch)->engine;
-    engine.setTransposeSemitones(semitones);
-    engine.setFormantFactor(1, preserve);
+    engine.setTransposeSemitones(semitones, static_cast<Pitch *>(pitch)->tonality);
+    engine.setFormantFactor(1, false);
 }
 bool atom_pitch_process(void *pitch, const float *input, float *output, uint32_t frames) noexcept {
     try {

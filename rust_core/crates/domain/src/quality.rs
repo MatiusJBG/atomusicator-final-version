@@ -35,6 +35,13 @@ pub struct SeparationProfile {
     pub reconstruction_tolerance: f32,
 }
 impl SeparationProfile {
+    pub fn production() -> Self {
+        Self {
+            id: "native-v2-original-mix-bass".into(),
+            rhythm_dependency: "mix-active-vocal-bus-for-drums;original-mix-for-bass".into(),
+            ..Self::compatibility()
+        }
+    }
     pub fn compatibility() -> Self {
         let models = [
             ("uvr-mdxnet-main-v1", 7680, 3072, 256, 1.043, false),

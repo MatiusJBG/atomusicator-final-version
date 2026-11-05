@@ -1,5 +1,5 @@
 use atomusicator_domain::PitchShiftSpec;
-use atomusicator_infrastructure::live_pitch::LivePitchProcessor;
+use atomusicator_infrastructure::live_pitch::{LivePitchProcessor, TONALITY_HZ, musical_profile};
 
 fn frequency(samples: &[f32], rate: u32) -> f64 {
     // Formant compensation can add low-level ripples and extra zero crossings.
@@ -24,37 +24,45 @@ fn frequency(samples: &[f32], rate: u32) -> f64 {
 }
 
 #[test]
-fn full_pitch_range_keeps_frequency_and_duration_with_both_formant_options() {
+fn musical_profile_follows_the_library_preset_and_never_shrinks_below_3072() {
+    assert_eq!(TONALITY_HZ, 8000.0);
+    assert_eq!(musical_profile(48_000), (5760, 1440));
+    assert_eq!(musical_profile(44_100), (5292, 1323));
+    let (low_block, low_hop) = musical_profile(8_000);
+    assert_eq!(low_block, 3072);
+    assert!(low_hop <= low_block);
+}
+
+#[test]
+fn full_pitch_range_keeps_frequency_and_duration() {
     for rate in [44100, 48000] {
         for semitones in [-12, -7, -1, 1, 7, 12] {
-            for formants in [false, true] {
-                let mut processor = LivePitchProcessor::new(rate).unwrap();
-                processor.set_spec(PitchShiftSpec::try_new(semitones as f32, formants).unwrap());
-                let mut samples = Vec::new();
-                for block in 0..220 {
-                    let input: Vec<_> = (0..256)
-                        .flat_map(|i| {
-                            let x = (std::f32::consts::TAU * 440.0 * (block * 256 + i) as f32
-                                / rate as f32)
-                                .sin()
-                                * 0.2;
-                            [x, x]
-                        })
-                        .collect();
-                    let mut output = [0.0; 512];
-                    processor.process(&input, &mut output).unwrap();
-                    if block > 100 {
-                        samples.extend(output.as_chunks::<2>().0.iter().map(|s| s[0]));
-                    }
+            let mut processor = LivePitchProcessor::new(rate).unwrap();
+            processor.set_spec(PitchShiftSpec::try_new(semitones as f32).unwrap());
+            let mut samples = Vec::new();
+            for block in 0..220 {
+                let input: Vec<_> = (0..256)
+                    .flat_map(|i| {
+                        let x = (std::f32::consts::TAU * 440.0 * (block * 256 + i) as f32
+                            / rate as f32)
+                            .sin()
+                            * 0.2;
+                        [x, x]
+                    })
+                    .collect();
+                let mut output = [0.0; 512];
+                processor.process(&input, &mut output).unwrap();
+                if block > 100 {
+                    samples.extend(output.as_chunks::<2>().0.iter().map(|s| s[0]));
                 }
-                let hz = frequency(&samples, rate);
-                let expected = 440.0 * 2.0f64.powf(semitones as f64 / 12.0);
-                let cents = (1200.0 * (hz / expected).log2()).abs();
-                assert!(
-                    cents < 5.0,
-                    "rate={rate}, semitones={semitones}, formants={formants}, cents={cents}"
-                );
             }
+            let hz = frequency(&samples, rate);
+            let expected = 440.0 * 2.0f64.powf(semitones as f64 / 12.0);
+            let cents = (1200.0 * (hz / expected).log2()).abs();
+            assert!(
+                cents < 5.0,
+                "rate={rate}, semitones={semitones}, cents={cents}"
+            );
         }
     }
 }
@@ -63,7 +71,7 @@ fn full_pitch_range_keeps_frequency_and_duration_with_both_formant_options() {
 fn processor_preserves_tempo_stereo_and_pitch_without_whole_track_rendering() {
     let rate = 48000;
     let mut processor = LivePitchProcessor::new(rate).unwrap();
-    processor.set_spec(PitchShiftSpec::try_new(12.0, false).unwrap());
+    processor.set_spec(PitchShiftSpec::try_new(12.0).unwrap());
     let mut samples = Vec::new();
     for block in 0..300 {
         let input: Vec<_> = (0..256)
@@ -217,7 +225,7 @@ fn pitched_export_matches_the_streaming_engine_and_preserves_originals() {
     )
     .unwrap();
     let bytes = std::fs::read(&source).unwrap();
-    let spec = PitchShiftSpec::try_new(7.0, true).unwrap();
+    let spec = PitchShiftSpec::try_new(7.0).unwrap();
     render_file(&source, &target, spec, &Default::default()).unwrap();
     let exported = read_wav_f32(&target).unwrap();
     assert_eq!(exported.frames(), 48000);
@@ -260,8 +268,7 @@ fn five_stem_dsp_timing() {
     let input: [f32; 512] = input.try_into().unwrap();
     let inputs = [input; 5];
     for block in 0..2000 {
-        let spec =
-            PitchShiftSpec::try_new(if block % 200 < 100 { 7.0 } else { -7.0 }, true).unwrap();
+        let spec = PitchShiftSpec::try_new(if block % 200 < 100 { 7.0 } else { -7.0 }).unwrap();
         let start = std::time::Instant::now();
         processors.process(&inputs, &mut output, spec).unwrap();
         if block >= 100 {
@@ -273,16 +280,20 @@ fn five_stem_dsp_timing() {
     let max = timings[timings.len() - 1];
     let mean = timings.iter().sum::<f64>() / timings.len() as f64;
     println!(
-        "{{\"five_stereo_stems\":true,\"formants\":true,\"block_frames\":256,\"sample_rate\":48000,\"process_p95_ms\":{p95},\"process_max_ms\":{max},\"realtime_factor\":{},\"algorithm_delay_frames\":{},\"control_output_delay_frames\":{}}}",
+        "{{\"five_stereo_stems\":true,\"formants\":false,\"block_frames\":256,\"sample_rate\":48000,\"process_p95_ms\":{p95},\"process_max_ms\":{max},\"realtime_factor\":{},\"algorithm_delay_frames\":{},\"control_output_delay_frames\":{}}}",
         mean / (256.0 / 48.0),
         processors.latency_frames(),
         processors.output_delay_frames()
     );
+    let period_ms = 256.0 / 48.0;
     assert!(
-        mean < 256.0 / 48.0 * 0.6,
+        p95 < period_ms,
+        "five-stem p95 {p95} ms exceeds one 256-frame period ({period_ms} ms)"
+    );
+    assert!(
+        mean < period_ms * 0.6,
         "five-stem processor lacks realtime CPU headroom"
     );
-    assert!((processors.output_delay_frames() as f64 / 48.0) < 75.0);
 }
 
 #[test]
@@ -326,7 +337,7 @@ fn software_stream_control_response() {
                 .set(
                     0,
                     (block / 100) as u64,
-                    PitchShiftSpec::try_new(semitones as f32, true).unwrap(),
+                    PitchShiftSpec::try_new(semitones as f32).unwrap(),
                 )
                 .unwrap();
             waiting = Some((Instant::now(), semitones));

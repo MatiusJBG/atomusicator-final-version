@@ -17,16 +17,17 @@ abstract class StudioGateway {
       throw UnsupportedError('Recovery is unavailable');
   Future<String> separate(String source, bool download);
   Future<native.UiJobDto> job(String id);
+  Stream<native.UiJobDto> jobChanges(native.UiJobDto previous);
   Future<void> cancel(String id);
   Future<native.UiSessionDto> open(String directory);
-  Future<String> pitch(int semitones, bool formants);
+  Future<void> close();
+  Future<String> pitch(int semitones);
   Future<native.UiLivePitchDto> livePitchStatus();
   Future<native.UiLivePitchDto> livePitch(
     String sessionId,
     BigInt epoch,
     BigInt revision,
     int semitones,
-    bool formants,
   );
   Future<String> export(
     String destination,
@@ -49,6 +50,22 @@ abstract class StudioGateway {
 
 class NativeStudioGateway implements StudioGateway {
   @override
+  Future<void> close() => native.closeAudioSession();
+  @override
+  Stream<native.UiJobDto> jobChanges(native.UiJobDto previous) async* {
+    var current = previous;
+    while (jobIsActive(current.status)) {
+      final next = await native.waitJobChange(previous: current);
+      if (next.status != current.status ||
+          next.progress != current.progress ||
+          next.message != current.message) {
+        yield next;
+      }
+      current = next;
+    }
+  }
+
+  @override
   Future<native.UiLivePitchDto> livePitchStatus() => native.livePitchStatus();
   @override
   Future<native.UiLivePitchDto> livePitch(
@@ -56,13 +73,11 @@ class NativeStudioGateway implements StudioGateway {
     BigInt epoch,
     BigInt revision,
     int semitones,
-    bool formants,
   ) => native.setLivePitch(
     sessionId: sessionId,
     epoch: epoch,
     revision: revision,
     semitones: semitones,
-    preserveFormants: formants,
   );
   @override
   Future<List<double>> waveform(
@@ -94,8 +109,8 @@ class NativeStudioGateway implements StudioGateway {
   Future<native.UiSessionDto> open(String directory) =>
       native.openAudioSession(directory: directory);
   @override
-  Future<String> pitch(int semitones, bool formants) =>
-      native.startPitch(semitones: semitones, preserveFormants: formants);
+  Future<String> pitch(int semitones) =>
+      native.startPitch(semitones: semitones);
   @override
   Future<String> export(
     String destination,
@@ -170,6 +185,7 @@ class StudioState {
     this.session,
     this.job,
     this.busy = false,
+    this.cancelling = false,
     this.error,
     this.playing = false,
     this.position = 0,
@@ -180,14 +196,12 @@ class StudioState {
     this.exportDirectory,
     this.livePitch,
     this.requestedPitch = 0,
-    this.requestedFormants = true,
   });
   final native.UiSessionDto? session;
   final native.UiLivePitchDto? livePitch;
   final int requestedPitch;
-  final bool requestedFormants;
   final native.UiJobDto? job;
-  final bool busy, playing;
+  final bool busy, playing, cancelling;
   final String? error, exportDirectory;
   final double position, peak, master;
   final Map<String, double> trackPeaks;
@@ -198,6 +212,7 @@ class StudioState {
     native.UiJobDto? job,
     bool clearJob = false,
     bool? busy,
+    bool? cancelling,
     String? error,
     bool clearError = false,
     bool? playing,
@@ -209,11 +224,11 @@ class StudioState {
     String? exportDirectory,
     native.UiLivePitchDto? livePitch,
     int? requestedPitch,
-    bool? requestedFormants,
   }) => StudioState(
     session: session ?? this.session,
     job: clearJob ? null : job ?? this.job,
     busy: busy ?? this.busy,
+    cancelling: (busy ?? this.busy) && (cancelling ?? this.cancelling),
     error: clearError ? null : error ?? this.error,
     playing: playing ?? this.playing,
     position: position ?? this.position,
@@ -224,7 +239,6 @@ class StudioState {
     exportDirectory: exportDirectory ?? this.exportDirectory,
     livePitch: livePitch ?? this.livePitch,
     requestedPitch: requestedPitch ?? this.requestedPitch,
-    requestedFormants: requestedFormants ?? this.requestedFormants,
   );
 }
 
@@ -270,21 +284,31 @@ final recoverableJobsProvider =
 
 class StudioController extends Notifier<StudioState> {
   int _pitchGeneration = 0;
-  ({int semitones, bool formants, int generation})? _pendingPitch;
+  ({int semitones, int generation})? _pendingPitch;
   Future<void>? _pitchFlight;
   bool _polling = false, _disposed = false;
   int _commands = 0;
   int _epoch = 0, _playbackRevision = 0;
+  StreamSubscription<native.UiJobDto>? _jobEvents;
+  Timer? _playbackTimer;
   StudioGateway get _gateway => ref.read(studioGatewayProvider);
   @override
   StudioState build() {
-    final timer = Timer.periodic(
-      const Duration(milliseconds: 180),
-      (_) => refresh(),
-    );
+    listenSelf((previous, next) {
+      if (next.playing && !next.busy) {
+        _playbackTimer ??= Timer.periodic(
+          const Duration(milliseconds: 180),
+          (_) => refresh(),
+        );
+      } else {
+        _playbackTimer?.cancel();
+        _playbackTimer = null;
+      }
+    });
     ref.onDispose(() {
       _disposed = true;
-      timer.cancel();
+      _playbackTimer?.cancel();
+      _jobEvents?.cancel();
     });
     return const StudioState();
   }
@@ -329,26 +353,52 @@ class StudioController extends Notifier<StudioState> {
             message: 'Starting…',
           ),
         );
+        await _jobEvents?.cancel();
+        if (!_disposed && epoch == _epoch) {
+          _jobEvents = _gateway
+              .jobChanges(state.job!)
+              .listen(
+                (job) => _handleJobEvent(job, epoch),
+                onError: (Object error) {
+                  if (!_disposed && epoch == _epoch) {
+                    state = state.copyWith(error: error.toString());
+                  }
+                },
+              );
+        }
       }
     }, ownsBusy: true);
   }
 
   Future<void> separate(String source, {bool allowDownload = false}) =>
       _start(() => _gateway.separate(source, allowDownload));
-  Future<void> applyPitch(int semitones, bool formants) {
+
+  Future<void> _handleJobEvent(native.UiJobDto job, int epoch) async {
+    if (_disposed || epoch != _epoch || state.job?.id != job.id) return;
+    try {
+      if (job.status == native.UiJobStatus.completed && job.session != null) {
+        await _accept(job.session!, epoch);
+      }
+      if (_disposed || epoch != _epoch) return;
+      state = state.copyWith(
+        job: job,
+        busy: jobIsActive(job.status),
+        error: job.status == native.UiJobStatus.failed ? job.message : null,
+        exportDirectory: job.outputDirectory,
+      );
+    } catch (error) {
+      if (!_disposed && epoch == _epoch) {
+        state = state.copyWith(busy: false, error: error.toString());
+      }
+    }
+  }
+
+  Future<void> applyPitch(int semitones) {
     if (state.session == null || state.livePitch == null || _disposed) {
       return Future.value();
     }
-    state = state.copyWith(
-      requestedPitch: semitones,
-      requestedFormants: formants,
-      clearError: true,
-    );
-    _pendingPitch = (
-      semitones: semitones,
-      formants: formants,
-      generation: _pitchGeneration,
-    );
+    state = state.copyWith(requestedPitch: semitones, clearError: true);
+    _pendingPitch = (semitones: semitones, generation: _pitchGeneration);
     return _pitchFlight ??= _drainPitch().whenComplete(
       () => _pitchFlight = null,
     );
@@ -371,7 +421,6 @@ class StudioController extends Notifier<StudioState> {
           previous.epoch,
           previous.revision + BigInt.one,
           target.semitones,
-          target.formants,
         );
         if (!_disposed &&
             target.generation == _pitchGeneration &&
@@ -383,8 +432,6 @@ class StudioController extends Notifier<StudioState> {
           state = state.copyWith(
             error: error.toString(),
             requestedPitch: _pendingPitch == null ? previous.semitones : null,
-            requestedFormants:
-                _pendingPitch == null ? previous.preserveFormants : null,
           );
         }
       }
@@ -412,7 +459,6 @@ class StudioController extends Notifier<StudioState> {
               sessionId: state.session!.id,
               epoch: state.livePitch!.epoch,
               semitones: state.requestedPitch,
-              preserveFormants: state.requestedFormants,
             );
     return _start(
       () => _gateway.export(
@@ -428,13 +474,27 @@ class StudioController extends Notifier<StudioState> {
     );
   }
 
-  Future<void> cancel() => _guard(() async {
-    final id = state.job?.id;
-    if (id != null) {
-      await _gateway.cancel(id);
-      _epoch++;
+  Future<void> cancel() async {
+    if (state.cancelling ||
+        !state.busy ||
+        state.job?.status != native.UiJobStatus.running) {
+      return;
     }
-  });
+    final id = state.job?.id;
+    if (id == null) return;
+    state = state.copyWith(cancelling: true);
+    await _guard(() async {
+      try {
+        await _gateway.cancel(id);
+      } catch (_) {
+        if (!_disposed && state.job?.id == id) {
+          state = state.copyWith(cancelling: false);
+        }
+        rethrow;
+      }
+    });
+  }
+
   Future<void> open(String directory) async {
     if (state.busy) return;
     final epoch = ++_epoch;
@@ -445,6 +505,21 @@ class StudioController extends Notifier<StudioState> {
       if (_disposed || epoch != _epoch) return;
       await _accept(session, epoch);
       if (!_disposed && epoch == _epoch) state = state.copyWith(busy: false);
+    }, ownsBusy: true);
+  }
+
+  Future<void> close() async {
+    if (state.busy) return;
+    final epoch = ++_epoch;
+    _playbackRevision++;
+    state = state.copyWith(busy: true);
+    await _guard(() async {
+      await _gateway.close();
+      if (_disposed || epoch != _epoch) return;
+      _pitchGeneration++;
+      _pendingPitch = null;
+      await _jobEvents?.cancel();
+      if (!_disposed && epoch == _epoch) state = const StudioState();
     }, ownsBusy: true);
   }
 
@@ -473,7 +548,6 @@ class StudioController extends Notifier<StudioState> {
         clearError: true,
         livePitch: livePitch,
         requestedPitch: livePitch.semitones,
-        requestedFormants: livePitch.preserveFormants,
         tracks: Map.unmodifiable(tracks),
         playing: false,
         peak: 0,

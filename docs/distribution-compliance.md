@@ -42,9 +42,22 @@ hashes, and distinguish build-only tools from software actually distributed.
 5. Release notes with CPU-only scope, qualifications, known limitations, source
    commit, toolchain versions, installer provenance and checksums.
 
-The installer already contains native DLLs and audio tools, but the current
-packaging script does **not** collect the complete notice/source bundle above.
-Extend packaging and its validator to require these artifacts, then rebuild.
+The packaging script now collects full license texts for the locked Windows Rust
+dependency graph and Dart runtime dependencies, Flutter engine/Dart notices,
+pinned ONNX Runtime notices, and source archives for covered Rust crates. It
+writes `sbom-rust.spdx.json` and two dependency-license inventories before hashing
+the release folder. Rust build dependencies are included conservatively and
+identified in the SBOM scope; their presence does not imply runtime shipment.
+Missing package license texts fail preparation. Pinned upstream fallback texts
+and their commit/hash provenance are stored in `third_party/licenses/`.
+
+This collection is not a completed distribution audit. In particular, FFmpeg's
+complete corresponding source and enabled dependency build material, MSVC
+redistribution provenance and final artifact qualification remain pending.
+The generated inventory therefore records `public_distribution_ready: false`.
+Use `validate_windows_release.ps1 -RequireDistributionReady` for a publication
+gate; ordinary validation permits a private qualification candidate and reports
+the pending obligations explicitly. Rebuild the candidate before VM validation.
 Do not label the existing installer license-complete or silently publish it as
 the final qualified build. Preserve its hash as the initial candidate instead.
 

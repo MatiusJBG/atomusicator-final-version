@@ -100,3 +100,88 @@ fn rolling_overlap_is_bit_identical_to_whole_file_accumulation_at_boundaries() {
         }
     }
 }
+
+#[test]
+fn diagnostic_taps_preserve_output_and_measure_compensation_separately() {
+    use atomusicator_infrastructure::mdx_bounded::run_bounded_mdx_observed;
+    use std::{cell::RefCell, collections::BTreeMap};
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::new(root.0.clone());
+    let c = MdxConfig {
+        n_fft: 60,
+        hop: 12,
+        dim_f: 31,
+        dim_t: 16,
+        compensate: 1.043,
+        invert: false,
+    };
+    let samples: Vec<f32> = (0..4097 * 2)
+        .map(|i| (i as f32 * 0.173).sin() * 0.3)
+        .collect();
+    let meta = AudioAssetMetadata {
+        format: AudioFormat::new(44100, 2).unwrap(),
+        frame_count: 4097,
+    };
+    let mut input = store.create("input", meta).unwrap();
+    input.write(&samples).unwrap();
+    let input = input.finish().unwrap();
+    let mut output = store.create("output", meta).unwrap();
+    let levels = RefCell::new(BTreeMap::<String, f64>::new());
+    let observe = |key: &str, values: &[f32]| {
+        *levels.borrow_mut().entry(key.to_owned()).or_default() +=
+            values.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>();
+    };
+    run_bounded_mdx_observed(
+        c,
+        input.as_ref(),
+        output.as_mut(),
+        &CancellationToken::default(),
+        |s| Ok(s.iter().map(|v| v * 0.6).collect()),
+        Some(&observe),
+    )
+    .unwrap();
+    let output = output.finish().unwrap();
+    let mut actual = vec![0.0; samples.len()];
+    output.read_frames(0, &mut actual).unwrap();
+    assert_eq!(actual, reference(&samples, c));
+    let levels = levels.borrow();
+    let ratio =
+        (levels["restored_compensated_pcm"] / levels["post_ola_restore_pre_comp_pcm"]).sqrt();
+    assert!((ratio - f64::from(c.compensate)).abs() < 1e-6);
+    assert!(levels["tensor_input_spectral_units"] > 0.0);
+}
+
+#[test]
+fn reusable_fft_workspace_matches_frozen_operations_and_clears_prior_windows() {
+    use atomusicator_infrastructure::mdx::MdxFftWorkspace;
+    let c = MdxConfig {
+        n_fft: 60,
+        hop: 12,
+        dim_f: 31,
+        dim_t: 16,
+        compensate: 1.043,
+        invert: false,
+    };
+    let transform = MdxTransform::new(c).unwrap();
+    let mut scratch = MdxFftWorkspace::new(&transform);
+    let mut spectrum = vec![0.0; 4 * c.dim_f * c.dim_t];
+    let mut decoded = vec![0.0; c.chunk_frames() * 2];
+    for gain in [0.3, 0.0, 0.9] {
+        let samples: Vec<_> = (0..c.chunk_frames() * 2)
+            .map(|i| (i as f32 * 0.1).sin() * gain)
+            .collect();
+        transform
+            .forward_into(&samples, &mut spectrum, &mut scratch)
+            .unwrap();
+        assert_eq!(spectrum, transform.forward(&samples).unwrap());
+        transform
+            .inverse_into(&spectrum, &mut decoded, &mut scratch)
+            .unwrap();
+        assert_eq!(decoded, transform.inverse(&spectrum).unwrap());
+    }
+    assert!(
+        transform
+            .forward_into(&[0.0; 1], &mut spectrum, &mut scratch)
+            .is_err()
+    );
+}

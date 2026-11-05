@@ -1,3 +1,5 @@
 # Keep pinned upstream bytes identical on Windows and Unix checkouts so the
 # provenance SHA-256 values remain verifiable with core.autocrlf enabled.
 rust_core/crates/infrastructure/native/vendor/** -text
+# Preserve unmodified upstream license bytes, including upstream whitespace.
+third_party/licenses/** -text -whitespace

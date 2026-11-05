@@ -19,6 +19,7 @@
 migrate_working_dir/
 /implementation-plans/
 /packaging/dist/
+/report/
 
 # Local audio, sessions, exports, and downloaded model artifacts
 /models/
@@ -27,6 +28,7 @@ migrate_working_dir/
 /outputs/
 /user_data/
 /local_audio/
+/benchmarks/results/
 /assets/models/
 
 # IntelliJ related

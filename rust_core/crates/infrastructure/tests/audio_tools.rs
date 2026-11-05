@@ -35,19 +35,13 @@ fn ffmpeg_pitch_preserves_duration_and_export_supports_all_legacy_formats() {
     )
     .unwrap();
     write_wav_f32(&source, &original).unwrap();
-    for (preserve, semitones) in [false, true].into_iter().flat_map(|preserve| {
-        [-12.0, -7.0, -1.0, 0.0, 1.0, 7.0, 12.0]
-            .into_iter()
-            .map(move |s| (preserve, s))
-    }) {
-        let target = directory
-            .0
-            .join(format!("pitch-{preserve}-{semitones}.wav"));
+    for semitones in [-12.0, -7.0, -1.0, 0.0, 1.0, 7.0, 12.0] {
+        let target = directory.0.join(format!("pitch-{semitones}.wav"));
         tools
             .pitch(
                 &source,
                 &target,
-                PitchShiftSpec::try_new(semitones, preserve).unwrap(),
+                PitchShiftSpec::try_new(semitones).unwrap(),
                 &CancellationToken::default(),
             )
             .unwrap();
@@ -64,7 +58,7 @@ fn ffmpeg_pitch_preserves_duration_and_export_supports_all_legacy_formats() {
         let measured = crossings as f64 / 0.8;
         assert!(
             (measured - expected).abs() / expected < 0.02,
-            "pitch {semitones} preserve={preserve}: expected {expected} Hz, measured {measured} Hz"
+            "pitch {semitones}: expected {expected} Hz, measured {measured} Hz"
         );
     }
     for (format, bits) in [
@@ -170,7 +164,7 @@ fn ffmpeg_pitch_preserves_duration_and_export_supports_all_legacy_formats() {
             .pitch(
                 &source,
                 &directory.0.join("cancelled.wav"),
-                PitchShiftSpec::try_new(2.0, false).unwrap(),
+                PitchShiftSpec::try_new(2.0).unwrap(),
                 &cancel
             )
             .is_err()

@@ -194,6 +194,10 @@ impl CpalRealtimeMixer {
     pub fn is_playing(&self) -> bool {
         self.controls.transport.playing.load(Ordering::Acquire)
     }
+    pub fn playback_probe(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let controls = Arc::clone(&self.controls);
+        Arc::new(move || controls.transport.playing.load(Ordering::Acquire))
+    }
     pub fn peak(&self) -> f32 {
         f32::from_bits(self.controls.transport.peak.load(Ordering::Relaxed))
     }
@@ -286,6 +290,18 @@ impl CpalRealtimeMixer {
             .recv()
             .map_err(|error| DomainError::DspFailure(error.to_string()))?;
         self.controls.transport.position.store(0, Ordering::Release);
+        Ok(())
+    }
+
+    /// Loads aligned disk-backed paths; one producer owns their shared clock.
+    pub fn unload_session(&self) -> Result<(), DomainError> {
+        self.stop()?;
+        self.controls.pitch.reset_session()?;
+        *self
+            .session
+            .lock()
+            .map_err(|_| DomainError::DspFailure("audio session state was poisoned".into()))? =
+            None;
         Ok(())
     }
 
@@ -409,17 +425,8 @@ impl RealtimePlaybackPort for CpalRealtimeMixer {
         state.solo.store(solo, Ordering::Relaxed);
     }
 
-    fn set_pitch_semitones(
-        &self,
-        semitones: f32,
-        preserve_formants: bool,
-    ) -> Result<(), DomainError> {
-        PitchShiftSpec::try_new(semitones, preserve_formants)?;
-        if preserve_formants {
-            return Err(DomainError::DspFailure(
-                "formant-preserving pitch shifting is not implemented by the realtime playback-rate processor".into(),
-            ));
-        }
+    fn set_pitch_semitones(&self, semitones: f32) -> Result<(), DomainError> {
+        PitchShiftSpec::try_new(semitones)?;
         if semitones != 0.0
             && self
                 .session
@@ -1226,12 +1233,12 @@ mod tests {
         mixer.load_streaming_session(paths).unwrap();
         assert!(
             mixer
-                .set_pitch_semitones(2.0, false)
+                .set_pitch_semitones(2.0)
                 .unwrap_err()
                 .to_string()
                 .contains("offline pitch")
         );
-        assert!(mixer.set_pitch_semitones(0.0, false).is_ok());
+        assert!(mixer.set_pitch_semitones(0.0).is_ok());
     }
 
     fn stems(value: f32) -> Vec<Stem> {
@@ -1471,11 +1478,10 @@ mod tests {
     }
 
     #[test]
-    fn pitch_rate_rejects_unsupported_formant_preservation() {
+    fn pitch_rate_rejects_out_of_range() {
         let mixer = CpalRealtimeMixer::new().unwrap();
-        assert!(mixer.set_pitch_semitones(2.0, false).is_ok());
-        assert!(mixer.set_pitch_semitones(2.0, true).is_err());
-        assert!(mixer.set_pitch_semitones(13.0, false).is_err());
+        assert!(mixer.set_pitch_semitones(2.0).is_ok());
+        assert!(mixer.set_pitch_semitones(13.0).is_err());
     }
 
     #[test]

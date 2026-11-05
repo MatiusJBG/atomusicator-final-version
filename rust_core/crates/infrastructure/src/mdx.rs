@@ -12,9 +12,13 @@ use atomusicator_application::{
 use atomusicator_domain::{AudioBufferF32, DomainError};
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex32};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MdxConfig {
     pub n_fft: usize,
     pub hop: usize,
@@ -50,6 +54,26 @@ pub struct MdxTransform {
     window: Vec<f32>,
     forward_fft: Arc<dyn RealToComplex<f32>>,
     inverse_fft: Arc<dyn ComplexToReal<f32>>,
+}
+pub struct MdxFftWorkspace {
+    config: MdxConfig,
+    time: Vec<f32>,
+    freq: Vec<Complex32>,
+    forward_scratch: Vec<Complex32>,
+    inverse_scratch: Vec<Complex32>,
+    weights: Vec<f32>,
+}
+impl MdxFftWorkspace {
+    pub fn new(transform: &MdxTransform) -> Self {
+        Self {
+            config: transform.config,
+            time: transform.forward_fft.make_input_vec(),
+            freq: transform.forward_fft.make_output_vec(),
+            forward_scratch: transform.forward_fft.make_scratch_vec(),
+            inverse_scratch: transform.inverse_fft.make_scratch_vec(),
+            weights: vec![0.0; transform.config.chunk_frames()],
+        }
+    }
 }
 impl MdxTransform {
     pub fn new(config: MdxConfig) -> Result<Self, DomainError> {
@@ -158,6 +182,109 @@ impl MdxTransform {
         }
         Ok(out)
     }
+    pub fn forward_into(
+        &self,
+        stereo: &[f32],
+        out: &mut [f32],
+        workspace: &mut MdxFftWorkspace,
+    ) -> Result<(), DomainError> {
+        let c = self.config;
+        if stereo.len() != c.chunk_frames() * 2 || stereo.iter().any(|v| !v.is_finite()) {
+            return Err(fail("invalid MDX audio chunk"));
+        }
+        if workspace.config != c || out.len() != 4 * c.dim_f * c.dim_t {
+            return Err(fail("incompatible FFT workspace or output"));
+        }
+        let MdxFftWorkspace {
+            time,
+            freq,
+            forward_scratch,
+            ..
+        } = workspace;
+        for channel in 0..2 {
+            for frame in 0..c.dim_t {
+                let start = (frame * c.hop) as isize - (c.n_fft / 2) as isize;
+                for (i, value) in time.iter_mut().enumerate() {
+                    let mut source = start + i as isize;
+                    let len = c.chunk_frames() as isize;
+                    // torch.stft(center=True, pad_mode='reflect').
+                    if source < 0 {
+                        source = -source;
+                    }
+                    if source >= len {
+                        source = 2 * len - source - 2;
+                    }
+                    *value = stereo[source as usize * 2 + channel] * self.window[i];
+                }
+                self.forward_fft
+                    .process_with_scratch(time, freq, forward_scratch)
+                    .map_err(|e| fail(&e.to_string()))?;
+                for (bin, value) in freq.iter().enumerate().take(c.dim_f) {
+                    out[((channel * 2) * c.dim_f + bin) * c.dim_t + frame] = value.re;
+                    out[((channel * 2 + 1) * c.dim_f + bin) * c.dim_t + frame] = value.im;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn inverse_into(
+        &self,
+        spectrum: &[f32],
+        out: &mut [f32],
+        workspace: &mut MdxFftWorkspace,
+    ) -> Result<(), DomainError> {
+        let c = self.config;
+        if spectrum.len() != 4 * c.dim_f * c.dim_t || spectrum.iter().any(|v| !v.is_finite()) {
+            return Err(fail("invalid MDX output tensor"));
+        }
+        if workspace.config != c || out.len() != c.chunk_frames() * 2 {
+            return Err(fail("incompatible FFT workspace or output"));
+        }
+        let MdxFftWorkspace {
+            time,
+            freq,
+            inverse_scratch,
+            weights,
+            ..
+        } = workspace;
+        out.fill(0.0);
+        weights.fill(0.0);
+        for channel in 0..2 {
+            for frame in 0..c.dim_t {
+                freq.fill(Complex32::new(0.0, 0.0));
+                for (bin, value) in freq.iter_mut().enumerate().take(c.dim_f) {
+                    *value = Complex32::new(
+                        spectrum[((channel * 2) * c.dim_f + bin) * c.dim_t + frame],
+                        spectrum[((channel * 2 + 1) * c.dim_f + bin) * c.dim_t + frame],
+                    );
+                }
+                freq[0].im = 0.0;
+                freq[c.n_fft / 2].im = 0.0;
+                self.inverse_fft
+                    .process_with_scratch(freq, time, inverse_scratch)
+                    .map_err(|e| fail(&e.to_string()))?;
+                let start = (frame * c.hop) as isize - (c.n_fft / 2) as isize;
+                for (i, sample) in time.iter().enumerate() {
+                    let target = start + i as isize;
+                    if target >= 0 && (target as usize) < weights.len() {
+                        let target = target as usize;
+                        out[target * 2 + channel] += sample * self.window[i] / c.n_fft as f32;
+                        if channel == 0 {
+                            weights[target] += self.window[i] * self.window[i];
+                        }
+                    }
+                }
+            }
+        }
+        for (frame, weight) in weights.iter().copied().enumerate() {
+            if weight > f32::EPSILON {
+                out[frame * 2] /= weight;
+                out[frame * 2 + 1] /= weight;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct MdxInference {
@@ -165,6 +292,8 @@ pub struct MdxInference {
     models: BTreeMap<String, (PathBuf, String)>,
     cache: Option<ContentAddressedCache>,
     runtime_signature: String,
+    diagnostics: Option<Arc<crate::inference_diagnostics::InferenceDiagnostics>>,
+    transforms: Mutex<BTreeMap<String, Arc<MdxTransform>>>,
 }
 impl MdxInference {
     pub fn new(
@@ -193,7 +322,16 @@ impl MdxInference {
             models,
             cache,
             runtime_signature,
+            diagnostics: None,
+            transforms: Mutex::new(BTreeMap::new()),
         })
+    }
+    pub fn with_diagnostics(
+        mut self,
+        diagnostics: Arc<crate::inference_diagnostics::InferenceDiagnostics>,
+    ) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
     }
     fn infer(
         &self,
@@ -201,6 +339,8 @@ impl MdxInference {
         audio: &AudioBufferF32,
         cancel: &CancellationToken,
     ) -> Result<AudioBufferF32, DomainError> {
+        let _model_span = tracing::info_span!("mdx", model_profile = id).entered();
+        let _total = crate::job_diagnostics::StageTimer::new("mdx_buffer_total");
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
         }
@@ -237,7 +377,16 @@ impl MdxInference {
         {
             return Ok(cached);
         }
-        let transform = MdxTransform::new(c)?;
+        let transform = {
+            let mut transforms = self
+                .transforms
+                .lock()
+                .map_err(|_| fail("FFT plan cache poisoned"))?;
+            if !transforms.contains_key(id) {
+                transforms.insert(id.to_owned(), Arc::new(MdxTransform::new(c)?));
+            }
+            Arc::clone(&transforms[id])
+        };
         let chunk = c.chunk_frames();
         let trim = c.n_fft / 2;
         let generation = chunk - 2 * trim;
@@ -255,12 +404,18 @@ impl MdxInference {
         if peak == 0.0 {
             return Ok(audio.clone());
         }
+        let mut workspace = MdxFftWorkspace::new(&transform);
+        let mut input = vec![0.0; chunk * 2];
+        let mut spectrum = vec![0.0; 4 * c.dim_f * c.dim_t];
+        let mut prediction = Vec::with_capacity(spectrum.len());
+        let mut decoded = vec![0.0; chunk * 2];
         for start in (0..padded_frames).step_by(step) {
             if cancel.is_cancelled() {
                 return Err(DomainError::SeparationCancelled);
             }
+            let read_timer = crate::job_diagnostics::StageTimer::new("read_and_normalize");
             let actual = chunk.min(padded_frames - start);
-            let mut input = vec![0.0; chunk * 2];
+            input.fill(0.0);
             for frame in 0..actual {
                 let source = start + frame;
                 if source >= trim && source - trim < audio.frames() {
@@ -268,21 +423,38 @@ impl MdxInference {
                     input[frame * 2 + 1] = audio.samples()[(source - trim) * 2 + 1] / peak;
                 }
             }
-            let mut spectrum = transform.forward(&input)?;
+            drop(read_timer);
+            {
+                let _timer = crate::job_diagnostics::StageTimer::new("fft_forward");
+                transform.forward_into(&input, &mut spectrum, &mut workspace)?;
+            }
             for component in 0..4 {
                 spectrum[component * c.dim_f * c.dim_t..(component * c.dim_f + 3) * c.dim_t]
                     .fill(0.0);
             }
-            let prediction = self
-                .runner
-                .run_f32(
+            let prediction_timer =
+                crate::job_diagnostics::StageTimer::new("onnx_run_including_session_lookup");
+            self.runner
+                .run_f32_into(
                     path,
                     "input",
                     &[1, 4, c.dim_f as i64, c.dim_t as i64],
-                    &spectrum,
+                    &mut spectrum,
+                    &mut prediction,
                 )
                 .map_err(|e| fail(&e.to_string()))?;
-            let decoded = transform.inverse(&prediction)?;
+            drop(prediction_timer);
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/tensor_output_spectral_units"), &prediction);
+            }
+            {
+                let _timer = crate::job_diagnostics::StageTimer::new("fft_inverse");
+                transform.inverse_into(&prediction, &mut decoded, &mut workspace)?;
+            }
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/post_istft_normalized_windows"), &decoded);
+            }
+            let ola_timer = crate::job_diagnostics::StageTimer::new("overlap_add");
             for frame in 0..actual {
                 let weight = if actual > 1 {
                     0.5 - 0.5
@@ -295,10 +467,12 @@ impl MdxInference {
                     out[(start + frame) * 2 + channel] += decoded[frame * 2 + channel] * weight;
                 }
             }
+            drop(ola_timer);
         }
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
         }
+        let restore_timer = crate::job_diagnostics::StageTimer::new("amplitude_restore");
         let mut result = vec![0.0; audio.samples().len()];
         for frame in 0..audio.frames() {
             let position = trim + frame;
@@ -315,6 +489,7 @@ impl MdxInference {
             }
         }
         let result = AudioBufferF32::new(audio.format(), result)?;
+        drop(restore_timer);
         if let Some(cache) = &self.cache {
             cache.store_checkpoint_non_fatal(&key, &result);
         }
@@ -370,21 +545,37 @@ impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
         let id = block_profile(stage);
+        let _model_span = tracing::info_span!("mdx", model_profile = id).entered();
         let (path, _) = self
             .models
             .get(id)
             .ok_or_else(|| fail("verified MDX model is missing"))?;
         let c = MdxConfig::for_profile(id)?;
-        crate::mdx_bounded::run_bounded_mdx(c, source, target, cancel, |spectrum| {
-            self.runner
-                .run_f32(
-                    path,
-                    "input",
-                    &[1, 4, c.dim_f as i64, c.dim_t as i64],
-                    spectrum,
-                )
-                .map_err(|e| fail(&e.to_string()))
-        })
+        let observe = |stage: &str, values: &[f32]| {
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record(&format!("{id}/{stage}"), values);
+            }
+        };
+        crate::mdx_bounded::run_bounded_mdx_reusing(
+            c,
+            source,
+            target,
+            cancel,
+            |spectrum, prediction| {
+                self.runner
+                    .run_f32_into(
+                        path,
+                        "input",
+                        &[1, 4, c.dim_f as i64, c.dim_t as i64],
+                        spectrum,
+                        prediction,
+                    )
+                    .map_err(|e| fail(&e.to_string()))
+            },
+            self.diagnostics
+                .as_ref()
+                .map(|_| &observe as &dyn Fn(&str, &[f32])),
+        )
     }
 }
 fn block_profile(stage: atomusicator_application::ports::InferenceStage) -> &'static str {

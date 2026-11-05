@@ -26,14 +26,13 @@ fn main() -> Result<(), String> {
             return Err("paused clock advanced".into());
         }
         let mut pitch = api::live_pitch_status()?;
-        for (semitones, formants) in [(12, true), (-12, true), (7, false), (0, true)] {
+        for semitones in [12, -12, 7, 0] {
             let before = api::playback_status()?.position_seconds;
             pitch = api::set_live_pitch(
                 session.id.clone(),
                 pitch.epoch,
                 pitch.revision + 1,
                 semitones,
-                formants,
             )?;
             api::play()?;
             let started = Instant::now();
