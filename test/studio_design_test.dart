@@ -192,7 +192,7 @@ void main() {
     await tester.tap(find.byTooltip('Subir tono'));
     await tester.pump();
     expect(find.text('Apply pitch'), findsNothing);
-    expect(gateway.calls, contains('live-pitch:1:true'));
+    expect(gateway.calls, contains('live-pitch:1'));
     expect(container.read(studioProvider).busy, isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
     container.dispose();
