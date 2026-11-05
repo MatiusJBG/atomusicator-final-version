@@ -13,6 +13,9 @@ import '../../../core/di/studio_controller.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import 'studio_panels.dart';
+import 'compute_settings_panel.dart';
+import 'execution_settings_panel.dart';
+import 'cache_settings_panel.dart';
 
 part 'desktop_sidebar.dart';
 part 'desktop_sources.dart';
@@ -132,7 +135,9 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
   }
 
   Widget _buildWorkbench(BuildContext context) {
-    final studio = ref.watch(studioProvider);
+    final studio = ref.watch(
+      studioProvider.select((s) => (busy: s.busy, session: s.session)),
+    );
     final view = ref.watch(studioViewProvider);
     final flow = ref.watch(separationFlowProvider);
     ref.listen(workbenchProvider, (previous, next) {

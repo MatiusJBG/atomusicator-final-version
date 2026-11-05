@@ -4,7 +4,11 @@ class StudioTracks extends ConsumerWidget {
   const StudioTracks({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(studioProvider);
+    final state = ref.watch(
+      studioProvider.select(
+        (s) => (session: s.session, tracks: s.tracks, duration: s.duration),
+      ),
+    );
     final zoom = ref.watch(timelineZoomProvider);
     final tracks = state.session!.tracks;
     final muted = state.tracks.values.where((track) => track.mute).length;
@@ -205,12 +209,20 @@ class _TrackControls extends ConsumerWidget {
   final int index;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(studioProvider);
+    final state = ref.watch(
+      studioProvider.select(
+        (s) => (
+          mix: s.tracks[track.stemType],
+          peak: s.trackPeaks[track.stemType] ?? 0.0,
+          busy: s.busy,
+        ),
+      ),
+    );
     final controller = ref.read(studioProvider.notifier);
-    final mix = state.tracks[track.stemType] ?? const MixTrackState();
+    final mix = state.mix ?? const MixTrackState();
     final name = stemNames[track.stemType] ?? track.stemType;
     final color = stemColor(track.stemType);
-    final peak = state.trackPeaks[track.stemType] ?? 0;
+    final peak = state.peak;
     final enabled = !state.busy;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -465,15 +477,25 @@ class _TrackWave extends ConsumerWidget {
   final native.UiStemTrackDto track;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(studioProvider);
+    final state = ref.watch(
+      studioProvider.select(
+        (s) => (
+          duration: s.duration,
+          position: s.position,
+          busy: s.busy,
+          sessionId: s.session?.id,
+          tracks: s.tracks,
+        ),
+      ),
+    );
     final zoom = ref.watch(timelineZoomProvider);
     final detail =
-        state.session == null
+        state.sessionId == null
             ? null
             : ref
                 .watch(
                   waveformDetailProvider((
-                    sessionId: state.session!.id,
+                    sessionId: state.sessionId!,
                     stemType: track.stemType,
                     filePath: track.filePath,
                     buckets: (1000 * zoom).round(),
@@ -516,15 +538,26 @@ class _TrackWave extends ConsumerWidget {
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: CustomPaint(
-                        painter: WaveformPainter(
-                          peaks: peaks,
-                          color: color.withValues(alpha: audible ? .9 : .24),
-                          progress:
-                              state.duration > 0
-                                  ? state.position / state.duration
-                                  : 0,
-                          showGrid: ref.watch(studioGridProvider),
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: WaveformPainter(
+                            peaks: peaks,
+                            color: color.withValues(alpha: audible ? .9 : .24),
+                            progress: 0,
+                            showPlayhead: false,
+                            showGrid: ref.watch(studioGridProvider),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: PlayheadPainter(
+                            state.duration > 0
+                                ? state.position / state.duration
+                                : 0,
+                          ),
                         ),
                       ),
                     ),
@@ -612,11 +645,13 @@ class WaveformPainter extends CustomPainter {
     required this.color,
     required this.progress,
     this.showGrid = true,
+    this.showPlayhead = true,
   });
   final List<double> peaks;
   final Color color;
   final double progress;
   final bool showGrid;
+  final bool showPlayhead;
   @override
   void paint(Canvas canvas, Size size) {
     final grid = Paint()..color = AppColors.line.withValues(alpha: .55);
@@ -653,6 +688,23 @@ class WaveformPainter extends CustomPainter {
       path.close();
       canvas.drawPath(path, Paint()..color = color);
     }
+    if (showPlayhead) PlayheadPainter(progress).paint(canvas, size);
+  }
+
+  @override
+  bool shouldRepaint(WaveformPainter old) =>
+      !identical(old.peaks, peaks) ||
+      old.color != color ||
+      old.showGrid != showGrid ||
+      old.showPlayhead != showPlayhead ||
+      (showPlayhead && old.progress != progress);
+}
+
+class PlayheadPainter extends CustomPainter {
+  PlayheadPainter(this.progress);
+  final double progress;
+  @override
+  void paint(Canvas canvas, Size size) {
     final x = progress.clamp(0, 1) * size.width;
     canvas.drawLine(
       Offset(x, 0),
@@ -672,9 +724,5 @@ class WaveformPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(WaveformPainter old) =>
-      old.peaks != peaks ||
-      old.progress != progress ||
-      old.color != color ||
-      old.showGrid != showGrid;
+  bool shouldRepaint(PlayheadPainter old) => old.progress != progress;
 }

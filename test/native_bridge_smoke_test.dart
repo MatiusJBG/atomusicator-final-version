@@ -117,8 +117,8 @@ void main() {
         );
         Future<native.UiJobDto> finish(String id) async {
           final deadline = DateTime.now().add(const Duration(seconds: 90));
+          var job = await native.jobStatus(jobId: id);
           while (DateTime.now().isBefore(deadline)) {
-            final job = await native.jobStatus(jobId: id);
             if (!const {
               native.UiJobStatus.queued,
               native.UiJobStatus.running,
@@ -132,7 +132,7 @@ void main() {
               );
               return job;
             }
-            await Future<void>.delayed(const Duration(milliseconds: 50));
+            job = await native.waitJobChange(previous: job);
           }
           throw StateError('native job timed out');
         }
@@ -143,7 +143,6 @@ void main() {
           epoch: initialPitch.epoch,
           revision: initialPitch.revision + BigInt.one,
           semitones: 3,
-          preserveFormants: true,
         );
         expect(accepted.semitones, 3);
         expect((await native.livePitchStatus()).revision, accepted.revision);
@@ -158,7 +157,6 @@ void main() {
             epoch: live.epoch,
             revision: live.revision + BigInt.one,
             semitones: semitones,
-            preserveFormants: true,
           );
           await Future<void>.delayed(const Duration(milliseconds: 450));
           final playback = await native.playbackStatus();
@@ -198,7 +196,6 @@ void main() {
               sessionId: session.id,
               epoch: accepted.epoch,
               semitones: 3,
-              preserveFormants: true,
             ),
           ),
         );
@@ -230,7 +227,6 @@ void main() {
             epoch: original.epoch,
             revision: original.revision + BigInt.one,
             semitones: -7,
-            preserveFormants: true,
           );
           await native.setMaster(gain: 0);
           await native.play();
@@ -243,11 +239,21 @@ void main() {
             epoch: live.epoch,
             revision: live.revision + BigInt.one,
             semitones: original.semitones,
-            preserveFormants: original.preserveFormants,
           );
           await native.stop();
         }
         await native.stop();
+        expect(
+          (await native.computeSettings()).availableProfiles,
+          contains('balanced'),
+        );
+        expect((await native.executionSettings()).nextStartupMode, isNotEmpty);
+        expect(
+          (await native.cacheSettings()).retainedBytes,
+          greaterThanOrEqualTo(BigInt.zero),
+        );
+        await native.closeAudioSession();
+        await expectLater(native.livePitchStatus(), throwsA(anything));
       } finally {
         RustLib.dispose();
         directory.deleteSync(recursive: true);

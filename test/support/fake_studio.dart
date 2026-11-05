@@ -4,17 +4,22 @@ import 'package:atomusicator/core/di/studio_controller.dart';
 import 'package:atomusicator/src/rust_bridge/api.dart';
 
 class FakeStudio implements StudioGateway {
+  @override
+  Future<void> close() async {
+    calls.add('close');
+  }
+
+  @override
+  Stream<UiJobDto> jobChanges(UiJobDto previous) => const Stream.empty();
   int liveSemitones = 0;
-  bool liveFormants = true;
   BigInt liveRevision = BigInt.zero;
-  Future<UiLivePitchDto> Function(int semitones, bool formants)? pendingPitch;
+  Future<UiLivePitchDto> Function(int semitones)? pendingPitch;
   UiLivePitchDto get pitchStatus => UiLivePitchDto(
     sessionId: session.id,
     epoch: BigInt.one,
     revision: liveRevision,
     appliedRevision: liveRevision,
     semitones: liveSemitones,
-    preserveFormants: liveFormants,
   );
   @override
   Future<UiLivePitchDto> livePitchStatus() async => pitchStatus;
@@ -24,13 +29,11 @@ class FakeStudio implements StudioGateway {
     BigInt epoch,
     BigInt revision,
     int semitones,
-    bool formants,
   ) async {
-    calls.add('live-pitch:$semitones:$formants');
-    if (pendingPitch != null) return pendingPitch!(semitones, formants);
+    calls.add('live-pitch:$semitones');
+    if (pendingPitch != null) return pendingPitch!(semitones);
     if (fail) throw StateError(failureMessage);
     liveSemitones = semitones;
-    liveFormants = formants;
     liveRevision = revision;
     return pitchStatus;
   }
@@ -106,8 +109,8 @@ class FakeStudio implements StudioGateway {
   @override
   Future<UiSessionDto> open(String directory) async => session;
   @override
-  Future<String> pitch(int semitones, bool formants) async {
-    calls.add('pitch:$semitones:$formants');
+  Future<String> pitch(int semitones) async {
+    calls.add('pitch:$semitones');
     return 'pitch';
   }
 
@@ -123,7 +126,7 @@ class FakeStudio implements StudioGateway {
     UiPitchExportDto? pitch,
   }) async {
     if (pitch != null) {
-      calls.add('export-pitch:${pitch.semitones}:${pitch.preserveFormants}');
+      calls.add('export-pitch:${pitch.semitones}');
     }
     calls.add(
       'export:${stems.join(',')}:$format:$rate:$channels:$bits:$normalize',

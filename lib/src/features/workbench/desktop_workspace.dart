@@ -114,8 +114,11 @@ class _SessionHeader extends ConsumerWidget {
               ),
               const SizedBox(width: 8),
               OutlinedButton(
-                onPressed: () => ref.read(studioProvider.notifier).cancel(),
-                child: const Text('Cancelar'),
+                onPressed:
+                    studio.cancelling
+                        ? null
+                        : () => ref.read(studioProvider.notifier).cancel(),
+                child: Text(studio.cancelling ? 'Cancelando…' : 'Cancelar'),
               ),
             ] else
               OutlinedButton(
@@ -344,6 +347,24 @@ class _MixerSessionHeader extends ConsumerWidget {
           ),
           const Spacer(),
           const _Tag('Sesión cargada', color: AppColors.seaGlass),
+          IconButton(
+            tooltip: 'Cerrar proyecto',
+            icon: const Icon(Icons.close, size: 16),
+            onPressed:
+                state.busy
+                    ? null
+                    : () async {
+                      await ref.read(studioProvider.notifier).close();
+                      if (!context.mounted ||
+                          ref.read(studioProvider).session != null) {
+                        return;
+                      }
+                      ref.read(workbenchProvider.notifier).clearSources();
+                      ref.read(separationResultProvider.notifier).state = false;
+                      ref.read(studioViewProvider.notifier).state =
+                          StudioView.home;
+                    },
+          ),
           const SizedBox(width: 18),
           _CyanButton(
             label: 'Nuevo proyecto',

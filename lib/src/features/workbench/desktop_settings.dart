@@ -11,7 +11,7 @@ class _StudioSettings extends ConsumerWidget {
     final status = ref.watch(nativeEngineStatusProvider);
     final directory = ref.watch(projectsDirectoryProvider);
     return _PageViewport(
-      minHeight: MediaQuery.sizeOf(context).width < 1150 ? 1420 : 720,
+      minHeight: MediaQuery.sizeOf(context).width < 1150 ? 1840 : 1140,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -237,24 +237,7 @@ class _StudioSettings extends ConsumerWidget {
                         const SizedBox(height: 28),
                         const _SectionLabel('ACELERACIÓN'),
                         const SizedBox(height: 12),
-                        const Row(
-                          children: [
-                            _Tag('CPU', color: AppColors.seaGlass),
-                            SizedBox(width: 12),
-                            Tooltip(
-                              message: 'GPU no disponible en el motor actual.',
-                              child: _Tag('CUDA GPU · no disponible'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Procesamiento en este equipo · ONNX Runtime',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: AppColors.muted,
-                          ),
-                        ),
+                        const ExecutionSettingsPanel(),
                         const SizedBox(height: 28),
                         const _SectionLabel('MODELO DE SEPARACIÓN'),
                         const SizedBox(height: 12),
@@ -364,6 +347,10 @@ class _StudioSettings extends ConsumerWidget {
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          const ComputeSettingsPanel(),
+          const SizedBox(height: 20),
+          const CacheSettingsPanel(),
           const SizedBox(height: 20),
           Align(
             alignment: Alignment.centerRight,

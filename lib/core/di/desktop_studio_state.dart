@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show compute;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -200,23 +201,17 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
   var sample = 0;
   var tail = <int>[];
   await for (final chunk in process.stdout) {
-    final bytes = Uint8List.fromList([...tail, ...chunk]);
-    final data = ByteData.sublistView(bytes);
-    final limit = bytes.length - bytes.length % 4;
-    for (var offset = 0; offset < limit; offset += 4) {
-      final value = data.getFloat32(offset, Endian.little);
-      final index =
-          math.min(
-            buckets - 1,
-            (sample++ * buckets / expectedSamples).floor(),
-          ) *
-          2;
-      if (value.isFinite) {
-        peaks[index] = math.min(peaks[index], value);
-        peaks[index + 1] = math.max(peaks[index + 1], value);
-      }
-    }
-    tail = bytes.sublist(limit);
+    final result = await compute(_accumulatePreview, (
+      tail: tail,
+      chunk: chunk,
+      peaks: peaks,
+      sample: sample,
+      expectedSamples: expectedSamples,
+    ));
+    if (disposed) break;
+    peaks.setAll(0, result.$1);
+    sample = result.$2;
+    tail = result.$3;
   }
   final exitCode = await process.exitCode;
   await stderrDone;
@@ -235,3 +230,39 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
     peaks: peaks,
   );
 });
+
+(List<double>, int, Uint8List) _accumulatePreview(
+  ({
+    List<int> tail,
+    List<int> chunk,
+    List<double> peaks,
+    int sample,
+    double expectedSamples,
+  })
+  input,
+) {
+  const buckets = 650;
+  final builder =
+      BytesBuilder(copy: false)
+        ..add(input.tail)
+        ..add(input.chunk);
+  final bytes = builder.takeBytes();
+  final workerPeaks = List<double>.of(input.peaks);
+  var workerSample = input.sample;
+  final data = ByteData.sublistView(bytes);
+  final limit = bytes.length - bytes.length % 4;
+  for (var offset = 0; offset < limit; offset += 4) {
+    final value = data.getFloat32(offset, Endian.little);
+    final index =
+        math.min(
+          buckets - 1,
+          (workerSample++ * buckets / input.expectedSamples).floor(),
+        ) *
+        2;
+    if (value.isFinite) {
+      workerPeaks[index] = math.min(workerPeaks[index], value);
+      workerPeaks[index + 1] = math.max(workerPeaks[index + 1], value);
+    }
+  }
+  return (workerPeaks, workerSample, bytes.sublist(limit));
+}

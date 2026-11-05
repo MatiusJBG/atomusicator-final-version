@@ -370,6 +370,15 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                 ),
                 const SizedBox(height: 10),
               ],
+              if (format == 'wav' &&
+                  state.duration * rate * channels * (bits / 8) >=
+                      0xFFFFFFFF - 4096)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Por el tamaño estimado de cada pista, WAV utilizará RF64 automáticamente. Comprueba que tu editor admita este formato para archivos grandes.',
+                  ),
+                ),
               if (exceeds && !normalize && !(format == 'wav' && bits == 32))
                 const Padding(
                   padding: EdgeInsets.only(bottom: 10),

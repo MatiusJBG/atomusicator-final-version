@@ -324,7 +324,6 @@ class PitchControls extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
     final semitones = state.requestedPitch;
-    final formants = state.requestedFormants;
     final enabled =
         state.session != null && state.livePitch != null && !state.busy;
     final pitch = Container(
@@ -341,7 +340,7 @@ class PitchControls extends ConsumerWidget {
                 enabled && semitones > -12
                     ? () => ref
                         .read(studioProvider.notifier)
-                        .applyPitch(semitones - 1, formants)
+                        .applyPitch(semitones - 1)
                     : null,
             icon: const Icon(Icons.remove, size: 15),
           ),
@@ -359,45 +358,20 @@ class PitchControls extends ConsumerWidget {
                 enabled && semitones < 12
                     ? () => ref
                         .read(studioProvider.notifier)
-                        .applyPitch(semitones + 1, formants)
+                        .applyPitch(semitones + 1)
                     : null,
             icon: const Icon(Icons.add, size: 15),
           ),
+          IconButton(
+            tooltip: 'Restablecer tono',
+            onPressed:
+                enabled
+                    ? () => ref.read(studioProvider.notifier).applyPitch(0)
+                    : null,
+            icon: const Icon(Icons.restart_alt, size: 15),
+          ),
         ],
       ),
-    );
-    final formant = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: 28,
-          child: Transform.scale(
-            scale: .65,
-            child: Switch(
-              value: formants,
-              onChanged:
-                  enabled
-                      ? (v) => ref
-                          .read(studioProvider.notifier)
-                          .applyPitch(semitones, v)
-                      : null,
-            ),
-          ),
-        ),
-        Text(
-          formants ? 'Activo' : 'Inactivo',
-          style: const TextStyle(fontSize: 9, color: AppColors.seaGlass),
-        ),
-        IconButton(
-          tooltip: 'Restablecer tono',
-          onPressed:
-              enabled
-                  ? () =>
-                      ref.read(studioProvider.notifier).applyPitch(0, formants)
-                  : null,
-          icon: const Icon(Icons.restart_alt, size: 15),
-        ),
-      ],
     );
     if (compact) {
       return Wrap(
@@ -409,11 +383,6 @@ class PitchControls extends ConsumerWidget {
             style: TextStyle(fontSize: 9, color: AppColors.muted),
           ),
           pitch,
-          const Text(
-            'FORMANTE',
-            style: TextStyle(fontSize: 8, color: AppColors.muted),
-          ),
-          formant,
         ],
       );
     }
@@ -441,35 +410,12 @@ class PitchControls extends ConsumerWidget {
           style: TextStyle(fontSize: 8.6, color: AppColors.muted),
         ),
         const Spacer(),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'PITCH',
-                    style: TextStyle(fontSize: 7.2, color: AppColors.muted),
-                  ),
-                  const SizedBox(height: 5),
-                  pitch,
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'FORMANTE',
-                  style: TextStyle(fontSize: 7.2, color: AppColors.muted),
-                ),
-                const SizedBox(height: 5),
-                formant,
-              ],
-            ),
-          ],
+        const Text(
+          'PITCH',
+          style: TextStyle(fontSize: 7.2, color: AppColors.muted),
         ),
+        const SizedBox(height: 5),
+        pitch,
         const SizedBox(height: 3),
         SizedBox(
           height: 20,
@@ -491,7 +437,7 @@ class PitchControls extends ConsumerWidget {
                       enabled
                           ? (v) => ref
                               .read(studioProvider.notifier)
-                              .applyPitch(v.round(), formants)
+                              .applyPitch(v.round())
                           : null,
                 ),
               ),

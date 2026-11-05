@@ -200,10 +200,15 @@ class StudioFeedback extends ConsumerWidget {
                   ),
                   TextButton(
                     onPressed:
-                        job?.status == native.UiJobStatus.running
+                        job?.status == native.UiJobStatus.running &&
+                                !state.cancelling
                             ? () => ref.read(studioProvider.notifier).cancel()
                             : null,
-                    child: const Text('Cancelar'),
+                    child: Text(
+                      state.cancelling
+                          ? 'Cancelando y limpiando temporales…'
+                          : 'Cancelar',
+                    ),
                   ),
                 ],
               ),
@@ -214,6 +219,11 @@ class StudioFeedback extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (job?.failure ==
+                        native.UiJobFailure.insufficientResources)
+                      const Text(
+                        'Recursos insuficientes para iniciar el trabajo. El motor indica abajo lo requerido y lo disponible. Libera espacio o memoria y vuelve a intentarlo.',
+                      ),
                     SelectableText(
                       state.error!,
                       style: const TextStyle(color: AppColors.coral),
