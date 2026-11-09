@@ -123,7 +123,7 @@ class _ProjectsHome extends ConsumerWidget {
                                       box.maxWidth < 560
                                           ? 1
                                           : (box.maxWidth < 1000 ? 2 : 3),
-                                  mainAxisExtent: box.maxHeight,
+                                  mainAxisExtent: math.max(box.maxHeight, 252.0),
                                   crossAxisSpacing: 24,
                                   mainAxisSpacing: 16,
                                 ),
@@ -275,7 +275,7 @@ class _ProjectCard extends ConsumerWidget {
         children: [
           Expanded(
             child: Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               color: AppColors.canvas,
               child: Column(
                 children: [
@@ -286,23 +286,28 @@ class _ProjectCard extends ConsumerWidget {
                       _Tag(formatStudioTime(project.duration)),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   Expanded(
                     child: SizedBox(
                       width: double.infinity,
-                      child:
-                          preview == null
-                              ? Icon(
-                                Icons.graphic_eq,
-                                color: color.withValues(alpha: .4),
-                                size: 42,
+                      child: Center(
+                        child: preview == null
+                            ? FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Icon(
+                                  Icons.graphic_eq_rounded,
+                                  color: color.withValues(alpha: .4),
+                                  size: 38,
+                                ),
                               )
-                              : CustomPaint(
+                            : CustomPaint(
+                                size: Size.infinite,
                                 painter: _AudioPreviewPainter(
                                   preview.peaks,
                                   color,
                                 ),
                               ),
+                      ),
                     ),
                   ),
                 ],
@@ -310,7 +315,7 @@ class _ProjectCard extends ConsumerWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -323,14 +328,14 @@ class _ProjectCard extends ConsumerWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   '${formatStudioTime(project.duration)} · ${project.stems} stems',
                   style: const TextStyle(fontSize: 9, color: AppColors.muted),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 _Tag(_audioMeta(project.sampleRate, project.channels)),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     OutlinedButton(

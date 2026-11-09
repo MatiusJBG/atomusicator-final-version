@@ -182,46 +182,72 @@ class StudioFeedback extends ConsumerWidget {
                                 ],
                               )
                               : const SizedBox.shrink(),
-                  data:
-                      (jobs) => Column(
-                        children: [
-                          for (final saved in jobs)
-                            Row(
-                              children: [
-                                const Icon(Icons.restore, size: 16),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Separación interrumpida: ${saved.sourcePath.split(RegExp(r'[/\\]')).last}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                  data: (jobs) {
+                    final uniqueJobs = <String, native.UiRecoverableJobDto>{};
+                    for (final saved in jobs) {
+                      uniqueJobs[saved.sourcePath] = saved;
+                    }
+                    final displayJobs = uniqueJobs.values.toList();
+                    if (displayJobs.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final saved in displayJobs)
+                          Row(
+                            children: [
+                              const Icon(Icons.restore, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Separación interrumpida: ${saved.sourcePath.split(RegExp(r'[/\\]')).last}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                TextButton(
-                                  onPressed: () {
-                                    ref
-                                        .read(separationFlowProvider.notifier)
-                                        .state = true;
-                                    ref
-                                        .read(separationResultProvider.notifier)
-                                        .state = false;
-                                    ref
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  ref
+                                      .read(separationFlowProvider.notifier)
+                                      .state = true;
+                                  ref
+                                      .read(separationResultProvider.notifier)
+                                      .state = false;
+                                  ref
+                                      .read(studioProvider.notifier)
+                                      .resumeSavedJob(saved.id);
+                                },
+                                child: const Text('Reanudar'),
+                              ),
+                              TextButton(
+                                onPressed:
+                                    () => ref
                                         .read(studioProvider.notifier)
-                                        .resumeSavedJob(saved.id);
-                                  },
-                                  child: const Text('Reanudar'),
-                                ),
-                                TextButton(
-                                  onPressed:
-                                      () => ref
-                                          .read(studioProvider.notifier)
-                                          .discardSavedJob(saved.id),
-                                  child: const Text('Descartar'),
-                                ),
-                              ],
+                                        .discardSavedJob(saved.id),
+                                child: const Text('Descartar'),
+                              ),
+                            ],
+                          ),
+                        if (displayJobs.length > 1)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              icon: const Icon(Icons.clear_all, size: 14),
+                              label: const Text(
+                                'Descartar todos',
+                                style: TextStyle(fontSize: 10),
+                              ),
+                              onPressed: () {
+                                for (final job in jobs) {
+                                  ref
+                                      .read(studioProvider.notifier)
+                                      .discardSavedJob(job.id);
+                                }
+                              },
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
+                    );
+                  },
                 ),
             if (state.busy) ...[
               ParticleProgressBar(
