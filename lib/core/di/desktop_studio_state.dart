@@ -116,46 +116,67 @@ class StudioProject {
   final DateTime modified;
 }
 
+String _cleanVerbatimPath(String path) {
+  if (path.startsWith(r'\\?\UNC\')) {
+    return r'\\' + path.substring(8);
+  }
+  if (path.startsWith(r'\\?\')) {
+    return path.substring(4);
+  }
+  return path;
+}
+
 final projectsDirectoryProvider = FutureProvider<String>((ref) async {
   await ref.watch(nativeEngineStatusProvider.future);
-  return native.projectsDirectory();
+  final raw = await native.projectsDirectory();
+  return _cleanVerbatimPath(raw);
 });
 final studioProjectsProvider = FutureProvider<List<StudioProject>>((ref) async {
-  final root = Directory(await ref.watch(projectsDirectoryProvider.future));
-  if (!await root.exists()) return [];
+  final dirPath = await ref.watch(projectsDirectoryProvider.future);
+  final root = Directory(_cleanVerbatimPath(dirPath));
+  try {
+    if (!await root.exists()) return [];
+  } on FileSystemException {
+    return [];
+  }
   final projects = <StudioProject>[];
   // Session folders live immediately under the configured projects directory.
   // Do not crawl the user's disk or follow directory links.
-  await for (final entity in root.list(followLinks: false)) {
-    if (entity is! Directory) continue;
-    final file = File('${entity.path}/session.json');
-    if (!await file.exists()) continue;
-    try {
-      final data =
-          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      final separation = data['separation'] as Map<String, dynamic>?;
-      final status = separation?['state'] ?? separation?['status'];
-      if (status != 'complete') continue;
-      projects.add(
-        StudioProject(
-          directory: entity.path,
-          name:
-              data['file_name'] as String? ??
-              entity.uri.pathSegments.where((s) => s.isNotEmpty).last,
-          duration: (data['duration_seconds'] as num?)?.toDouble() ?? 0,
-          sampleRate: (data['sample_rate_hz'] as num?)?.toInt() ?? 0,
-          channels: (data['channels'] as num?)?.toInt() ?? 0,
-          stems: (separation?['stems'] as List?)?.length ?? 0,
-          modified: (await file.stat()).modified,
-        ),
-      );
-    } on FormatException {
-      continue;
-    } on FileSystemException {
-      continue;
-    } on TypeError {
-      continue;
+  try {
+    await for (final entity
+        in root.list(followLinks: false).handleError((_) {})) {
+      if (entity is! Directory) continue;
+      try {
+        final file = File('${entity.path}/session.json');
+        if (!await file.exists()) continue;
+        final data =
+            jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+        final separation = data['separation'] as Map<String, dynamic>?;
+        final status = separation?['state'] ?? separation?['status'];
+        if (status != 'complete') continue;
+        projects.add(
+          StudioProject(
+            directory: _cleanVerbatimPath(entity.path),
+            name:
+                data['file_name'] as String? ??
+                entity.uri.pathSegments.where((s) => s.isNotEmpty).last,
+            duration: (data['duration_seconds'] as num?)?.toDouble() ?? 0,
+            sampleRate: (data['sample_rate_hz'] as num?)?.toInt() ?? 0,
+            channels: (data['channels'] as num?)?.toInt() ?? 0,
+            stems: (separation?['stems'] as List?)?.length ?? 0,
+            modified: (await file.stat()).modified,
+          ),
+        );
+      } on FormatException {
+        continue;
+      } on FileSystemException {
+        continue;
+      } on TypeError {
+        continue;
+      }
     }
+  } on FileSystemException {
+    // Ignore inaccessible root directory listing errors.
   }
   projects.sort((a, b) => b.modified.compareTo(a.modified));
   return projects;

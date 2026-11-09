@@ -267,12 +267,12 @@ impl Studio {
         }
     }
     pub fn projects_directory(&self) -> Result<String, String> {
-        Ok(self
-            .projects
-            .lock()
-            .map_err(err)?
-            .to_string_lossy()
-            .into_owned())
+        let path = self.projects.lock().map_err(err)?.clone();
+        Ok(
+            atomusicator_infrastructure::audio_tools::clean_verbatim_path(&path)
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
     pub fn set_projects_directory(&self, path: &Path) -> Result<(), String> {
         let _idle = self.jobs.idle()?;
@@ -476,7 +476,20 @@ impl Studio {
         }
         let policy = WorkspacePathPolicy::system_default().map_err(err)?;
         let active = policy.active_projects_destination(&projects);
-        let projects = WorkspacePathPolicy::validate_projects_destination(&active).map_err(err)?;
+        let projects = match WorkspacePathPolicy::validate_projects_destination(&active) {
+            Ok(valid) => valid,
+            Err(_) => {
+                let fallback =
+                    WorkspacePathPolicy::validate_projects_destination(&policy.native_projects_dir())
+                        .map_err(err)?;
+                if let Ok(mut guard) = self.projects.lock() {
+                    *guard = fallback.clone();
+                }
+                let _ = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects)
+                    .save(&fallback);
+                fallback
+            }
+        };
         if retry_of.is_none() {
             if let Ok(recoverable) = self.jobs.journal.recoverable() {
                 for rec in recoverable {
@@ -531,12 +544,30 @@ impl Studio {
             }
             check_cancel(cancel)?;
             backend.report(id,0.1,"Decoding audio to 44100 Hz stereo");
-            let work = TemporaryDirectory::for_job(&projects,id).map_err(err)?;
-            backend.jobs.work_directory(id,work.0.clone())?;
+            let mut work = match TemporaryDirectory::for_job(&projects, id) {
+                Ok(dir) => dir,
+                Err(_) => {
+                    let _ = fs::create_dir_all(policy.stage_cache_dir());
+                    TemporaryDirectory::for_job(&policy.stage_cache_dir(), id).map_err(err)?
+                }
+            };
+            backend.jobs.work_directory(id, work.0.clone())?;
             let audio = {
-                let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("decode");
-                Arc::new(AudioTools::discover().map_err(err)?
-                .decode_to_spool(&source,&work.0.join("decoded.f32"),cancel).map_err(crate::jobs::JobFailure::from_domain)?)
+                let _timer = atomusicator_infrastructure::job_diagnostics::StageTimer::new("decode");
+                let tools = AudioTools::discover().map_err(err)?;
+                match tools.decode_to_spool(&source, &work.0.join("decoded.f32"), cancel) {
+                    Ok(spool) => Arc::new(spool),
+                    Err(_) if !cancel.is_cancelled() => {
+                        let _ = fs::create_dir_all(policy.stage_cache_dir());
+                        work = TemporaryDirectory::for_job(&policy.stage_cache_dir(), id).map_err(err)?;
+                        backend.jobs.work_directory(id, work.0.clone())?;
+                        let spool = tools
+                            .decode_to_spool(&source, &work.0.join("decoded.f32"), cancel)
+                            .map_err(crate::jobs::JobFailure::from_domain)?;
+                        Arc::new(spool)
+                    }
+                    Err(e) => return Err(crate::jobs::JobFailure::from_domain(e)),
+                }
             };
             use atomusicator_application::ports::AudioBlockSource;
             atomusicator_infrastructure::audio_io::wav_codec::validate_block_wav_size(audio.metadata()).map_err(crate::jobs::JobFailure::from_domain)?;
@@ -575,12 +606,46 @@ impl Studio {
                 "compute":{"provider_requested":backend.sessions.provider_order(),"intra_threads":backend.sessions.intra_threads(),
                     "session_diagnostics":backend.sessions.diagnostics(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
-            let formal_project_name = generate_formal_project_name(&projects, &asset.display_name, result.len());
-            backend.jobs.output(id, projects.join(&formal_project_name))?;
-            let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,&formal_project_name,&asset,&result,engine,cancel,
-                atomusicator_infrastructure::block_workspace::PublicationHooks{
-                    staged:|path:&Path|backend.jobs.staging(id,path.to_path_buf()),commit:||backend.jobs.begin_commit(id)
-                }).map_err(crate::jobs::JobFailure::from_domain)?;
+            let mut publish_root = projects.clone();
+            let mut formal_project_name = generate_formal_project_name(&publish_root, &asset.display_name, result.len());
+            backend.jobs.output(id, publish_root.join(&formal_project_name))?;
+            let published = match atomusicator_infrastructure::block_workspace::publish_blocks(
+                &publish_root,
+                &formal_project_name,
+                &asset,
+                &result,
+                engine.clone(),
+                cancel,
+                atomusicator_infrastructure::block_workspace::PublicationHooks {
+                    staged: |path: &Path| backend.jobs.staging(id, path.to_path_buf()),
+                    commit: || backend.jobs.begin_commit(id),
+                },
+            ) {
+                Ok(pub_res) => pub_res,
+                Err(_) if !cancel.is_cancelled() => {
+                    publish_root = WorkspacePathPolicy::validate_projects_destination(&policy.native_projects_dir()).map_err(err)?;
+                    if let Ok(mut guard) = backend.projects.lock() {
+                        *guard = publish_root.clone();
+                    }
+                    let _ = ProjectsPreferences::new(policy.clone(), NativeLegacyProjects).save(&publish_root);
+                    formal_project_name = generate_formal_project_name(&publish_root, &asset.display_name, result.len());
+                    backend.jobs.output(id, publish_root.join(&formal_project_name))?;
+                    atomusicator_infrastructure::block_workspace::publish_blocks(
+                        &publish_root,
+                        &formal_project_name,
+                        &asset,
+                        &result,
+                        engine,
+                        cancel,
+                        atomusicator_infrastructure::block_workspace::PublicationHooks {
+                            staged: |path: &Path| backend.jobs.staging(id, path.to_path_buf()),
+                            commit: || backend.jobs.begin_commit(id),
+                        },
+                    )
+                    .map_err(crate::jobs::JobFailure::from_domain)?
+                }
+                Err(e) => return Err(crate::jobs::JobFailure::from_domain(e)),
+            };
             let session = backend.load_directory(&published.directory)?;
             drop(result);
             if let Err(error)=atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::new(policy.stage_cache_dir().join("bounded-v1")).prune(retention) {

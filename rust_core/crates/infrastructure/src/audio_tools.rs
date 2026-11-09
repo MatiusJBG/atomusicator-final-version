@@ -25,12 +25,28 @@ pub fn unique_id() -> String {
     )
 }
 
+pub fn clean_verbatim_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{stripped}"));
+        }
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
+
 pub struct TemporaryDirectory(pub PathBuf);
 impl TemporaryDirectory {
     pub fn for_job(parent: &Path, id: &str) -> Result<Self, DomainError> {
         if id.is_empty()
             || id.len() > 160
-            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         {
             return Err(io_error("invalid temporary job owner"));
         }
@@ -153,35 +169,41 @@ impl AudioTools {
         path: &Path,
         cancel: &CancellationToken,
     ) -> Result<AudioBufferF32, DomainError> {
-        if !self.pinned() {
-            let decoded = crate::symphonia_decode::decode_buffer(path, cancel)?;
-            let audio = crate::symphonia_decode::convert(&decoded, 44100, 2)?;
-            if audio.frames() == 0 {
-                return Err(DomainError::AudioDecodeFailure("audio is empty".into()));
+        if self.pinned() {
+            if let Ok(work) = TemporaryDirectory::new(&std::env::temp_dir()) {
+                let output = work.0.join("decoded.wav");
+                let clean_path = clean_verbatim_path(path);
+                let res = self.run(
+                    &[
+                        "-i".into(),
+                        clean_path.as_os_str().into(),
+                        "-map".into(),
+                        "0:a:0".into(),
+                        "-vn".into(),
+                        "-ar".into(),
+                        "44100".into(),
+                        "-ac".into(),
+                        "2".into(),
+                        "-c:a".into(),
+                        "pcm_f32le".into(),
+                        output.as_os_str().into(),
+                    ],
+                    &output,
+                    cancel,
+                );
+                if res.is_ok() {
+                    if let Ok(audio) = read_wav_f32(&output) {
+                        if audio.frames() > 0 {
+                            return Ok(audio);
+                        }
+                    }
+                } else if cancel.is_cancelled() {
+                    return Err(DomainError::SeparationCancelled);
+                }
             }
-            return Ok(audio);
         }
-        let work = TemporaryDirectory::new(&std::env::temp_dir())?;
-        let output = work.0.join("decoded.wav");
-        self.run(
-            &[
-                "-i".into(),
-                path.as_os_str().into(),
-                "-map".into(),
-                "0:a:0".into(),
-                "-vn".into(),
-                "-ar".into(),
-                "44100".into(),
-                "-ac".into(),
-                "2".into(),
-                "-c:a".into(),
-                "pcm_f32le".into(),
-                output.as_os_str().into(),
-            ],
-            &output,
-            cancel,
-        )?;
-        let audio = read_wav_f32(&output)?;
+        let decoded = crate::symphonia_decode::decode_buffer(path, cancel)?;
+        let audio = crate::symphonia_decode::convert(&decoded, 44100, 2)?;
         if audio.frames() == 0 {
             return Err(DomainError::AudioDecodeFailure("audio is empty".into()));
         }
@@ -194,32 +216,40 @@ impl AudioTools {
         cancel: &CancellationToken,
     ) -> Result<crate::storage::float_spool::FloatSpool, DomainError> {
         let _timer = crate::job_diagnostics::StageTimer::new("decode_audio");
-        if !self.pinned() {
-            crate::symphonia_decode::write_spool(source, target, cancel)?;
-            return crate::storage::float_spool::FloatSpool::inspect_raw(
-                target.into(),
-                atomusicator_domain::AudioFormat::new(44100, 2)?,
+        if self.pinned() {
+            let clean_source = clean_verbatim_path(source);
+            let ffmpeg_res = self.run_stdout_to_file(
+                &[
+                    "-i".into(),
+                    clean_source.as_os_str().into(),
+                    "-map".into(),
+                    "0:a:0".into(),
+                    "-vn".into(),
+                    "-ar".into(),
+                    "44100".into(),
+                    "-ac".into(),
+                    "2".into(),
+                    "-f".into(),
+                    "f32le".into(),
+                    "pipe:1".into(),
+                ],
+                target,
                 cancel,
             );
+            if ffmpeg_res.is_ok() {
+                if let Ok(spool) = crate::storage::float_spool::FloatSpool::inspect_raw(
+                    target.into(),
+                    atomusicator_domain::AudioFormat::new(44100, 2)?,
+                    cancel,
+                ) {
+                    return Ok(spool);
+                }
+            } else if cancel.is_cancelled() {
+                return Err(DomainError::SeparationCancelled);
+            }
         }
-        self.run(
-            &[
-                "-i".into(),
-                source.as_os_str().into(),
-                "-map".into(),
-                "0:a:0".into(),
-                "-vn".into(),
-                "-ar".into(),
-                "44100".into(),
-                "-ac".into(),
-                "2".into(),
-                "-f".into(),
-                "f32le".into(),
-                target.as_os_str().into(),
-            ],
-            target,
-            cancel,
-        )?;
+        let _ = fs::remove_file(target);
+        crate::symphonia_decode::write_spool(source, target, cancel)?;
         crate::storage::float_spool::FloatSpool::inspect_raw(
             target.into(),
             atomusicator_domain::AudioFormat::new(44100, 2)?,
@@ -238,6 +268,8 @@ impl AudioTools {
                 "tempo-preserving pitch requires the pinned FFmpeg binary",
             ));
         }
+        let clean_source = clean_verbatim_path(source);
+        let clean_target = clean_verbatim_path(target);
         let filter = format!(
             "rubberband=pitch={:.12}:tempo=1.0:formant=shifted",
             2.0f64.powf(f64::from(spec.semitones()) / 12.0),
@@ -245,12 +277,12 @@ impl AudioTools {
         self.run(
             &[
                 "-i".into(),
-                source.as_os_str().into(),
+                clean_source.as_os_str().into(),
                 "-af".into(),
                 filter.into(),
                 "-c:a".into(),
                 "pcm_f32le".into(),
-                target.as_os_str().into(),
+                clean_target.as_os_str().into(),
             ],
             target,
             cancel,
@@ -276,7 +308,9 @@ impl AudioTools {
         if !self.pinned() {
             return self.export_without_ffmpeg(source, target, options);
         }
-        let mut args: Vec<std::ffi::OsString> = vec!["-i".into(), source.as_os_str().into()];
+        let clean_source = clean_verbatim_path(source);
+        let clean_target = clean_verbatim_path(target);
+        let mut args: Vec<std::ffi::OsString> = vec!["-i".into(), clean_source.as_os_str().into()];
         if options.normalize {
             args.extend(["-af".into(), "loudnorm=I=-16:TP=-1:LRA=11".into()]);
         }
@@ -310,8 +344,14 @@ impl AudioTools {
         if options.format == "wav" {
             args.extend(["-rf64".into(), "auto".into()]);
         }
-        args.push(target.as_os_str().into());
-        self.run(&args, target, cancel)
+        args.push(clean_target.as_os_str().into());
+        match self.run(&args, target, cancel) {
+            Ok(()) => Ok(()),
+            Err(err) if !cancel.is_cancelled() && options.format == "wav" && !options.normalize => {
+                self.export_without_ffmpeg(source, target, options).or(Err(err))
+            }
+            Err(err) => Err(err),
+        }
     }
     fn export_without_ffmpeg(
         &self,
@@ -343,7 +383,7 @@ impl AudioTools {
             crate::symphonia_decode::convert(&decoded, options.sample_rate, options.channels)?;
         crate::audio_io::wav_codec::write_export_wav(target, &audio, options.bit_depth)
     }
-    fn run(
+    fn run_stdout_to_file(
         &self,
         args: &[std::ffi::OsString],
         output: &Path,
@@ -352,10 +392,18 @@ impl AudioTools {
         if cancel.is_cancelled() {
             return Err(DomainError::SeparationCancelled);
         }
+        if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let _ = fs::create_dir_all(parent);
+        }
+        let output_file = File::create(output).map_err(io_error)?;
         let log = TemporaryDirectory::new(&std::env::temp_dir())?;
         let error_path = log.0.join("stderr.log");
         let error_file = File::create(&error_path).map_err(io_error)?;
-        let mut command = Command::new(&self.executable);
+        let clean_args: Vec<std::ffi::OsString> = args
+            .iter()
+            .map(|arg| clean_verbatim_path(Path::new(arg)).into_os_string())
+            .collect();
+        let mut command = Command::new(clean_verbatim_path(&self.executable));
         command
             .args([
                 "-nostdin",
@@ -368,7 +416,53 @@ impl AudioTools {
                 "-filter_threads",
                 "1",
             ])
-            .args(args)
+            .args(&clean_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(output_file))
+            .stderr(Stdio::from(error_file));
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().map_err(|e| {
+            io_error(format!(
+                "FFmpeg unavailable ({}): {e}",
+                self.executable.display()
+            ))
+        })?;
+        self.wait_child(&mut child, &log.0, &error_path, output, cancel)
+    }
+    fn run(
+        &self,
+        args: &[std::ffi::OsString],
+        output: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<(), DomainError> {
+        if cancel.is_cancelled() {
+            return Err(DomainError::SeparationCancelled);
+        }
+        let log = TemporaryDirectory::new(&std::env::temp_dir())?;
+        let error_path = log.0.join("stderr.log");
+        let error_file = File::create(&error_path).map_err(io_error)?;
+        let clean_args: Vec<std::ffi::OsString> = args
+            .iter()
+            .map(|arg| clean_verbatim_path(Path::new(arg)).into_os_string())
+            .collect();
+        let mut command = Command::new(clean_verbatim_path(&self.executable));
+        command
+            .args([
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-threads",
+                "2",
+                "-filter_threads",
+                "1",
+            ])
+            .args(&clean_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(error_file));
@@ -383,14 +477,81 @@ impl AudioTools {
                 self.executable.display()
             ))
         })?;
+        let res = self.wait_child(&mut child, &log.0, &error_path, output, cancel);
+        if res.is_err() && !cancel.is_cancelled() && !clean_args.is_empty() {
+            // Fallback: if FFmpeg could not open the destination path directly (e.g. Controlled Folder Access),
+            // render into the temporary log directory and copy the file via the host process.
+            let ext = output
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("tmp");
+            let staged_output = log.0.join(format!("staged_output.{ext}"));
+            let mut staged_args = clean_args;
+            if let Some(last) = staged_args.last_mut() {
+                *last = clean_verbatim_path(&staged_output).into_os_string();
+            }
+            let retry_err_path = log.0.join("stderr_retry.log");
+            if let Ok(retry_err_file) = File::create(&retry_err_path) {
+                let mut retry_cmd = Command::new(clean_verbatim_path(&self.executable));
+                retry_cmd
+                    .args([
+                        "-nostdin",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-threads",
+                        "2",
+                        "-filter_threads",
+                        "1",
+                    ])
+                    .args(&staged_args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::from(retry_err_file));
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    retry_cmd.creation_flags(0x08000000);
+                }
+                if let Ok(mut retry_child) = retry_cmd.spawn() {
+                    if self
+                        .wait_child(&mut retry_child, &log.0, &retry_err_path, &staged_output, cancel)
+                        .is_ok()
+                        && staged_output.is_file()
+                    {
+                        if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty())
+                        {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        if fs::copy(&staged_output, output).is_ok() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+        res
+    }
+    fn wait_child(
+        &self,
+        child: &mut std::process::Child,
+        log_dir: &Path,
+        error_path: &Path,
+        output: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<(), DomainError> {
         let start = Instant::now();
         loop {
             let output_parent = output
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            let remaining = match fs4::available_space(&log.0).and_then(|logs| {
-                fs4::available_space(output_parent).map(|destination| logs.min(destination))
+            let remaining = match fs4::available_space(log_dir).and_then(|logs| {
+                Ok(match fs4::available_space(output_parent) {
+                    Ok(destination) => logs.min(destination),
+                    Err(_) => logs,
+                })
             }) {
                 Ok(available) => available,
                 Err(error) => {
@@ -423,7 +584,7 @@ impl AudioTools {
                         return Ok(());
                     }
                     let mut message = String::new();
-                    if let Ok(file) = File::open(&error_path) {
+                    if let Ok(file) = File::open(error_path) {
                         let _ = file.take(16384).read_to_string(&mut message);
                     }
                     return Err(io_error(format!(
@@ -514,7 +675,13 @@ fn ffmpeg_on_path(name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod maps_tests {
-    use super::directory_of_mapped_library;
+    use super::{
+        AudioTools, CancellationToken, TemporaryDirectory, clean_verbatim_path,
+        directory_of_mapped_library,
+    };
+    use crate::audio_io::wav_codec::write_wav_f32;
+    use atomusicator_domain::{AudioBufferF32, AudioFormat};
+    use std::path::Path;
 
     #[test]
     fn maps_line_locates_the_android_bridge_beside_its_directory() {
@@ -528,5 +695,51 @@ mod maps_tests {
             "{}",
             directory.display()
         );
+    }
+
+    #[test]
+    fn temporary_directory_accepts_formal_project_names_with_underscores() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).expect("temp root");
+        let dir = TemporaryDirectory::for_job(
+            &root.0,
+            "Proyecto_Elefante-Mentirosa_5Stems_20261109-141500",
+        )
+        .expect("formal project name should be accepted");
+        assert!(dir.0.join(".job-owner").is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clean_verbatim_path_strips_extended_length_prefixes() {
+        assert_eq!(
+            clean_verbatim_path(Path::new(r"\\?\C:\Users\Matius\Desktop\decoded.f32")),
+            Path::new(r"C:\Users\Matius\Desktop\decoded.f32")
+        );
+        assert_eq!(
+            clean_verbatim_path(Path::new(r"\\?\UNC\server\share\decoded.f32")),
+            Path::new(r"\\server\share\decoded.f32")
+        );
+    }
+
+    #[test]
+    fn decode_to_spool_falls_back_to_symphonia_when_ffmpeg_fails() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).expect("temp root");
+        let source = root.0.join("sample.wav");
+        let target = root.0.join("decoded.f32");
+        let buffer = AudioBufferF32::new(
+            AudioFormat::new(44100, 2).unwrap(),
+            vec![0.25f32; 4410 * 2],
+        )
+        .unwrap();
+        write_wav_f32(&source, &buffer).unwrap();
+
+        // Point AudioTools to a non-FFmpeg file (`source` itself) so spawning FFmpeg fails,
+        // verifying automatic fallback to native Symphonia decoding.
+        let tools = AudioTools::at(source.clone()).unwrap();
+        let spool = tools
+            .decode_to_spool(&source, &target, &CancellationToken::default())
+            .expect("should fall back to symphonia_decode::write_spool");
+        use atomusicator_application::ports::AudioBlockSource;
+        assert_eq!(spool.metadata().frame_count, 4410);
     }
 }

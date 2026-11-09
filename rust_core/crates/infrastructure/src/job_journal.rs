@@ -282,7 +282,18 @@ impl JobJournal {
         };
         let directory = path.canonicalize().map_err(failure)?;
         let projects = projects.canonicalize().map_err(failure)?;
-        if directory.parent() != Some(projects.as_path())
+        let output_parent = record
+            .output_directory
+            .as_ref()
+            .and_then(|out| out.parent())
+            .and_then(|p| p.canonicalize().ok());
+        let cache_parent = crate::storage::paths::WorkspacePathPolicy::system_default()
+            .ok()
+            .and_then(|policy| policy.stage_cache_dir().canonicalize().ok());
+        let parent_matches = directory.parent() == Some(projects.as_path())
+            || (output_parent.is_some() && directory.parent() == output_parent.as_deref())
+            || (cache_parent.is_some() && directory.parent() == cache_parent.as_deref());
+        if !parent_matches
             || !directory
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with(".atomusicator-"))
@@ -292,8 +303,14 @@ impl JobJournal {
             ));
         }
         let marker = directory.join(".job-owner");
+        let owner = fs::read_to_string(&marker).map_err(failure)?;
+        let matches_output_name = record
+            .output_directory
+            .as_ref()
+            .and_then(|out| out.file_name())
+            .is_some_and(|name| name.to_string_lossy() == owner);
         if fs::metadata(&marker).map_err(failure)?.len() > 160
-            || fs::read_to_string(marker).map_err(failure)? != record.id
+            || (owner != record.id && !matches_output_name)
         {
             return Err(failure("recovery staging ownership mismatch"));
         }

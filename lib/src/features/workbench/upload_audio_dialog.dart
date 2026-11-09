@@ -580,6 +580,7 @@ class _UploadAudioDialogState extends ConsumerState<UploadAudioDialog> {
                     onPressed: _selectedFiles.isEmpty
                         ? null
                         : () async {
+                            var usedCustom = _useCustomDestination;
                             if (_useCustomDestination &&
                                 _customDestinationDirectory != null) {
                               try {
@@ -589,18 +590,27 @@ class _UploadAudioDialogState extends ConsumerState<UploadAudioDialog> {
                                 ref.invalidate(projectsDirectoryProvider);
                                 ref.invalidate(studioProjectsProvider);
                               } catch (e) {
-                                debugPrint(
-                                  'Error setting projects directory: $e',
-                                );
+                                usedCustom = false;
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'La carpeta seleccionada no tiene permisos de escritura; se utilizará el directorio por defecto.',
+                                      ),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
                               }
                             }
                             if (context.mounted) {
                               Navigator.of(context).pop(
                                 UploadAudioResult(
                                   selectedFiles: _selectedFiles,
-                                  useCustomDestination: _useCustomDestination,
-                                  customDestinationDirectory:
-                                      _customDestinationDirectory,
+                                  useCustomDestination: usedCustom,
+                                  customDestinationDirectory: usedCustom
+                                      ? _customDestinationDirectory
+                                      : null,
                                 ),
                               );
                             }
