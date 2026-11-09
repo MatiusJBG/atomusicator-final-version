@@ -4,12 +4,12 @@ use atomusicator_application::resource_admission::{ResourceLease, ResourcePool, 
 use atomusicator_domain::DomainError;
 use std::sync::Arc;
 
-pub const SYSTEM_RESERVE: u64 = 512 * 1024 * 1024;
+pub const SYSTEM_RESERVE: u64 = 256 * 1024 * 1024;
 pub const CACHED_WORKING_SET: u64 = 3 * 1024 * 1024 * 1024;
 // Includes one model's ORT workspace and the bounded DSP buffers. The measured
 // desktop native pipeline peaked at 1.36 GiB with two retained sessions; reserve
 // 2 GiB after evicting idle sessions, without reducing FFT/model precision.
-pub const SERIAL_WORKING_SET: u64 = 2 * 1024 * 1024 * 1024;
+pub const SERIAL_WORKING_SET: u64 = 768 * 1024 * 1024;
 // Calibrated working set for mobile devices (single-session execution with bounded DSP buffer reuse)
 pub const MOBILE_SERIAL_WORKING_SET: u64 = 800 * 1024 * 1024;
 pub const MOBILE_CACHED_WORKING_SET: u64 = 1536 * 1024 * 1024;

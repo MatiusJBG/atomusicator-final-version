@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
@@ -481,7 +481,7 @@ impl OrtSessionPool {
         map.insert(path, format!("accelerator Run failed; CPU retry: {error}"));
         drop(map);
         self.sessions.trim(self.capacity()?)?;
-        crate::resource_probe::ensure_memory(1536 * 1024 * 1024, 512 * 1024 * 1024)
+        crate::resource_probe::ensure_memory(768 * 1024 * 1024, 256 * 1024 * 1024)
             .map_err(|e| InfrastructureError::OnnxRuntime(e.to_string()))?;
         Ok(())
     }
@@ -686,8 +686,32 @@ impl OnnxSessionRunner {
         crate::provider_retry::run_with_fallback(
             |force_cpu| {
                 let mut provider = None;
-                self.run_once(&mut request, force_cpu, &mut provider)
-                    .map_err(|error| crate::provider_retry::AttemptFailure { error, provider })
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.run_once(&mut request, force_cpu, &mut provider)
+                }));
+                match outcome {
+                    Ok(result) => {
+                        result.map_err(|error| crate::provider_retry::AttemptFailure { error, provider })
+                    }
+                    Err(payload) => {
+                        let panic_msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = payload.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unwind inside ONNX execution".to_string()
+                        };
+                        tracing::error!(%panic_msg, force_cpu, "ONNX execution panicked");
+                        Err(crate::provider_retry::AttemptFailure {
+                            error: InfrastructureError::OnnxRuntime(format!("ONNX panic: {panic_msg}")),
+                            provider: if force_cpu {
+                                Some(ExecutionProviderKind::Cpu)
+                            } else {
+                                Some(ExecutionProviderKind::DirectMl)
+                            },
+                        })
+                    }
+                }
             },
             |error| self.pool.quarantine(model_path, error),
         )

@@ -180,7 +180,17 @@ impl JobRegistry {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     operation(&worker_id, &cancel)
                 }))
-                .unwrap_or_else(|_| Err("native job failed unexpectedly".into()));
+                .unwrap_or_else(|payload| {
+                    let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = payload.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "native job panicked with unknown payload".to_string()
+                    };
+                    eprintln!("Job worker {worker_id} panicked: {msg}");
+                    Err(format!("native job panic: {msg}").into())
+                });
                 registry.finish(&worker_id, result, _lease);
             });
         if let Err(error) = spawned {
