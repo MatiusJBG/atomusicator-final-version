@@ -131,4 +131,76 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'Delete project dialog identifies disk directory and deletes on confirmation',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final tempDir = Directory.systemTemp.createTempSync('atomusicator_del_test_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final projectDir = Directory('${tempDir.path}/Proyecto_Test_5Stems');
+      projectDir.createSync(recursive: true);
+      File('${projectDir.path}/session.json').writeAsStringSync('{"separation":{"status":"complete"}}');
+
+      final testProject = StudioProject(
+        directory: projectDir.path,
+        name: 'Proyecto_Test.flac',
+        duration: 120.0,
+        sampleRate: 44100,
+        channels: 2,
+        stems: 5,
+        modified: DateTime.now(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          projectsDirectoryProvider.overrideWith((ref) async => tempDir.path),
+          studioProjectsProvider.overrideWith((ref) async => [testProject]),
+          favoriteProjectsProvider.overrideWith((ref) => {projectDir.path}),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(
+              body: AudioWorkbench(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Find and tap the delete icon on the project card
+      final deleteBtn = find.byTooltip('Eliminar proyecto').first;
+      expect(deleteBtn, findsOneWidget);
+      await tester.ensureVisible(deleteBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(deleteBtn);
+      await tester.pumpAndSettle();
+
+      // Verify confirmation dialog displays identified folder path
+      expect(find.text('¿Eliminar proyecto?'), findsOneWidget);
+      expect(find.text('CARPETA EN DISCO IDENTIFICADA'), findsOneWidget);
+      expect(find.text(projectDir.path), findsOneWidget);
+
+      // Tap Confirm: "Eliminar proyecto y carpeta"
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Eliminar proyecto y carpeta'));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      });
+      await tester.pumpAndSettle();
+
+      // Verify physical directory was deleted from disk
+      expect(projectDir.existsSync(), isFalse);
+    },
+  );
 }

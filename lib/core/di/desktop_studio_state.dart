@@ -161,6 +161,36 @@ final studioProjectsProvider = FutureProvider<List<StudioProject>>((ref) async {
   return projects;
 });
 
+Future<bool> deleteStudioProject(WidgetRef ref, StudioProject project) async {
+  try {
+    final currentSession = ref.read(studioProvider).session;
+    if (currentSession != null &&
+        (currentSession.directory == project.directory ||
+            currentSession.id == project.name)) {
+      await ref.read(studioProvider.notifier).close();
+    }
+
+    final dir = Directory(project.directory);
+    if (dir.existsSync()) {
+      final sessionFile = File('${dir.path}/session.json');
+      if (sessionFile.existsSync()) {
+        dir.deleteSync(recursive: true);
+      }
+    }
+
+    final favs = {...ref.read(favoriteProjectsProvider)};
+    if (favs.remove(project.directory)) {
+      ref.read(favoriteProjectsProvider.notifier).state = favs;
+      await saveDesktopPreferences(ref);
+    }
+
+    ref.invalidate(studioProjectsProvider);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 class SourceAudioPreview {
   const SourceAudioPreview({
     required this.duration,
