@@ -36,6 +36,8 @@ String? firstExistingNativeLibrary({
       env['ATOMUSICATOR_NATIVE_LIBRARY']!,
     '$exeDir$sep$name',
     '$cwd$sep$name',
+    '$cwd${sep}build${sep}windows${sep}x64${sep}runner${sep}Release$sep$name',
+    '$cwd${sep}build${sep}windows${sep}x64${sep}runner${sep}Debug$sep$name',
     '$cwd${sep}rust_core${sep}target${sep}release$sep$name',
     '$cwd${sep}rust_core${sep}target${sep}debug$sep$name',
   ];
