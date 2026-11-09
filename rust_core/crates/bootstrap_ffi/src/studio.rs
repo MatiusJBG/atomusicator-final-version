@@ -477,6 +477,17 @@ impl Studio {
         let policy = WorkspacePathPolicy::system_default().map_err(err)?;
         let active = policy.active_projects_destination(&projects);
         let projects = WorkspacePathPolicy::validate_projects_destination(&active).map_err(err)?;
+        if retry_of.is_none() {
+            if let Ok(recoverable) = self.jobs.journal.recoverable() {
+                for rec in recoverable {
+                    if let atomusicator_infrastructure::job_journal::JobRequest::Separation { source: rec_source, .. } = &rec.request {
+                        if rec_source == &source {
+                            let _ = self.jobs.journal.discard(&rec.id);
+                        }
+                    }
+                }
+            }
+        }
         let request = atomusicator_infrastructure::job_journal::JobRequest::Separation {
             source: source.clone(),
             projects: projects.clone(),
@@ -564,8 +575,9 @@ impl Studio {
                 "compute":{"provider_requested":backend.sessions.provider_order(),"intra_threads":backend.sessions.intra_threads(),
                     "session_diagnostics":backend.sessions.diagnostics(),
                     "inter_threads":1,"execution":"sequential","precision":"float32","pipeline":"bounded-v1"}});
-            backend.jobs.output(id,projects.join(id))?;
-            let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,id,&asset,&result,engine,cancel,
+            let formal_project_name = generate_formal_project_name(&projects, &asset.display_name, result.len());
+            backend.jobs.output(id, projects.join(&formal_project_name))?;
+            let published=atomusicator_infrastructure::block_workspace::publish_blocks(&projects,&formal_project_name,&asset,&result,engine,cancel,
                 atomusicator_infrastructure::block_workspace::PublicationHooks{
                     staged:|path:&Path|backend.jobs.staging(id,path.to_path_buf()),commit:||backend.jobs.begin_commit(id)
                 }).map_err(crate::jobs::JobFailure::from_domain)?;
@@ -901,6 +913,65 @@ pub fn parse_stem(key: &str) -> Result<StemType, String> {
         .ok_or_else(|| "unknown stem type".into())
 }
 
+fn civil_datetime_from_secs(epoch_secs: u64) -> (u32, u32, u32, u32, u32, u32) {
+    let days = (epoch_secs / 86400) as i64;
+    let rem_secs = (epoch_secs % 86400) as u32;
+    let hours = rem_secs / 3600;
+    let minutes = (rem_secs % 3600) / 60;
+    let seconds = rem_secs % 60;
+
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u32, m, d, hours, minutes, seconds)
+}
+
+pub fn generate_formal_project_name(root: &Path, file_name: &str, stem_count: usize) -> String {
+    let raw_stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Audio");
+
+    let mut clean_name = String::new();
+    let mut last_was_sep = false;
+    for ch in raw_stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            clean_name.push(ch);
+            last_was_sep = false;
+        } else if (ch == ' ' || ch == '-' || ch == '_' || ch == '.') && !last_was_sep {
+            clean_name.push('-');
+            last_was_sep = true;
+        }
+    }
+    let trimmed = clean_name.trim_matches('-');
+    let formal_base = if trimmed.is_empty() { "Audio" } else { trimmed };
+    let formal_base: String = formal_base.chars().take(40).collect();
+    let formal_base = formal_base.trim_matches('-');
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d, hh, mm, ss) = civil_datetime_from_secs(now_secs);
+    let stems_tag = format!("{stem_count}Stems");
+    let base_name = format!("Proyecto_{formal_base}_{stems_tag}_{y:04}{m:02}{d:02}-{hh:02}{mm:02}{ss:02}");
+
+    let mut candidate = base_name.clone();
+    let mut counter = 2;
+    while root.join(&candidate).exists() {
+        candidate = format!("{base_name}_{counter}");
+        counter += 1;
+    }
+    candidate
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -983,6 +1054,18 @@ mod tests {
     }
 
     #[test]
+    fn formal_project_name_formats_cleanly_and_avoids_collisions() {
+        let temp = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let name1 = generate_formal_project_name(&temp.0, "AppleCats - Algo Que Decirte.flac", 5);
+        assert!(name1.starts_with("Proyecto_AppleCats-Algo-Que-Decirte_5Stems_"));
+        assert!(name1.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+
+        std::fs::create_dir(temp.0.join(&name1)).unwrap();
+        let name2 = generate_formal_project_name(&temp.0, "AppleCats - Algo Que Decirte.flac", 5);
+        assert_eq!(name2, format!("{name1}_2"));
+    }
+
+    #[test]
     fn mobile_studio_initializes_with_bounded_pool_and_limits() {
         let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
         let backend = mobile_backend(&root.0);
@@ -993,7 +1076,8 @@ mod tests {
         );
         let settings = backend.compute_settings().unwrap();
         assert_eq!(settings.profile, "balanced");
-        assert!(settings.requested_threads <= 2);
+        let limits = atomusicator_application::compute_policy::ComputeLimits::mobile();
+        assert!(settings.requested_threads <= limits.balanced as u32);
     }
 
     #[test]

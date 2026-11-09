@@ -28,7 +28,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
     hooks: PublicationHooks<S, C>,
 ) -> Result<WorkspaceSession, DomainError> {
     let _timer = crate::job_diagnostics::StageTimer::new("publication");
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
         return Err(failure("invalid session id"));
     }
     let root = WorkspacePathPolicy::validate_projects_destination(root).map_err(failure)?;

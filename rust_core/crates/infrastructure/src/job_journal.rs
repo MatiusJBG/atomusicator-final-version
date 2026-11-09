@@ -230,8 +230,29 @@ impl JobJournal {
             }
         }
         records.retain(|record| !superseded.contains(&record.id));
-        records.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(records)
+        // Deduplicate records by source audio path: if multiple failed/interrupted jobs
+        // exist for the same source audio file, retain ONLY the newest one and mark older
+        // superseded attempts as discarded.
+        let mut by_source: std::collections::BTreeMap<std::path::PathBuf, Vec<JournalRecord>> =
+            std::collections::BTreeMap::new();
+        for record in records {
+            if let JobRequest::Separation { source, .. } = &record.request {
+                let canonical_source = source.canonicalize().unwrap_or_else(|_| source.clone());
+                by_source.entry(canonical_source).or_default().push(record);
+            }
+        }
+        let mut deduplicated = Vec::new();
+        for (_source, mut source_records) in by_source {
+            source_records.sort_by(|a, b| a.id.cmp(&b.id));
+            if let Some(newest) = source_records.pop() {
+                for older in source_records {
+                    let _ = self.discard(&older.id);
+                }
+                deduplicated.push(newest);
+            }
+        }
+        deduplicated.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(deduplicated)
     }
     pub fn discard(&self, id: &str) -> Result<(), DomainError> {
         let _lease = self.lease(id)?;
