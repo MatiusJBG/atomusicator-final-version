@@ -1,4 +1,4 @@
-use atomusicator_infrastructure::audio_tools::ExportOptions;
+use atomusicator_infrastructure::audio_tools::{AudioTools, ExportOptions, TemporaryDirectory};
 
 #[test]
 fn export_options_reject_unsupported_formats_and_rates() {
@@ -208,4 +208,82 @@ fn encoded_stream(path: &std::path::Path) -> serde_json::Value {
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     report["streams"][0].clone()
+}
+
+#[test]
+fn wav_export_without_pinned_ffmpeg_keeps_pcm_depths_and_rejects_compressed_formats() {
+    use atomusicator_application::CancellationToken;
+    use atomusicator_domain::{AudioBufferF32, AudioFormat};
+    use atomusicator_infrastructure::audio_io::wav_codec::{read_wav_f32, wav_metadata};
+
+    let tools = AudioTools::without_pinned_binary();
+    let directory = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let source = directory.0.join("stem.wav");
+    let original = AudioBufferF32::new(
+        AudioFormat::new(44100, 2).unwrap(),
+        vec![0.25, -0.5, 0.125, -0.125],
+    )
+    .unwrap();
+    atomusicator_infrastructure::audio_io::wav_codec::write_wav_f32(&source, &original).unwrap();
+    let cancel = CancellationToken::default();
+    for (rate, channels, bits) in [
+        (44100, 2, 16),
+        (44100, 1, 24),
+        (48000, 2, 32),
+        (48000, 1, 16),
+    ] {
+        let target = directory
+            .0
+            .join(format!("out-{rate}-{channels}-{bits}.wav"));
+        tools
+            .export(
+                &source,
+                &target,
+                &ExportOptions::new("wav", rate, channels, bits, false).unwrap(),
+                &cancel,
+            )
+            .unwrap();
+        let metadata = wav_metadata(&target).unwrap();
+        assert_eq!(metadata.format.sample_rate_hz, rate);
+        assert_eq!(metadata.format.channels, channels);
+        if bits == 32 {
+            let decoded = read_wav_f32(&target).unwrap();
+            assert_eq!(decoded.format().sample_rate_hz, rate);
+            assert_eq!(decoded.format().channels, channels);
+            assert!(!decoded.samples().is_empty());
+        }
+    }
+    let flac = directory.0.join("out.flac");
+    let error = tools
+        .export(
+            &source,
+            &flac,
+            &ExportOptions::new("flac", 44100, 2, 16, false).unwrap(),
+            &cancel,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("FLAC"), "{error}");
+    let mp3 = directory.0.join("out.mp3");
+    let error = tools
+        .export(
+            &source,
+            &mp3,
+            &ExportOptions::new("mp3", 48000, 2, 16, false).unwrap(),
+            &cancel,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("MP3"), "{error}");
+    let loud = directory.0.join("loud.wav");
+    let error = tools
+        .export(
+            &source,
+            &loud,
+            &ExportOptions::new("wav", 44100, 2, 16, true).unwrap(),
+            &cancel,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("loudnorm"), "{error}");
 }

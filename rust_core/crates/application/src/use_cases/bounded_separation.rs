@@ -34,12 +34,20 @@ impl RhythmPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SeparationMode {
+    TwoStems,
+    #[default]
+    FiveStems,
+}
+
 pub struct BoundedSeparation<I, P, G, S> {
     inference: I,
     progress: P,
     gate: G,
     store: S,
     rhythm_policy: RhythmPolicy,
+    mode: SeparationMode,
 }
 impl<I, P, G, S> BoundedSeparation<I, P, G, S>
 where
@@ -55,10 +63,15 @@ where
             gate,
             store,
             rhythm_policy: RhythmPolicy::CompatibilityV1,
+            mode: SeparationMode::FiveStems,
         }
     }
     pub fn with_rhythm_policy(mut self, policy: RhythmPolicy) -> Self {
         self.rhythm_policy = policy;
+        self
+    }
+    pub fn with_separation_mode(mut self, mode: SeparationMode) -> Self {
+        self.mode = mode;
         self
     }
     fn stage(
@@ -80,10 +93,32 @@ where
         self.store.remember(tag, signature, parents, &output)?;
         Ok(output)
     }
+    fn silent_stem(
+        &self,
+        tag: &str,
+        mix: &Source,
+        cancel: &CancellationToken,
+    ) -> Result<Source, DomainError> {
+        let parents = [Arc::clone(mix)];
+        self.stage(tag, "silent-v1", &parents, cancel, |writer| {
+            let metadata = mix.metadata();
+            let channels = usize::from(metadata.format.channels);
+            let zeros = vec![0.0f32; BLOCK * channels];
+            for start in (0..metadata.frame_count).step_by(BLOCK) {
+                check(cancel)?;
+                let count = (metadata.frame_count - start).min(BLOCK as u64) as usize;
+                writer.write(&zeros[..count * channels])?;
+            }
+            Ok(())
+        })
+    }
     fn infer(
         &self,
         tag: &str,
         stage: InferenceStage,
+        stage_index: u8,
+        total_stages: u8,
+        stage_label: &str,
         source: Source,
         cancel: &CancellationToken,
     ) -> Result<Source, DomainError> {
@@ -93,8 +128,21 @@ where
             &[Arc::clone(&source)],
             cancel,
             |writer| {
-                self.inference
-                    .infer_blocks(stage, source.as_ref(), writer, cancel)
+                self.inference.infer_blocks_with_progress(
+                    stage,
+                    source.as_ref(),
+                    writer,
+                    cancel,
+                    &|done_w, total_w| {
+                        let frac = done_w as f32 / total_w.max(1) as f32;
+                        self.progress.report_fraction(
+                            stage_index,
+                            total_stages,
+                            frac,
+                            &format!("{stage_label} ({done_w}/{total_w})"),
+                        );
+                    },
+                )
             },
         )
     }
@@ -113,25 +161,44 @@ where
                 .iter()
                 .map(|_| vec![0.0; BLOCK * channels])
                 .collect();
+            let mut output = vec![0.0; BLOCK * channels];
             let mut values = vec![0.0; sources.len()];
             for start in (0..frames).step_by(BLOCK) {
                 check(cancel)?;
                 let count = (frames - start).min(BLOCK as u64) as usize;
+                let sample_count = count * channels;
                 for (source, buffer) in sources.iter().zip(&mut buffers) {
                     if source.metadata() != sources[0].metadata()
-                        || source.read_frames(start, &mut buffer[..count * channels])? != count
+                        || source.read_frames(start, &mut buffer[..sample_count])? != count
                     {
                         return Err(DomainError::AudioAlignmentMismatch);
                     }
                 }
-                let mut output = vec![0.0; count * channels];
-                for (index, target) in output.iter_mut().enumerate() {
-                    for (value, buffer) in values.iter_mut().zip(&buffers) {
-                        *value = buffer[index];
+                if sources.len() == 2 && signature == "subtract-v1" {
+                    let (b0, b1) = (&buffers[0][..sample_count], &buffers[1][..sample_count]);
+                    for ((target, &a), &b) in output[..sample_count].iter_mut().zip(b0).zip(b1) {
+                        *target = a - b;
                     }
-                    *target = operation(&values);
+                } else if sources.len() == 3 && signature == "subtract-sum-v1" {
+                    let (b0, b1, b2) = (
+                        &buffers[0][..sample_count],
+                        &buffers[1][..sample_count],
+                        &buffers[2][..sample_count],
+                    );
+                    for (((target, &a), &b), &c) in
+                        output[..sample_count].iter_mut().zip(b0).zip(b1).zip(b2)
+                    {
+                        *target = a - (b + c);
+                    }
+                } else {
+                    for (index, target) in output[..sample_count].iter_mut().enumerate() {
+                        for (value, buffer) in values.iter_mut().zip(&buffers) {
+                            *value = buffer[index];
+                        }
+                        *target = operation(&values);
+                    }
                 }
-                writer.write(&output)?;
+                writer.write(&output[..sample_count])?;
             }
             Ok(())
         })
@@ -159,12 +226,17 @@ where
             ));
         }
         let metadata = bus.metadata();
-        let chunk = metadata.format.sample_rate_hz as usize * 8;
+        let chunk = if cfg!(target_os = "android") {
+            256_000usize
+        } else {
+            metadata.format.sample_rate_hz as usize * 8
+        };
+        let total_chunks = metadata.frame_count.div_ceil(chunk as u64) as usize;
         let channels = usize::from(metadata.format.channels);
         let mut lead = self.store.create("lead", metadata)?;
         let mut backing = self.store.create("backing", metadata)?;
         let mut active = self.store.create("active-vocals", metadata)?;
-        for start in (0..metadata.frame_count).step_by(chunk) {
+        for (chunk_idx, start) in (0..metadata.frame_count).step_by(chunk).enumerate() {
             check(cancel)?;
             let frames = (metadata.frame_count - start).min(chunk as u64) as usize;
             let mut samples = vec![0.0; frames * channels];
@@ -187,33 +259,39 @@ where
                 lead.write(&samples)?;
                 backing.write(&samples)?;
                 active.write(&samples)?;
-                continue;
+            } else {
+                active.write(&samples)?;
+                let input = AudioBufferF32::new(metadata.format, samples)?;
+                let main = self.inference.infer_lead_vocal(&input, cancel)?;
+                if main.format() != input.format() || main.frames() != input.frames() {
+                    return Err(DomainError::AudioAlignmentMismatch);
+                }
+                let raw = AudioBufferF32::new(
+                    metadata.format,
+                    input
+                        .samples()
+                        .iter()
+                        .zip(main.samples())
+                        .map(|(a, b)| a - b)
+                        .collect(),
+                )?;
+                let (main, chorus) = self.gate.rebalance(&main, &raw)?;
+                if main.format() != input.format()
+                    || chorus.format() != input.format()
+                    || main.frames() != frames
+                    || chorus.frames() != frames
+                {
+                    return Err(DomainError::AudioAlignmentMismatch);
+                }
+                lead.write(main.samples())?;
+                backing.write(chorus.samples())?;
             }
-            active.write(&samples)?;
-            let input = AudioBufferF32::new(metadata.format, samples)?;
-            let main = self.inference.infer_lead_vocal(&input, cancel)?;
-            if main.format() != input.format() || main.frames() != input.frames() {
-                return Err(DomainError::AudioAlignmentMismatch);
-            }
-            let raw = AudioBufferF32::new(
-                metadata.format,
-                input
-                    .samples()
-                    .iter()
-                    .zip(main.samples())
-                    .map(|(a, b)| a - b)
-                    .collect(),
-            )?;
-            let (main, chorus) = self.gate.rebalance(&main, &raw)?;
-            if main.format() != input.format()
-                || chorus.format() != input.format()
-                || main.frames() != frames
-                || chorus.frames() != frames
-            {
-                return Err(DomainError::AudioAlignmentMismatch);
-            }
-            lead.write(main.samples())?;
-            backing.write(chorus.samples())?;
+            self.progress.report_fraction(
+                1,
+                5,
+                (chunk_idx + 1) as f32 / total_chunks.max(1) as f32,
+                &format!("Separating vocal stems ({}/{total_chunks})", chunk_idx + 1),
+            );
         }
         let lead = lead.finish()?;
         let backing = backing.finish()?;
@@ -237,10 +315,70 @@ where
         if mix.metadata().frame_count == 0 {
             return Err(DomainError::AudioDecodeFailure("audio is empty".into()));
         }
+        if self.mode == SeparationMode::TwoStems {
+            self.progress.report(0, 1, "Isolating vocal bus");
+            let vocal_bus = self.infer(
+                "vocal-bus",
+                InferenceStage::VocalBus,
+                0,
+                1,
+                "Isolating vocal bus",
+                Arc::clone(&mix),
+                cancel,
+            )?;
+            let instrumental = self.combine(
+                "instrumental",
+                &[Arc::clone(&mix), Arc::clone(&vocal_bus)],
+                "subtract-v1",
+                cancel,
+                |v| v[0] - v[1],
+            )?;
+            let metadata = mix.metadata();
+            let silent = self.silent_stem("silent-stem", &mix, cancel)?;
+            let outputs = BTreeMap::from([
+                (StemType::LeadVocal, vocal_bus),
+                (StemType::BackingVocals, Arc::clone(&silent)),
+                (StemType::Drums, Arc::clone(&silent)),
+                (StemType::Bass, Arc::clone(&silent)),
+                (StemType::Instrumental, instrumental),
+            ]);
+            self.progress
+                .report(1, 1, "Validating reconstruction in bounded blocks");
+            let channels = usize::from(metadata.format.channels);
+            for start in (0..metadata.frame_count).step_by(BLOCK) {
+                check(cancel)?;
+                let count = (metadata.frame_count - start).min(BLOCK as u64) as usize;
+                let mut original = vec![0.0; count * channels];
+                if mix.read_frames(start, &mut original)? != count {
+                    return Err(DomainError::AudioAlignmentMismatch);
+                }
+                let original = AudioBufferF32::new(metadata.format, original)?;
+                let mut stems = Vec::new();
+                for kind in StemType::ALL {
+                    let source = &outputs[&kind];
+                    let mut samples = vec![0.0; count * channels];
+                    if source.metadata() != metadata
+                        || source.read_frames(start, &mut samples)? != count
+                    {
+                        return Err(DomainError::AudioAlignmentMismatch);
+                    }
+                    stems.push(Stem {
+                        kind,
+                        audio: AudioBufferF32::new(metadata.format, samples)?,
+                    });
+                }
+                SeparationResult::try_new(&original, stems)?;
+            }
+            self.progress.report(1, 1, "Two aligned stems validated");
+            return Ok(outputs);
+        }
         self.progress.report(0, 5, "Isolating vocal bus");
         let vocal_bus = self.infer(
             "vocal-bus",
             InferenceStage::VocalBus,
+            0,
+            5,
+            "Isolating vocal bus",
             Arc::clone(&mix),
             cancel,
         )?;
@@ -254,7 +392,15 @@ where
             |v| v[0] - v[1],
         )?;
         self.progress.report(2, 5, "Separating drums");
-        let drums = self.infer("drums", InferenceStage::Drums, Arc::clone(&master), cancel)?;
+        let drums = self.infer(
+            "drums",
+            InferenceStage::Drums,
+            2,
+            5,
+            "Separating drums",
+            Arc::clone(&master),
+            cancel,
+        )?;
         let bass_input = match self.rhythm_policy {
             RhythmPolicy::CompatibilityV1 => self.combine(
                 "drum-free",
@@ -265,15 +411,20 @@ where
             )?,
             RhythmPolicy::OriginalMixBassV2 => Arc::clone(&mix),
         };
-        self.progress.report(
+        let bass_label = match self.rhythm_policy {
+            RhythmPolicy::CompatibilityV1 => "Separating bass from drum-free residual",
+            RhythmPolicy::OriginalMixBassV2 => "Separating bass from original mix",
+        };
+        self.progress.report(3, 5, bass_label);
+        let bass = self.infer(
+            "bass",
+            InferenceStage::Bass,
             3,
             5,
-            match self.rhythm_policy {
-                RhythmPolicy::CompatibilityV1 => "Separating bass from drum-free residual",
-                RhythmPolicy::OriginalMixBassV2 => "Separating bass from original mix",
-            },
-        );
-        let bass = self.infer("bass", InferenceStage::Bass, bass_input, cancel)?;
+            bass_label,
+            bass_input,
+            cancel,
+        )?;
         let instrumental = self.combine(
             "instrumental",
             &[master, Arc::clone(&drums), Arc::clone(&bass)],

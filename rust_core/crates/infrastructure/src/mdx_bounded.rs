@@ -46,8 +46,21 @@ pub fn run_bounded_mdx_reusing(
     source: &dyn AudioBlockSource,
     target: &mut dyn AudioBlockWriter,
     cancel: &CancellationToken,
+    predict: impl FnMut(&mut [f32], &mut Vec<f32>) -> Result<(), DomainError>,
+    observe: Option<&MdxObserver<'_>>,
+) -> Result<(), DomainError> {
+    run_bounded_mdx_reusing_with_progress(c, source, target, cancel, predict, observe, None)
+}
+
+/// Production path with per-window progress reporting.
+pub fn run_bounded_mdx_reusing_with_progress(
+    c: MdxConfig,
+    source: &dyn AudioBlockSource,
+    target: &mut dyn AudioBlockWriter,
+    cancel: &CancellationToken,
     mut predict: impl FnMut(&mut [f32], &mut Vec<f32>) -> Result<(), DomainError>,
     observe: Option<&MdxObserver<'_>>,
+    on_window: Option<&dyn Fn(usize, usize)>,
 ) -> Result<(), DomainError> {
     let _total = StageTimer::new("mdx_total");
     let metadata = source.metadata();
@@ -69,7 +82,11 @@ pub fn run_bounded_mdx_reusing(
         .checked_add(frames)
         .and_then(|v| v.checked_add(pad))
         .ok_or_else(|| fail("MDX frame count overflow"))?;
-    let step = (0.65 * chunk as f64) as usize;
+    let step = if cfg!(target_os = "android") {
+        (0.80 * chunk as f64) as usize
+    } else {
+        (0.65 * chunk as f64) as usize
+    };
     if step == 0 {
         return Err(fail("invalid MDX step"));
     }
@@ -82,6 +99,9 @@ pub fn run_bounded_mdx_reusing(
             let count = remaining.min(65536) as usize;
             target.write(&zeros[..count * 2])?;
             remaining -= count as u64;
+        }
+        if let Some(cb) = on_window {
+            cb(1, 1);
         }
         return Ok(());
     }
@@ -101,7 +121,8 @@ pub fn run_bounded_mdx_reusing(
     let mut spectrum = vec![0.0f32; 4 * c.dim_f * c.dim_t];
     let mut prediction = Vec::with_capacity(spectrum.len());
     let mut fft_workspace = MdxFftWorkspace::new(&transform);
-    for start in (0..padded).step_by(step) {
+    let total_windows = (0..padded).step_by(step).count();
+    for (window_index, start) in (0..padded).step_by(step).enumerate() {
         check(cancel)?;
         let read_timer = StageTimer::new("read_and_normalize");
         let actual = (padded - start).min(chunk as u64) as usize;
@@ -138,7 +159,17 @@ pub fn run_bounded_mdx_reusing(
         if let Some(observe) = observe {
             observe("tensor_input_spectral_units", &spectrum);
         }
-        {
+        let silent_window = if cfg!(target_os = "android") {
+            let energy: f64 = raw.iter().map(|&s| (s as f64) * (s as f64)).sum();
+            let rms = (energy / raw.len().max(1) as f64).sqrt();
+            rms <= 0.0005623413
+        } else {
+            false
+        };
+        if silent_window {
+            prediction.resize(spectrum.len(), 0.0);
+            prediction.fill(0.0);
+        } else {
             let _timer = StageTimer::new("onnx_run_including_session_lookup");
             predict(&mut spectrum, &mut prediction)?;
         }
@@ -154,6 +185,9 @@ pub fn run_bounded_mdx_reusing(
             observe,
             &mut fft_workspace,
         )?;
+        if let Some(cb) = on_window {
+            cb(window_index + 1, total_windows);
+        }
     }
     check(cancel)
 }

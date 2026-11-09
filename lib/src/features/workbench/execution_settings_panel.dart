@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/di/studio_controller.dart';
 import '../../rust_bridge/api.dart' as native;
+import 'particle_loading_widgets.dart';
 
 abstract class ExecutionSettingsGateway {
   Future<native.UiExecutionSettingsDto> read();
@@ -61,7 +63,7 @@ class _ExecutionSettingsPanelState
     final settings = ref.watch(executionSettingsProvider);
     final busy = ref.watch(studioProvider.select((s) => s.busy));
     return settings.when(
-      loading: () => const LinearProgressIndicator(),
+      loading: () => const ParticleProgressBar(),
       error:
           (_, _) => TextButton(
             onPressed: () => ref.invalidate(executionSettingsProvider),
@@ -74,31 +76,40 @@ class _ExecutionSettingsPanelState
         } catch (_) {
           diagnostics = [];
         }
+        final cpuOnly = Platform.isAndroid;
+        final mode =
+            cpuOnly && value.nextStartupMode != 'cpu'
+                ? 'cpu'
+                : value.nextStartupMode;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButton<String>(
-              value: value.nextStartupMode,
+              value: mode,
               isExpanded: true,
-              items: const [
-                DropdownMenuItem(
+              items: [
+                const DropdownMenuItem(
                   value: 'cpu',
                   child: Text('CPU · máxima compatibilidad'),
                 ),
-                DropdownMenuItem(
-                  value: 'directml',
-                  child: Text('DirectML · GPU Windows'),
-                ),
-                DropdownMenuItem(
-                  value: 'auto',
-                  child: Text('Automático · GPU con respaldo CPU'),
-                ),
+                if (!cpuOnly)
+                  const DropdownMenuItem(
+                    value: 'directml',
+                    child: Text('DirectML · GPU Windows'),
+                  ),
+                if (!cpuOnly)
+                  const DropdownMenuItem(
+                    value: 'auto',
+                    child: Text('Automático · GPU con respaldo CPU'),
+                  ),
               ],
               onChanged:
                   saving || busy
                       ? null
                       : (mode) {
-                        if (mode != null) save(mode);
+                        if (mode == null) return;
+                        if (cpuOnly && mode != 'cpu') return;
+                        save(mode);
                       },
             ),
             const Text(

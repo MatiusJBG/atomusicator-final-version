@@ -50,6 +50,8 @@ pub fn set_compute_profile(profile: String) -> Result<(), String> {
     crate::studio::studio()?.set_compute_profile(&profile)
 }
 
+
+
 /// Flutter-facing description of one persisted stem track.
 #[derive(Debug, Clone)]
 pub struct UiStemTrackDto {

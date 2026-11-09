@@ -30,6 +30,12 @@ migrate_working_dir/
 /local_audio/
 /benchmarks/results/
 /assets/models/
+/android/app/src/main/assets/models/
+/android/build/
+/.agents/
+/*.apk
+/Atomusicator-Setup-*.exe
+/build_android_log.txt
 
 # IntelliJ related
 *.iml
@@ -65,6 +71,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/local.properties
+/android/key.properties
+/android/app/upload-keystore.jks
+/android/app/src/main/jniLibs/**/*.so
+/android/app/src/main/jniLibs/**/ffmpeg
+/android/app/src/main/jniLibs/**/libffmpeg.so
 
 # Widget Preview related
 .widget_preview/

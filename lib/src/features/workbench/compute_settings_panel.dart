@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/compute_settings.dart';
 import '../../../core/di/studio_controller.dart';
+import 'particle_loading_widgets.dart';
 
 class ComputeSettingsPanel extends ConsumerWidget {
   const ComputeSettingsPanel({super.key, this.compact = false});
@@ -11,7 +12,7 @@ class ComputeSettingsPanel extends ConsumerWidget {
     final settings = ref.watch(computeSettingsProvider);
     final busy = ref.watch(studioProvider.select((s) => s.busy));
     return settings.when(
-      loading: () => const LinearProgressIndicator(),
+      loading: () => const ParticleProgressBar(),
       error:
           (error, _) => Row(
             children: [
@@ -53,6 +54,10 @@ class ComputeSettingsPanel extends ConsumerWidget {
               if (!compact)
                 Text(
                   'Hilos solicitados: ${value.requestedThreads} · efectivos: ${value.effectiveThreads}',
+                ),
+              if (!compact)
+                const Text(
+                  'Precisión FP32 (0% pérdida) · Aceleración DirectML / AVX2 Multi-hilo',
                 ),
               if (!compact)
                 const Text(

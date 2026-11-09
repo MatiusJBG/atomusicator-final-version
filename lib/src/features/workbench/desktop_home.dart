@@ -72,7 +72,12 @@ class _ProjectsHome extends ConsumerWidget {
             flex: 5,
             child:
                 projects.isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const Center(
+                      child: ParticleBurstLoader(
+                        size: 46,
+                        label: 'Cargando proyectos del estudio…',
+                      ),
+                    )
                     : items.isEmpty
                     ? _Panel(
                       child: Center(
@@ -114,7 +119,10 @@ class _ProjectsHome extends ConsumerWidget {
                             itemCount: items.length,
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: box.maxWidth < 1000 ? 2 : 3,
+                                  crossAxisCount:
+                                      box.maxWidth < 560
+                                          ? 1
+                                          : (box.maxWidth < 1000 ? 2 : 3),
                                   mainAxisExtent: box.maxHeight,
                                   crossAxisSpacing: 24,
                                   mainAxisSpacing: 16,

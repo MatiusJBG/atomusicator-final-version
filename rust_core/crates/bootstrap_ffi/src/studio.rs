@@ -40,6 +40,7 @@ pub struct Studio {
     resources: atomusicator_infrastructure::resource_probe::NativeResourceAdmission,
     pitch_cache: PitchRenderCache,
     live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore,
+    separation_mode: Mutex<atomusicator_application::use_cases::bounded_separation::SeparationMode>,
 }
 #[derive(Clone)]
 struct LoadedSession {
@@ -49,6 +50,11 @@ struct LoadedSession {
     _pitch_batch: Option<atomusicator_infrastructure::pitch_cache::LeasedPitchBatch>,
     pitch_key: String,
 }
+pub fn is_mobile_platform() -> bool {
+    cfg!(target_os = "android")
+        || std::env::var("ATOMUSICATOR_MOBILE").is_ok_and(|v| v == "1" || v == "true")
+}
+
 static STUDIO: OnceLock<Result<Arc<Studio>, String>> = OnceLock::new();
 pub fn studio() -> Result<Arc<Studio>, String> {
     STUDIO
@@ -64,23 +70,44 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                 Err(error) => return Err(err(error)),
             };
             let mixer = CpalRealtimeMixer::new().map_err(err)?;
-            let execution = atomusicator_infrastructure::preferences::ExecutionPreferences::new(
+            let is_mobile = is_mobile_platform();
+            let has_saved_execution = policy.app_data_root().join("execution.json").exists();
+            let mut execution = atomusicator_infrastructure::preferences::ExecutionPreferences::new(
                 policy.app_data_root().to_path_buf(),
             )
             .startup()
             .map_err(err)?;
+            if !is_mobile
+                && !has_saved_execution
+                && std::env::var("ATOMUSICATOR_EXECUTION_PROVIDER").is_err()
+            {
+                execution.mode = atomusicator_infrastructure::preferences::ExecutionMode::Auto;
+            }
+            let capacity = if let Ok(cap_str) = std::env::var("ATOMUSICATOR_SESSION_CAPACITY") {
+                cap_str.parse().unwrap_or(if is_mobile { 1 } else { 2 })
+            } else if is_mobile {
+                1
+            } else {
+                2
+            };
+            let limits = if is_mobile {
+                atomusicator_application::compute_policy::ComputeLimits::mobile()
+            } else {
+                atomusicator_application::compute_policy::ComputeLimits::desktop()
+            };
             let sessions = Arc::new(
-                OrtSessionPool::with_compute_profile(2, profile)
+                OrtSessionPool::with_compute_profile_and_limits(capacity, profile, limits)
                     .map_err(err)?
                     .using_execution_options(execution)
                     .map_err(err)?
                     .with_playback_probe(mixer.playback_probe()),
             );
             let inference_threads =
-                atomusicator_application::compute_policy::ComputeBudget::for_profile(
+                atomusicator_application::compute_policy::ComputeBudget::for_profile_with_limits(
                     atomusicator_application::compute_policy::ComputeProfile::Throughput,
-                    std::thread::available_parallelism().map_or(1, usize::from),
+                    atomusicator_infrastructure::onnx::logical_cpu_count(),
                     false,
+                    limits,
                 )
                 .threads_per_inference();
             Ok(Arc::new(Studio {
@@ -107,10 +134,16 @@ pub fn studio() -> Result<Arc<Studio>, String> {
                     )
                     .map_err(err)?,
                 resources:
-                    atomusicator_infrastructure::resource_probe::NativeResourceAdmission::new(
+                    atomusicator_infrastructure::resource_probe::NativeResourceAdmission::with_limits(
                         inference_threads,
+                        limits,
                     )
                     .map_err(err)?,
+                separation_mode: Mutex::new(if is_mobile {
+                    atomusicator_application::use_cases::bounded_separation::SeparationMode::TwoStems
+                } else {
+                    atomusicator_application::use_cases::bounded_separation::SeparationMode::FiveStems
+                }),
             }))
         })
         .clone()
@@ -162,9 +195,13 @@ impl Studio {
     pub fn execution_settings(&self) -> Result<crate::api::UiExecutionSettingsDto, String> {
         use atomusicator_infrastructure::preferences::{ExecutionMode, ExecutionPreferences};
         let policy = WorkspacePathPolicy::system_default().map_err(err)?;
-        let options = ExecutionPreferences::new(policy.app_data_root().to_path_buf())
+        let has_saved = policy.app_data_root().join("execution.json").exists();
+        let mut options = ExecutionPreferences::new(policy.app_data_root().to_path_buf())
             .load()
             .map_err(err)?;
+        if !is_mobile_platform() && !has_saved {
+            options.mode = ExecutionMode::Auto;
+        }
         Ok(crate::api::UiExecutionSettingsDto {
             next_startup_mode: match options.mode {
                 ExecutionMode::Cpu => "cpu",
@@ -210,6 +247,24 @@ impl Studio {
         self.sessions.set_compute_profile(profile);
         *current = profile;
         Ok(())
+    }
+    pub fn set_separation_mode(&self, value: &str) -> Result<(), String> {
+        let mode = match value {
+            "two_stems" | "2" => atomusicator_application::use_cases::bounded_separation::SeparationMode::TwoStems,
+            "five_stems" | "5" => atomusicator_application::use_cases::bounded_separation::SeparationMode::FiveStems,
+            other => return Err(format!("Unknown separation mode: {other}. Expected 'two_stems' or 'five_stems'")),
+        };
+        let _idle = self.jobs.idle()?;
+        let mut current = self.separation_mode.lock().map_err(err)?;
+        *current = mode;
+        Ok(())
+    }
+    pub fn separation_mode(&self) -> Result<String, String> {
+        let current = self.separation_mode.lock().map_err(err)?;
+        match *current {
+            atomusicator_application::use_cases::bounded_separation::SeparationMode::TwoStems => Ok("two_stems".into()),
+            atomusicator_application::use_cases::bounded_separation::SeparationMode::FiveStems => Ok("five_stems".into()),
+        }
     }
     pub fn projects_directory(&self) -> Result<String, String> {
         Ok(self
@@ -401,6 +456,9 @@ impl Studio {
         source: PathBuf,
         download_allowed: bool,
     ) -> Result<String, String> {
+        let (source, mode) = parse_source_mode(source);
+        let mode_str = mode.as_deref().unwrap_or("five_stems");
+        let _ = self.set_separation_mode(mode_str);
         let source = source.canonicalize().map_err(err)?;
         let projects = self.projects.lock().map_err(err)?.clone();
         self.separate_request(source, projects, download_allowed, None, None)
@@ -437,9 +495,18 @@ impl Studio {
             let policy = WorkspacePathPolicy::system_default().map_err(err)?;
             let manager = ManifestModelManager::from_embedded_manifest(policy.clone()).map_err(err)?;
             let runtime = &backend.runtime;
+            let mode = *backend.separation_mode.lock().map_err(err)?;
             let mut models = BTreeMap::new();
             let mut usages = Vec::new();
+            #[cfg(target_os = "android")]
+            crate::android_host::wait_for_bundled_models();
             for (index, profile) in manager.manifest().models.iter().enumerate() {
+                if mode == atomusicator_application::use_cases::bounded_separation::SeparationMode::TwoStems
+                    && profile.profile_id != "uvr-mdxnet-main-v1"
+                    && !profile.filename.contains("Main")
+                {
+                    continue;
+                }
                 check_cancel(cancel)?;
                 backend.report(id,index as f32 * 0.025,&format!("Verifying {}",profile.filename));
                 let local=runtime.block_on(manager.cached_profile(&profile.profile_id)).map_err(err)?;
@@ -470,7 +537,9 @@ impl Studio {
             let store = atomusicator_infrastructure::storage::float_spool::FloatSpoolStore::with_retention(policy.stage_cache_dir().join("bounded-v1"),retention);
             let inference = MdxInference::with_session_pool(models,None,Arc::clone(&backend.sessions)).map_err(err)?;
             let progress = JobProgress { studio: Arc::clone(backend), id: id.into() };
-            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store).with_rhythm_policy(rhythm_policy);
+            let pipeline = BoundedSeparation::new(inference,progress,StftSpectralBleedGate::new(2048,0.05,0.25).map_err(err)?,store)
+                .with_rhythm_policy(rhythm_policy)
+                .with_separation_mode(mode);
             let result = {
                 let _timer=atomusicator_infrastructure::job_diagnostics::StageTimer::new("separation");
                 pipeline.execute(audio,cancel).map_err(crate::jobs::JobFailure::from_domain)?
@@ -479,7 +548,12 @@ impl Studio {
             if atomusicator_infrastructure::job_journal::JobJournal::hash_source(&source,cancel).map_err(err)? != source_hash {
                 return Err("Source content changed during separation; result was not published".into());
             }
-            backend.report(id, 0.92, "Publishing five aligned WAV tracks");
+            let pub_msg = if mode == atomusicator_application::use_cases::bounded_separation::SeparationMode::TwoStems {
+                "Publishing two aligned WAV tracks (Vocals & Instrumental)"
+            } else {
+                "Publishing five aligned WAV tracks"
+            };
+            backend.report(id, 0.92, pub_msg);
             let asset = AudioAsset {
                 id: AudioAssetId::new(unique_id()).map_err(err)?,
                 display_name: source.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: source,
@@ -787,9 +861,25 @@ struct JobProgress {
 }
 impl SeparationProgressPort for JobProgress {
     fn report(&self, done: u8, total: u8, message: &str) {
+        if done > 0 {
+            // Trim idle sessions between stage transitions (e.g. VocalBus -> LeadVocal -> Drums -> Bass)
+            // to free previously loaded model weights and prevent LMK on memory-constrained mobile devices.
+            if let Err(error) = self.studio.sessions.trim_idle_and_resize(1) {
+                tracing::warn!(%error, "could not release idle ONNX sessions at stage transition");
+            }
+        }
         self.studio.report(
             &self.id,
             0.15 + 0.7 * f32::from(done) / f32::from(total),
+            message,
+        );
+    }
+
+    fn report_fraction(&self, done: u8, total: u8, stage_fraction: f32, message: &str) {
+        let clamped = stage_fraction.clamp(0.0, 1.0);
+        self.studio.report(
+            &self.id,
+            0.15 + 0.7 * (f32::from(done) + clamped) / f32::from(total),
             message,
         );
     }
@@ -846,7 +936,81 @@ mod tests {
                 .threads_per_inference(),
             )
             .unwrap(),
+            separation_mode: Mutex::new(Default::default()),
         })
+    }
+
+    pub(super) fn mobile_backend(root: &Path) -> Arc<Studio> {
+        let limits = atomusicator_application::compute_policy::ComputeLimits::mobile();
+        let sessions = Arc::new(
+            OrtSessionPool::with_compute_profile_and_limits(
+                1,
+                atomusicator_application::compute_policy::ComputeProfile::Balanced,
+                limits,
+            )
+            .unwrap(),
+        );
+        Arc::new(Studio {
+            mixer: CpalRealtimeMixer::new().unwrap(),
+            jobs: Arc::new(crate::jobs::JobRegistry::new(
+                atomusicator_infrastructure::job_journal::JobJournal::new(root.join("jobs")),
+            )),
+            loaded: Mutex::new(None),
+            projects: Mutex::new(root.to_path_buf()),
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap(),
+            sessions,
+            compute_profile: Mutex::new(
+                atomusicator_application::compute_policy::ComputeProfile::Balanced,
+            ),
+            compute_preferences: ComputePreferences::new(root.join("preferences")),
+            pitch_cache: PitchRenderCache::new(root.join("pitch-cache")),
+            live_pitch_store: atomusicator_infrastructure::live_pitch_store::LivePitchStore::new(
+                root.join("live-pitch"),
+            )
+            .unwrap(),
+            resources:
+                atomusicator_infrastructure::resource_probe::NativeResourceAdmission::with_limits(
+                    limits.balanced,
+                    limits,
+                )
+                .unwrap(),
+            separation_mode: Mutex::new(Default::default()),
+        })
+    }
+
+    #[test]
+    fn mobile_studio_initializes_with_bounded_pool_and_limits() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let backend = mobile_backend(&root.0);
+        assert_eq!(backend.sessions.capacity().unwrap(), 1);
+        assert_eq!(
+            backend.sessions.compute_limits(),
+            atomusicator_application::compute_policy::ComputeLimits::mobile()
+        );
+        let settings = backend.compute_settings().unwrap();
+        assert_eq!(settings.profile, "balanced");
+        assert!(settings.requested_threads <= 2);
+    }
+
+    #[test]
+    fn job_progress_trims_sessions_at_stage_transitions() {
+        let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+        let backend = backend(&root.0);
+        assert_eq!(backend.sessions.capacity().unwrap(), 2);
+        let progress = JobProgress {
+            studio: Arc::clone(&backend),
+            id: "test-progress".into(),
+        };
+        // Initial stage (done = 0) does not trim
+        progress.report(0, 5, "stage 0");
+        assert_eq!(backend.sessions.capacity().unwrap(), 2);
+        // Stage transition (done = 1) triggers trim_idle_and_resize(1)
+        progress.report(1, 5, "stage 1");
+        assert_eq!(backend.sessions.capacity().unwrap(), 1);
     }
     #[test]
     fn compute_settings_persist_and_reject_changes_during_active_jobs() {
@@ -1065,14 +1229,14 @@ mod tests {
         let backend = backend(&root.0);
         backend.open(&root.0).unwrap();
         let original = fs::read(root.0.join("outputs/lead_vocal.wav")).unwrap();
-        let id = backend.pitch(3, true).unwrap();
+        let id = backend.pitch(3).unwrap();
         let job = wait(&backend, &id);
         assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         let pitched = job.session.unwrap();
         assert_eq!(pitched.pitch_semitones, 3);
         let render_path = PathBuf::from(&pitched.tracks[0].file_path);
         let modified = fs::metadata(&render_path).unwrap().modified().unwrap();
-        let id = backend.pitch(3, true).unwrap();
+        let id = backend.pitch(3).unwrap();
         let reused = wait(&backend, &id);
         assert_eq!(reused.status, UiJobStatus::Completed, "{}", reused.message);
         assert_eq!(
@@ -1098,7 +1262,7 @@ mod tests {
         assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         let directory = PathBuf::from(job.output_directory.unwrap());
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
-        let id = backend.pitch(0, false).unwrap();
+        let id = backend.pitch(0).unwrap();
         let job = wait(&backend, &id);
         assert_eq!(job.status, UiJobStatus::Completed, "{}", job.message);
         assert_eq!(
@@ -1178,4 +1342,13 @@ mod tests {
         assert_ne!(rebuilt, path);
         assert_eq!(backend.open(&rebuilt).unwrap().tracks.len(), 5);
     }
+}
+
+fn parse_source_mode(source: PathBuf) -> (PathBuf, Option<String>) {
+    if let Some(s) = source.to_str() {
+        if let Some((path, mode)) = s.split_once("#mode=") {
+            return (PathBuf::from(path), Some(mode.to_string()));
+        }
+    }
+    (source, None)
 }

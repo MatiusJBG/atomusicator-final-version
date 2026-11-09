@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart' show compute;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../src/rust_bridge/api.dart' as native;
+import '../platform/platform_audio_host.dart';
 import 'native_engine_provider.dart';
 import 'studio_controller.dart';
 import 'workbench_providers.dart';
@@ -19,15 +21,52 @@ final studioViewProvider = StateProvider<StudioView>((ref) {
 });
 final separationFlowProvider = StateProvider<bool>((ref) => false);
 final separationResultProvider = StateProvider<bool>((ref) => false);
+
+enum SeparationTargetMode {
+  twoStems,
+  fiveStems,
+}
+
+final separationTargetModeProvider = StateProvider<SeparationTargetMode>(
+  (ref) => Platform.isAndroid ? SeparationTargetMode.twoStems : SeparationTargetMode.fiveStems,
+);
+
 final selectedStemTypesProvider = StateProvider<Set<String>>(
   (ref) => {'lead_vocal', 'backing_vocals', 'drums', 'bass', 'instrumental'},
 );
 final studioTextScaleProvider = StateProvider<double>((ref) => 1);
 final studioGridProvider = StateProvider<bool>((ref) => true);
-final studioReducedMotionProvider = StateProvider<bool>((ref) => true);
+final studioReducedMotionProvider = StateProvider<bool>((ref) => false);
 final studioDensityProvider = StateProvider<double>((ref) => 1);
 final favoriteProjectsProvider = StateProvider<Set<String>>((ref) => {});
+
+final sourcePreviewProgressProvider = StateProvider.family<double, String>(
+  (ref, path) => 0.0,
+);
+
+final fileImportStateProvider = StateProvider<
+  ({bool importing, double progress, String label})
+>((ref) => (importing: false, progress: 0.0, label: ''));
+
+File? _androidPreferencesFile;
+
+/// Android preferences live in application support. Windows keeps LOCALAPPDATA.
+Future<void> prepareApplicationPreferences() async {
+  if (!Platform.isAndroid) return;
+  final support = await getApplicationSupportDirectory();
+  _androidPreferencesFile = File('${support.path}/desktop-ui.json');
+}
+
 final desktopPreferencesFileProvider = Provider<File>((ref) {
+  if (Platform.isAndroid) {
+    final file = _androidPreferencesFile;
+    if (file == null) {
+      throw StateError(
+        'Las preferencias de Android usan el almacenamiento de la aplicaciÃ³n, no LOCALAPPDATA.',
+      );
+    }
+    return file;
+  }
   final base = Platform.environment['LOCALAPPDATA'] ?? Directory.current.path;
   return File('$base/Atomusicator/desktop-ui.json');
 });
@@ -43,7 +82,7 @@ final desktopPreferencesLoadProvider = FutureProvider<void>((ref) async {
       .state = ((values['density'] as num?)?.toDouble() ?? 1).clamp(.9, 1.1);
   ref.read(studioGridProvider.notifier).state = values['grid'] as bool? ?? true;
   ref.read(studioReducedMotionProvider.notifier).state =
-      values['reducedMotion'] as bool? ?? true;
+      values['reducedMotion'] as bool? ?? false;
   ref.read(favoriteProjectsProvider.notifier).state =
       (values['favorites'] as List?)?.whereType<String>().toSet() ?? {};
 });
@@ -95,7 +134,8 @@ final studioProjectsProvider = FutureProvider<List<StudioProject>>((ref) async {
       final data =
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       final separation = data['separation'] as Map<String, dynamic>?;
-      if (separation?['status'] != 'complete') continue;
+      final status = separation?['state'] ?? separation?['status'];
+      if (status != 'complete') continue;
       projects.add(
         StudioProject(
           directory: entity.path,
@@ -145,20 +185,59 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
 >((ref, path) async {
   // Native audio tools are already shipped beside the application. Decoding a
   // source preview does not load it as a mixer session or start playback.
-  if (!await File(path).exists()) return null;
+  var resolvedPath = path;
+  if (!await File(resolvedPath).exists()) {
+    final parent = File(path).parent.path;
+    final name = path.split(RegExp(r'[/\\]')).last;
+    final candidate = '$parent/outputs/$name';
+    if (await File(candidate).exists()) {
+      resolvedPath = candidate;
+    } else {
+      return null;
+    }
+  }
+  const buckets = 650;
   final tools = ref.watch(previewAudioToolsDirectoryProvider);
   final suffix = Platform.isWindows ? '.exe' : '';
   final probePath = '$tools/ffprobe$suffix';
   final decoderPath = '$tools/ffmpeg$suffix';
-  if (!await File(probePath).exists() || !await File(decoderPath).exists()) {
-    return null;
-  }
   Process? process;
   var disposed = false;
+  void setProgress(double value) {
+    if (disposed) return;
+    Future.microtask(() {
+      if (!disposed) {
+        final current = ref.read(sourcePreviewProgressProvider(path));
+        if (value > current || value <= 0.05) {
+          ref.read(sourcePreviewProgressProvider(path).notifier).state = value;
+        }
+      }
+    });
+  }
   ref.onDispose(() {
     disposed = true;
     process?.kill();
   });
+  setProgress(0.08);
+  if (!await File(probePath).exists() || !await File(decoderPath).exists()) {
+    final json = await ref
+        .read(platformAudioHostProvider)
+        .previewAudio(resolvedPath, buckets: buckets);
+    if (json == null || json.isEmpty) return null;
+    final data = jsonDecode(json) as Map<String, dynamic>;
+    final duration = (data['duration'] as num?)?.toDouble() ?? 0;
+    if (duration <= 0 || !duration.isFinite) return null;
+    final rawPeaks = (data['peaks'] as List?) ?? const [];
+    setProgress(1.0);
+    return SourceAudioPreview(
+      duration: duration,
+      sampleRate: (data['sampleRate'] as num?)?.toInt() ?? 0,
+      channels: (data['channels'] as num?)?.toInt() ?? 0,
+      bitDepth: (data['bitDepth'] as num?)?.toInt(),
+      peaks: [for (final v in rawPeaks) (v as num).toDouble()],
+    );
+  }
+  setProgress(0.14);
   final probe = await Process.run(probePath, [
     '-v',
     'error',
@@ -168,7 +247,7 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
     'stream=sample_rate,channels,bits_per_raw_sample,bits_per_sample:format=duration',
     '-of',
     'json',
-    path,
+    resolvedPath,
   ]);
   if (probe.exitCode != 0) {
     throw const FormatException('No se pudo leer el audio.');
@@ -177,7 +256,7 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
   final stream = (metadata['streams'] as List).first as Map<String, dynamic>;
   final duration = double.tryParse('${metadata['format']['duration']}') ?? 0;
   if (duration <= 0 || !duration.isFinite || disposed) return null;
-  const buckets = 650;
+  setProgress(0.24);
   final peaks = List<double>.filled(buckets * 2, 0);
   final expectedSamples = math.max(1.0, duration * 4000);
   process = await Process.start(decoderPath, [
@@ -185,7 +264,7 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
     'error',
     '-nostdin',
     '-i',
-    path,
+    resolvedPath,
     '-map',
     '0:a:0',
     '-ac',
@@ -200,6 +279,7 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
   final stderrDone = process.stderr.drain<void>();
   var sample = 0;
   var tail = <int>[];
+  var lastReported = 0.24;
   await for (final chunk in process.stdout) {
     final result = await compute(_accumulatePreview, (
       tail: tail,
@@ -212,6 +292,12 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
     peaks.setAll(0, result.$1);
     sample = result.$2;
     tail = result.$3;
+    final ratio = (0.24 + 0.74 * (sample / expectedSamples).clamp(0.0, 1.0))
+        .clamp(0.24, 0.98);
+    if ((ratio - lastReported) >= 0.015) {
+      lastReported = ratio;
+      setProgress(ratio);
+    }
   }
   final exitCode = await process.exitCode;
   await stderrDone;
@@ -219,6 +305,7 @@ final sourceAudioPreviewProvider = FutureProvider.autoDispose.family<
   if (exitCode != 0) {
     throw const FormatException('No se pudo generar la forma de onda.');
   }
+  setProgress(1.0);
   final rawBits = int.tryParse('${stream['bits_per_raw_sample']}') ?? 0;
   final bits =
       rawBits > 0 ? rawBits : int.tryParse('${stream['bits_per_sample']}');

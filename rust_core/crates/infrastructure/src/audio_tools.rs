@@ -97,27 +97,33 @@ pub struct AudioTools {
 impl AudioTools {
     pub fn discover() -> Result<Self, DomainError> {
         if let Some(path) = std::env::var_os("ATOMUSICATOR_FFMPEG") {
-            return Self::at(PathBuf::from(path));
-        }
-        if let Ok(executable) = std::env::current_exe()
-            && let Some(parent) = executable.parent()
-        {
-            let name = if cfg!(windows) {
-                "ffmpeg.exe"
-            } else {
-                "ffmpeg"
-            };
-            for path in [parent.join("audio-tools/bin").join(name), parent.join(name)] {
-                if path.is_file() {
-                    return Self::at(path);
-                }
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                return Err(io_error(format!(
+                    "ATOMUSICATOR_FFMPEG is not a file: {}",
+                    path.display()
+                )));
             }
+            return Self::at(path);
         }
-        // Development fallback; packaged builds always include their pinned tools.
-        Self::at(PathBuf::from("ffmpeg"))
+        if let Some(path) = pinned_ffmpeg_beside_host() {
+            return Self::at(path);
+        }
+        Ok(Self {
+            executable: PathBuf::new(),
+        })
+    }
+    /// Decoder and WAV writer used when no pinned FFmpeg binary is installed.
+    pub fn without_pinned_binary() -> Self {
+        Self {
+            executable: PathBuf::new(),
+        }
     }
     pub fn at(executable: PathBuf) -> Result<Self, DomainError> {
         Ok(Self { executable })
+    }
+    fn pinned(&self) -> bool {
+        self.executable.is_file()
     }
     pub fn pitch_runtime_signature(
         &self,
@@ -125,6 +131,8 @@ impl AudioTools {
     ) -> Result<String, DomainError> {
         let executable = if self.executable.is_file() {
             self.executable.clone()
+        } else if self.executable.as_os_str().is_empty() {
+            return Err(io_error("FFmpeg executable cannot be fingerprinted"));
         } else {
             let paths = std::env::var_os("PATH").ok_or_else(|| io_error("PATH is unavailable"))?;
             std::env::split_paths(&paths)
@@ -145,6 +153,14 @@ impl AudioTools {
         path: &Path,
         cancel: &CancellationToken,
     ) -> Result<AudioBufferF32, DomainError> {
+        if !self.pinned() {
+            let decoded = crate::symphonia_decode::decode_buffer(path, cancel)?;
+            let audio = crate::symphonia_decode::convert(&decoded, 44100, 2)?;
+            if audio.frames() == 0 {
+                return Err(DomainError::AudioDecodeFailure("audio is empty".into()));
+            }
+            return Ok(audio);
+        }
         let work = TemporaryDirectory::new(&std::env::temp_dir())?;
         let output = work.0.join("decoded.wav");
         self.run(
@@ -178,6 +194,14 @@ impl AudioTools {
         cancel: &CancellationToken,
     ) -> Result<crate::storage::float_spool::FloatSpool, DomainError> {
         let _timer = crate::job_diagnostics::StageTimer::new("decode_audio");
+        if !self.pinned() {
+            crate::symphonia_decode::write_spool(source, target, cancel)?;
+            return crate::storage::float_spool::FloatSpool::inspect_raw(
+                target.into(),
+                atomusicator_domain::AudioFormat::new(44100, 2)?,
+                cancel,
+            );
+        }
         self.run(
             &[
                 "-i".into(),
@@ -209,6 +233,11 @@ impl AudioTools {
         spec: PitchShiftSpec,
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
+        if !self.pinned() {
+            return Err(io_error(
+                "tempo-preserving pitch requires the pinned FFmpeg binary",
+            ));
+        }
         let filter = format!(
             "rubberband=pitch={:.12}:tempo=1.0:formant=shifted",
             2.0f64.powf(f64::from(spec.semitones()) / 12.0),
@@ -244,6 +273,9 @@ impl AudioTools {
         options: &ExportOptions,
         cancel: &CancellationToken,
     ) -> Result<(), DomainError> {
+        if !self.pinned() {
+            return self.export_without_ffmpeg(source, target, options);
+        }
         let mut args: Vec<std::ffi::OsString> = vec!["-i".into(), source.as_os_str().into()];
         if options.normalize {
             args.extend(["-af".into(), "loudnorm=I=-16:TP=-1:LRA=11".into()]);
@@ -280,6 +312,36 @@ impl AudioTools {
         }
         args.push(target.as_os_str().into());
         self.run(&args, target, cancel)
+    }
+    fn export_without_ffmpeg(
+        &self,
+        source: &Path,
+        target: &Path,
+        options: &ExportOptions,
+    ) -> Result<(), DomainError> {
+        if options.normalize {
+            return Err(io_error(
+                "loudnorm requires the pinned FFmpeg binary",
+            ));
+        }
+        match options.format.as_str() {
+            "wav" => {}
+            "flac" => {
+                return Err(io_error(
+                    "FLAC export requires the pinned FFmpeg binary",
+                ));
+            }
+            "mp3" => {
+                return Err(io_error(
+                    "MP3 export requires the pinned FFmpeg binary",
+                ));
+            }
+            _ => return Err(io_error("unsupported export format")),
+        }
+        let decoded = read_wav_f32(source)?;
+        let audio =
+            crate::symphonia_decode::convert(&decoded, options.sample_rate, options.channels)?;
+        crate::audio_io::wav_codec::write_export_wav(target, &audio, options.bit_depth)
     }
     fn run(
         &self,
@@ -381,4 +443,90 @@ impl AudioTools {
 }
 fn io_error(error: impl std::fmt::Display) -> DomainError {
     DomainError::AudioExportFailure(error.to_string())
+}
+
+fn ffmpeg_file_name() -> &'static str {
+    if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" }
+}
+
+/// Directory containing `libatomusicator_bootstrap_ffi.so`, read from a `/proc/self/maps` snapshot.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn directory_of_mapped_library(maps: &str, file_name: &str) -> Option<PathBuf> {
+    for line in maps.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 6 {
+            continue;
+        }
+        let path = parts[5..].join(" ");
+        if path.ends_with(file_name) {
+            return Path::new(&path).parent().map(Path::to_path_buf);
+        }
+    }
+    None
+}
+
+fn pinned_ffmpeg_beside_host() -> Option<PathBuf> {
+    let mut directories = Vec::new();
+    #[cfg(target_os = "android")]
+    if let Ok(maps) = fs::read_to_string("/proc/self/maps")
+        && let Some(directory) =
+            directory_of_mapped_library(&maps, "libatomusicator_bootstrap_ffi.so")
+    {
+        directories.push(directory);
+    }
+    #[cfg(not(target_os = "android"))]
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(parent) = executable.parent()
+    {
+        directories.push(parent.to_path_buf());
+    }
+    let name = ffmpeg_file_name();
+    for parent in &directories {
+        for path in [
+            parent.join("audio-tools").join("bin").join(name),
+            parent.join(name),
+            parent.join("libffmpeg.so"),
+        ] {
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    if let Some(path) = ffmpeg_on_path(name) {
+        return Some(path);
+    }
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+fn ffmpeg_on_path(name: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths).find_map(|directory| {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(test)]
+mod maps_tests {
+    use super::directory_of_mapped_library;
+
+    #[test]
+    fn maps_line_locates_the_android_bridge_beside_its_directory() {
+        let maps = "\
+00400000-00401000 r-xp 00000000 fd:00 1 /system/bin/app_process64\n\
+7b1000-7b2000 r-xp 00000000 fd:00 9 /data/app/~~x/lib/arm64/libatomusicator_bootstrap_ffi.so\n";
+        let directory = directory_of_mapped_library(maps, "libatomusicator_bootstrap_ffi.so")
+            .expect("library path");
+        assert!(
+            directory.ends_with("arm64"),
+            "{}",
+            directory.display()
+        );
+    }
 }

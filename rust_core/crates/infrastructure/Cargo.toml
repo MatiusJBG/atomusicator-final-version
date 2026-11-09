@@ -39,7 +39,6 @@ fs4.workspace = true
 memmap2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-reqwest.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["json"] }
 rtrb.workspace = true
@@ -47,6 +46,9 @@ cpal.workspace = true
 
 [build-dependencies]
 cc = "=1.10.0"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "=0.59.0", features = ["Win32_System_SystemInformation", "Win32_Foundation", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
@@ -61,3 +63,14 @@ ort = { workspace = true, features = ["coreml"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ort = { workspace = true, features = ["cuda"] }
+
+# CPU execution only. DirectML and CUDA are desktop providers and are not
+# linked into the phone package.
+[target.'cfg(target_os = "android")'.dependencies]
+# Prebuilt ONNX Runtime archives do not include aarch64-linux-android.
+# Drop download-binaries so the crate typechecks; place libonnxruntime.so
+# beside the bridge (ORT_LIB_LOCATION) when a pinned Android build exists.
+ort = { workspace = true, features = ["xnnpack"] }
+# The NDK has no OpenSSL. Keep the downloader on rustls so Android does not
+# vendor OpenSSL or require Perl.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }

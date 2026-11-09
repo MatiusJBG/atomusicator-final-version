@@ -128,6 +128,8 @@ dependencies = [
  "atomusicator-domain",
  "atomusicator-infrastructure",
  "flutter_rust_bridge",
+ "jni",
+ "ndk-context",
  "serde",
  "serde_json",
  "tokio",

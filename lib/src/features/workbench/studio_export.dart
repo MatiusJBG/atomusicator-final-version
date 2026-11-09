@@ -26,6 +26,20 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
           .map((t) => t.stemType)
           .where(ref.read(selectedStemTypesProvider).contains),
     );
+    if (Platform.isAndroid) {
+      _prepareAndroidDestination();
+    }
+  }
+
+  Future<void> _prepareAndroidDestination() async {
+    try {
+      final projectsDir = await native.projectsDirectory();
+      final exportsDir = Directory('${Directory(projectsDir).parent.path}/exports');
+      await exportsDir.create(recursive: true);
+      if (mounted && destination == null) {
+        setState(() => destination = exportsDir.path);
+      }
+    } catch (_) {}
   }
 
   Future<void> _chooseFolder() async {
@@ -228,7 +242,9 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
               const _FieldLabel('FORMATO'),
               Row(
                 children: [
-                  for (final value in ['wav', 'flac', 'mp3']) ...[
+                  for (final value in Platform.isAndroid
+                      ? const ['wav']
+                      : const ['wav', 'flac', 'mp3']) ...[
                     if (value != 'wav') const SizedBox(width: 10),
                     Expanded(
                       child: ChoiceChip(
@@ -350,20 +366,21 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                           ? null
                           : (v) => setState(() => includeMuted = v ?? true),
                 ),
-                CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'Normalizar volumen',
-                    style: TextStyle(fontSize: 11),
+                if (!Platform.isAndroid)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text(
+                      'Normalizar volumen',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    value: normalize,
+                    onChanged:
+                        state.busy
+                            ? null
+                            : (v) => setState(() => normalize = v ?? false),
                   ),
-                  value: normalize,
-                  onChanged:
-                      state.busy
-                          ? null
-                          : (v) => setState(() => normalize = v ?? false),
-                ),
                 const Text(
                   'El tono aplicado se incluye. La ganancia, el paneo y el master de escucha no modifican los archivos exportados.',
                   style: TextStyle(fontSize: 10, color: AppColors.muted),
@@ -410,9 +427,11 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                     ),
                   ],
                 ),
-                LinearProgressIndicator(
-                  value: completed ? 1 : state.job?.progress,
-                  minHeight: 5,
+                ParticleExportVisualizer(
+                  key: const ValueKey('export-particle-visualizer'),
+                  progress: completed ? 1.0 : (state.job?.progress ?? 0.0),
+                  selectedStems: exported,
+                  completed: completed,
                 ),
                 const SizedBox(height: 12),
                 if (state.error != null)
@@ -425,6 +444,45 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                   ),
               ],
               const SizedBox(height: 8),
+              if (completed && Platform.isAndroid && destination != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    onPressed: () async {
+                      final outDir = state.job?.outputDirectory ?? destination!;
+                      final files = <String>[];
+                      final dir = Directory(outDir);
+                      if (await dir.exists()) {
+                        await for (final entity in dir.list(
+                          recursive: true,
+                          followLinks: false,
+                        )) {
+                          if (entity is File &&
+                              !entity.path.endsWith('.json')) {
+                            files.add(entity.path);
+                          }
+                        }
+                      }
+                      if (!context.mounted) return;
+                      if (files.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No hay archivos exportados para compartir.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                      await ref.read(platformAudioHostProvider).shareFiles(files);
+                    },
+                    icon: const Icon(Icons.share_outlined),
+                    label: const Text('Compartir / Guardar archivos'),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(

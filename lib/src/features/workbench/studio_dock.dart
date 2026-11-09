@@ -3,46 +3,361 @@ part of 'studio_panels.dart';
 class StudioTransport extends ConsumerWidget {
   const StudioTransport({super.key});
   @override
-  Widget build(BuildContext context, WidgetRef ref) => LayoutBuilder(
-    builder: (context, box) {
-      final wide = box.maxWidth >= 1150;
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (isPhoneLayout(context) || isCompactLandscape(context)) {
+      return const _MobileStudioTransport();
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        final wide = box.maxWidth >= 1150;
+        return Container(
+          height: wide ? 184 : 222,
+          padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
+          decoration: const BoxDecoration(
+            color: Color(0xFF0E141B),
+            border: Border(top: BorderSide(color: Color(0xFF1A2531))),
+          ),
+          child:
+              wide
+                  ? const Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(flex: 33, child: _DockPlayback()),
+                      SizedBox(width: 24),
+                      Expanded(flex: 34, child: _PitchDockPanel()),
+                      SizedBox(width: 16),
+                      Expanded(flex: 37, child: _DockMaster()),
+                    ],
+                  )
+                  : const Column(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Expanded(child: _DockPlayback()),
+                            SizedBox(width: 20),
+                            Expanded(child: _DockMaster()),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      PitchControls(compact: true),
+                    ],
+                  ),
+        );
+      },
+    );
+  }
+}
+
+class _MobileStudioTransport extends ConsumerWidget {
+  const _MobileStudioTransport();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(studioProvider);
+    final controller = ref.read(studioProvider.notifier);
+    final enabled = state.session != null && !state.busy;
+    final compactLandscape = isCompactLandscape(context);
+
+    if (compactLandscape) {
       return Container(
-        height: wide ? 184 : 222,
-        padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: const BoxDecoration(
           color: Color(0xFF0E141B),
           border: Border(top: BorderSide(color: Color(0xFF1A2531))),
         ),
-        child:
-            wide
-                ? const Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 33, child: _DockPlayback()),
-                    SizedBox(width: 24),
-                    Expanded(flex: 34, child: _PitchDockPanel()),
-                    SizedBox(width: 16),
-                    Expanded(flex: 37, child: _DockMaster()),
-                  ],
-                )
-                : const Column(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(child: _DockPlayback()),
-                          SizedBox(width: 20),
-                          Expanded(child: _DockMaster()),
-                        ],
+        child: Row(
+          children: [
+            IconButton(
+              key: const ValueKey('transport-seek-0'),
+              tooltip: 'Ir al inicio',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: enabled ? () => controller.seek(0) : null,
+              icon: const Icon(Icons.restart_alt, size: 20),
+            ),
+            SizedBox(
+              width: 54,
+              height: 54,
+              child: IconButton.filled(
+                key: const ValueKey('transport-play-pause'),
+                tooltip: state.playing ? 'Pausar' : 'Reproducir',
+                style: IconButton.styleFrom(
+                  backgroundColor: AppColors.seaGlass,
+                  foregroundColor: const Color(0xFF04231F),
+                  minimumSize: const Size(54, 54),
+                ),
+                onPressed:
+                    enabled
+                        ? () => controller.transport(
+                          state.playing ? 'pause' : 'play',
+                        )
+                        : null,
+                icon: Icon(
+                  state.playing ? Icons.pause : Icons.play_arrow,
+                  size: 28,
+                ),
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('transport-stop'),
+              tooltip: 'Detener',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: enabled ? () => controller.transport('stop') : null,
+              icon: const Icon(Icons.stop_rounded, size: 20),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  overlayShape: SliderComponentShape.noOverlay,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
+                ),
+                child: Slider(
+                  key: const ValueKey('transport-scrub-slider'),
+                  value: state.position.clamp(0, state.duration),
+                  max: state.duration > 0 ? state.duration : 1,
+                  semanticFormatterCallback:
+                      (v) => 'Posición ${formatStudioTime(v)}',
+                  onChanged: enabled ? controller.seek : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${formatStudioTime(state.position)} / ${formatStudioTime(state.duration)}',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+                color: AppColors.muted,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: const ValueKey('transport-pitch'),
+              tooltip: 'Tono en vivo',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed:
+                  enabled
+                      ? () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const PitchDialog(),
+                      )
+                      : null,
+              icon: const Icon(Icons.tune, size: 20),
+            ),
+            IconButton(
+              key: const ValueKey('transport-master'),
+              tooltip: 'Volumen Master',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed:
+                  enabled
+                      ? () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const _MasterDialog(),
+                      )
+                      : null,
+              icon: const Icon(Icons.volume_up, size: 20),
+            ),
+            IconButton.filledTonal(
+              key: const ValueKey('transport-export'),
+              tooltip: 'Exportar stems',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed:
+                  enabled
+                      ? () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const ExportDialog(),
+                      )
+                      : null,
+              icon: const Icon(Icons.file_download_outlined, size: 20),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      height: 112,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0E141B),
+        border: Border(top: BorderSide(color: Color(0xFF1A2531))),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          SizedBox(
+            height: 34,
+            child: Row(
+              children: [
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      overlayShape: SliderComponentShape.noOverlay,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
                       ),
                     ),
-                    SizedBox(height: 12),
-                    PitchControls(compact: true),
-                  ],
+                    child: Slider(
+                      key: const ValueKey('transport-scrub-slider'),
+                      value: state.position.clamp(0, state.duration),
+                      max: state.duration > 0 ? state.duration : 1,
+                      semanticFormatterCallback:
+                          (v) => 'Posición ${formatStudioTime(v)}',
+                      onChanged: enabled ? controller.seek : null,
+                    ),
+                  ),
                 ),
-      );
-    },
-  );
+                const SizedBox(width: 8),
+                Text(
+                  '${formatStudioTime(state.position)} / ${formatStudioTime(state.duration)}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                    color: AppColors.muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                key: const ValueKey('transport-seek-0'),
+                tooltip: 'Ir al inicio',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                onPressed: enabled ? () => controller.seek(0) : null,
+                icon: const Icon(Icons.restart_alt, size: 20),
+              ),
+              SizedBox(
+                width: 54,
+                height: 54,
+                child: IconButton.filled(
+                  key: const ValueKey('transport-play-pause'),
+                  tooltip: state.playing ? 'Pausar' : 'Reproducir',
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.seaGlass,
+                    foregroundColor: const Color(0xFF04231F),
+                    minimumSize: const Size(54, 54),
+                  ),
+                  onPressed:
+                      enabled
+                          ? () => controller.transport(
+                            state.playing ? 'pause' : 'play',
+                          )
+                          : null,
+                  icon: Icon(
+                    state.playing ? Icons.pause : Icons.play_arrow,
+                    size: 30,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('transport-stop'),
+                tooltip: 'Detener',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                onPressed: enabled ? () => controller.transport('stop') : null,
+                icon: const Icon(Icons.stop_rounded, size: 20),
+              ),
+              IconButton(
+                key: const ValueKey('transport-pitch'),
+                tooltip: 'Tono en vivo',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                onPressed:
+                    enabled
+                        ? () => showDialog<void>(
+                          context: context,
+                          builder: (_) => const PitchDialog(),
+                        )
+                        : null,
+                icon: const Icon(Icons.tune, size: 20),
+              ),
+              IconButton(
+                key: const ValueKey('transport-master'),
+                tooltip: 'Volumen Master',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                onPressed:
+                    enabled
+                        ? () => showDialog<void>(
+                          context: context,
+                          builder: (_) => const _MasterDialog(),
+                        )
+                        : null,
+                icon: const Icon(Icons.volume_up, size: 20),
+              ),
+              IconButton.filledTonal(
+                key: const ValueKey('transport-export'),
+                tooltip: 'Exportar stems',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                onPressed:
+                    enabled
+                        ? () => showDialog<void>(
+                          context: context,
+                          builder: (_) => const ExportDialog(),
+                        )
+                        : null,
+                icon: const Icon(Icons.file_download_outlined, size: 20),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MasterDialog extends ConsumerWidget {
+  const _MasterDialog();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(studioProvider);
+    final enabled = state.session != null && !state.busy;
+    return AlertDialog(
+      title: const Text('Volumen Master'),
+      content: SizedBox(
+        width: 280,
+        height: 100,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                const Text('Ganancia'),
+                const Spacer(),
+                Text('${(state.master * 100).round()}%'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Slider(
+              value: state.master.clamp(0.0, 2.0),
+              min: 0.0,
+              max: 2.0,
+              onChanged:
+                  enabled
+                      ? ref.read(studioProvider.notifier).setMaster
+                      : null,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    );
+  }
 }
 
 class _DockPlayback extends ConsumerWidget {
@@ -237,12 +552,29 @@ class _DockMaster extends ConsumerWidget {
                           color: AppColors.seaGlass.withValues(alpha: .18),
                         ),
                       ),
-                      child: Text(
-                        state.busy ? 'Procesando…' : '✓ Separación lista',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppColors.seaGlass,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (state.busy) ...[
+                            ParticleBurstLoader(
+                              size: 14,
+                              progress: state.job?.progress,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          Flexible(
+                            child: Text(
+                              state.busy
+                                  ? 'Procesando ${(state.job?.progress != null ? "${(state.job!.progress.clamp(0.0, 1.0) * 100).round()}%" : "…")}'
+                                  : '✓ Separación lista',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppColors.seaGlass,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),

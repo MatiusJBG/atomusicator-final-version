@@ -31,6 +31,7 @@ mod session_pool;
 pub mod session_reader;
 pub mod session_workspace;
 pub mod storage;
+pub mod symphonia_decode;
 pub mod use_case_adapters;
 pub mod waveform;
 pub mod waveform_index;

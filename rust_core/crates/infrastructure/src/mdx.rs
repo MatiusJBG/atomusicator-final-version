@@ -1,4 +1,4 @@
-//! Native MDX adapter for the four SHA-256 pinned legacy profiles.
+﻿//! Native MDX adapter for the four SHA-256 pinned legacy profiles.
 //! Tensor layout is [batch, L-real/L-imag/R-real/R-imag, frequency, time].
 use crate::{
     cache::ContentAddressedCache,
@@ -390,9 +390,21 @@ impl MdxInference {
         let chunk = c.chunk_frames();
         let trim = c.n_fft / 2;
         let generation = chunk - 2 * trim;
-        let pad = generation + trim - audio.frames() % generation;
+        let pad = if cfg!(target_os = "android") && audio.frames() <= generation {
+            generation - audio.frames() + trim
+        } else {
+            generation + trim - audio.frames() % generation
+        };
         let padded_frames = trim + audio.frames() + pad;
-        let step = (0.65 * chunk as f64) as usize;
+        let step = if cfg!(target_os = "android") && padded_frames <= chunk {
+            // A single window already covers the padded block; a smaller step would
+            // schedule a second window that is mostly zero padding.
+            chunk
+        } else if cfg!(target_os = "android") {
+            (0.80 * chunk as f64) as usize
+        } else {
+            (0.65 * chunk as f64) as usize
+        };
         let mut out = vec![0.0f32; padded_frames * 2];
         let mut weights = vec![0.0f32; padded_frames];
         // Normalize the input to unit peak and restore its amplitude afterwards.
@@ -551,12 +563,30 @@ impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
             .get(id)
             .ok_or_else(|| fail("verified MDX model is missing"))?;
         let c = MdxConfig::for_profile(id)?;
+        let _ = (path, c, _model_span);
+        self.infer_blocks_with_progress(stage, source, target, cancel, &|_, _| {})
+    }
+    fn infer_blocks_with_progress(
+        &self,
+        stage: atomusicator_application::ports::InferenceStage,
+        source: &dyn atomusicator_application::ports::AudioBlockSource,
+        target: &mut dyn atomusicator_application::ports::AudioBlockWriter,
+        cancel: &CancellationToken,
+        on_window: &dyn Fn(usize, usize),
+    ) -> Result<(), DomainError> {
+        let id = block_profile(stage);
+        let _model_span = tracing::info_span!("mdx", model_profile = id).entered();
+        let (path, _) = self
+            .models
+            .get(id)
+            .ok_or_else(|| fail("verified MDX model is missing"))?;
+        let c = MdxConfig::for_profile(id)?;
         let observe = |stage: &str, values: &[f32]| {
             if let Some(diagnostics) = &self.diagnostics {
                 diagnostics.record(&format!("{id}/{stage}"), values);
             }
         };
-        crate::mdx_bounded::run_bounded_mdx_reusing(
+        crate::mdx_bounded::run_bounded_mdx_reusing_with_progress(
             c,
             source,
             target,
@@ -575,6 +605,7 @@ impl atomusicator_application::ports::BlockStemInferencePort for MdxInference {
             self.diagnostics
                 .as_ref()
                 .map(|_| &observe as &dyn Fn(&str, &[f32])),
+            Some(on_window),
         )
     }
 }

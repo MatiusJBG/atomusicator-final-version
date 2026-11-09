@@ -1,5 +1,7 @@
 #[allow(unexpected_cfgs)]
 pub mod api;
+#[cfg(target_os = "android")]
+mod android_host;
 mod frb_generated;
 mod jobs;
 mod session_preparation;

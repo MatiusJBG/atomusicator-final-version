@@ -95,12 +95,16 @@ fn environment_value(name: &str) -> Result<Option<String>, InfrastructureError> 
 }
 fn validate_execution(options: ExecutionOptions) -> Result<(), InfrastructureError> {
     if options.device_id > i32::MAX as u32 {
-        Err(InfrastructureError::InvalidManifest(
+        return Err(InfrastructureError::InvalidManifest(
             "GPU device index exceeds i32".into(),
-        ))
-    } else {
-        Ok(())
+        ));
     }
+    if cfg!(target_os = "android") && options.mode != ExecutionMode::Cpu {
+        return Err(InfrastructureError::InvalidManifest(
+            "Android inference is CPU only".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Separate from project-path preferences to preserve their historical format.

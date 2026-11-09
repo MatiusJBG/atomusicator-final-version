@@ -38,11 +38,15 @@ class _PageViewport extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
       final minimum = minHeight * MediaQuery.textScalerOf(context).scale(1);
+      final phone = isPhoneLayout(context) || isCompactLandscape(context);
       return SingleChildScrollView(
         child: SizedBox(
           height: box.maxHeight < minimum ? minimum : box.maxHeight,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 26, 24, 24),
+            padding:
+                phone
+                    ? const EdgeInsets.fromLTRB(14, 10, 14, 14)
+                    : const EdgeInsets.fromLTRB(20, 26, 24, 24),
             child: child,
           ),
         ),
@@ -148,12 +152,25 @@ class _EmptyAtomizer extends StatelessWidget {
   );
 }
 
-class _DropInvitation extends StatelessWidget {
+class _DropInvitation extends ConsumerWidget {
   const _DropInvitation({required this.onImport, required this.dragging});
   final VoidCallback onImport;
   final bool dragging;
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final importState = ref.watch(fileImportStateProvider);
+    if (importState.importing) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: ParticleWaveIntakeLoader(
+          key: const ValueKey('local-file-import-particles'),
+          progress: importState.progress,
+          label: importState.label,
+          sublabel: 'Subida local a 0% de pérdida · Preparando forma de onda',
+        ),
+      );
+    }
+    return Center(
     child: SingleChildScrollView(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       child: Column(
@@ -234,6 +251,7 @@ class _DropInvitation extends StatelessWidget {
       ),
     ),
   );
+  }
 }
 
 class _InstructionCard extends StatelessWidget {
@@ -318,6 +336,7 @@ class _SourceReview extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(workbenchProvider);
     final selected = ref.watch(selectedStemTypesProvider);
+    final targetMode = ref.watch(separationTargetModeProvider);
     final preview = ref.watch(sourceAudioPreviewProvider(source.path));
     final audio = preview.valueOrNull;
     final available = ref.watch(nativeEngineStatusProvider).hasValue;
@@ -354,9 +373,9 @@ class _SourceReview extends ConsumerWidget {
             ),
           ),
         SizedBox(
-          height: 238,
+          height: isPhoneLayout(context) ? 168 : 238,
           child: _Panel(
-            padding: const EdgeInsets.all(18),
+            padding: EdgeInsets.all(isPhoneLayout(context) ? 14 : 18),
             child: Column(
               children: [
                 Row(
@@ -395,10 +414,39 @@ class _SourceReview extends ConsumerWidget {
                       _Tag(formatStudioTime(audio.duration)),
                       const SizedBox(width: 8),
                       _Tag(_audioMeta(audio.sampleRate, audio.channels)),
-                      if (audio.bitDepth != null) ...[
+                      if (!isPhoneLayout(context) && audio.bitDepth != null) ...[
                         const SizedBox(width: 8),
                         _Tag('${audio.bitDepth}-bit'),
                       ],
+                    ],
+                    if (isPhoneLayout(context)) ...[
+                      const SizedBox(width: 10),
+                      _CyanButton(
+                        label: targetMode == SeparationTargetMode.twoStems
+                            ? 'Separar (2 stems Â· ~8-10m)'
+                            : 'Separar (5 stems)',
+                        height: 40,
+                        onPressed:
+                            available && !busy && selected.isNotEmpty
+                                ? () {
+                                  ref
+                                      .read(separationFlowProvider.notifier)
+                                      .state = true;
+                                  ref
+                                      .read(separationResultProvider.notifier)
+                                      .state = false;
+                                  ref
+                                      .read(studioProvider.notifier)
+                                      .separate(
+                                        source.path,
+                                        allowDownload: true,
+                                        mode: targetMode == SeparationTargetMode.twoStems
+                                            ? 'two_stems'
+                                            : 'five_stems',
+                                      );
+                                }
+                                : null,
+                      ),
                     ],
                   ],
                 ),
@@ -426,12 +474,15 @@ class _SourceReview extends ConsumerWidget {
                                     ),
                                   ),
                       loading:
-                          () => const Center(
-                            child: SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                          () => ParticleWaveIntakeLoader(
+                            key: const ValueKey('waveform-preview-particles'),
+                            progress: ref.watch(
+                              sourcePreviewProgressProvider(source.path),
                             ),
+                            label:
+                                'Analizando archivo local y generando forma de onda…',
+                            sublabel: source.name,
+                            compact: isPhoneLayout(context),
                           ),
                       error:
                           (_, __) => const Center(
@@ -461,7 +512,7 @@ class _SourceReview extends ConsumerWidget {
                       ),
                     ),
                     Text(
-                      audio == null ? '—:—' : formatStudioTime(audio.duration),
+                      audio == null ? '--:--' : formatStudioTime(audio.duration),
                       style: const TextStyle(
                         fontSize: 9,
                         color: AppColors.muted,
@@ -485,37 +536,259 @@ class _SourceReview extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const _SectionLabel('MODO DE SEPARACIÓN'),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Elige la cantidad de stems según tu necesidad y tiempo disponible',
+                        style: TextStyle(fontSize: 10, color: AppColors.muted),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
-                          const Expanded(
-                            child: _SectionLabel('STEMS A GENERAR'),
+                          Expanded(
+                            child: InkWell(
+                              key: const ValueKey('mode-two-stems'),
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: busy
+                                  ? null
+                                  : () => ref
+                                      .read(separationTargetModeProvider.notifier)
+                                      .state = SeparationTargetMode.twoStems,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: targetMode == SeparationTargetMode.twoStems
+                                      ? AppColors.seaGlass.withValues(alpha: 0.12)
+                                      : const Color(0xFF0F181F),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: targetMode == SeparationTargetMode.twoStems
+                                        ? AppColors.seaGlass
+                                        : const Color(0xFF2A3A46),
+                                    width: targetMode == SeparationTargetMode.twoStems ? 1.5 : 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.bolt,
+                                          color: targetMode == SeparationTargetMode.twoStems
+                                              ? AppColors.seaGlass
+                                              : AppColors.muted,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            '2 Stems (Rápido)',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: targetMode == SeparationTargetMode.twoStems
+                                                  ? AppColors.text
+                                                  : AppColors.muted,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.seaGlass.withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                              isDesktopHost ? '~15-30 seg' : '~8-10 min',
+                                              style: const TextStyle(
+                                                  fontSize: 9,
+                                                  color: AppColors.seaGlass,
+                                                  fontWeight: FontWeight.bold)),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'Voz limpia unificada + Instrumental puro.',
+                                      style: TextStyle(fontSize: 10, color: AppColors.muted),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
-                          TextButton(
-                            onPressed:
-                                () =>
-                                    ref
-                                        .read(
-                                          selectedStemTypesProvider.notifier,
-                                        )
-                                        .state = stemNames.keys.toSet(),
-                            child: const Text(
-                              'Todos',
-                              style: TextStyle(fontSize: 10),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: InkWell(
+                              key: const ValueKey('mode-five-stems'),
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: busy
+                                  ? null
+                                  : () => ref
+                                      .read(separationTargetModeProvider.notifier)
+                                      .state = SeparationTargetMode.fiveStems,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: targetMode == SeparationTargetMode.fiveStems
+                                      ? AppColors.seaGlass.withValues(alpha: 0.12)
+                                      : const Color(0xFF0F181F),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: targetMode == SeparationTargetMode.fiveStems
+                                        ? AppColors.seaGlass
+                                        : const Color(0xFF2A3A46),
+                                    width: targetMode == SeparationTargetMode.fiveStems ? 1.5 : 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.equalizer,
+                                          color: targetMode == SeparationTargetMode.fiveStems
+                                              ? AppColors.seaGlass
+                                              : AppColors.muted,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            '5 Stems (Completo)',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: targetMode == SeparationTargetMode.fiveStems
+                                                  ? AppColors.text
+                                                  : AppColors.muted,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.amber.withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                              isDesktopHost ? '~1-2 min' : '30-40 min',
+                                              style: const TextStyle(
+                                                  fontSize: 9,
+                                                  color: Colors.amber,
+                                                  fontWeight: FontWeight.bold)),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'Voz principal, Coros, Batería, Bajo e Instrumental.',
+                                      style: TextStyle(fontSize: 10, color: AppColors.muted),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ],
                       ),
-                      const Text(
-                        '5 pistas independientes para tu mezcla',
-                        style: TextStyle(fontSize: 10, color: AppColors.muted),
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            for (final kind in stemNames.keys)
+                      if (targetMode == SeparationTargetMode.fiveStems) ...[
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 20),
+                              const SizedBox(width: 8),
                               Expanded(
-                                child: Padding(
+                                child: Text(
+                                  isDesktopHost
+                                      ? 'Modo Estudio Completo PC: Ejecuta las 4 pasadas neuronales completas en precisión FP32 con 0% de pérdida (~1 a 2 minutos con GPU DirectML o ~6 minutos en CPU).'
+                                      : 'Aviso importante: En teléfonos celulares este proceso realiza 4 pasadas neuronales y puede tomar entre 30 y 40 minutos dependiendo de la capacidad del dispositivo.',
+                                  style: const TextStyle(fontSize: 10, color: Colors.amber, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else ...[
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.seaGlass.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.seaGlass.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle_outline, color: AppColors.seaGlass, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  isDesktopHost
+                                      ? 'Modo Rápido PC: Separa en 1 sola pasada neuronal (Voz e Instrumental puro) con aceleración DirectML/AVX2 y 0% de pérdida de calidad (FP32) en ~15 a 30 segundos.'
+                                      : 'Modo Rápido: Separa en 1 sola pasada de estudio (Voz e Instrumental puro) con 0% de pérdida de calidad en ~8 a 10 minutos.',
+                                  style: const TextStyle(fontSize: 10, color: AppColors.seaGlass, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      Text(
+                        targetMode == SeparationTargetMode.twoStems
+                            ? 'PISTAS RESULTANTES (2 STEMS)'
+                            : 'PISTAS RESULTANTES (5 STEMS)',
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.muted),
+                      ),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: ListView(
+                          children: [
+                            if (targetMode == SeparationTargetMode.twoStems) ...[
+                              _Panel(
+                                color: const Color(0xFF0F181F),
+                                radius: 8,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                child: Row(
+                                  children: [
+                                    Icon(stemIcon('lead_vocal'), color: stemColor('lead_vocal'), size: 20),
+                                    const SizedBox(width: 10),
+                                    const Expanded(
+                                      child: Text('Voces completas (Principal y coros unificados limpios)',
+                                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              _Panel(
+                                color: const Color(0xFF0F181F),
+                                radius: 8,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                child: Row(
+                                  children: [
+                                    Icon(stemIcon('instrumental'), color: stemColor('instrumental'), size: 20),
+                                    const SizedBox(width: 10),
+                                    const Expanded(
+                                      child: Text('Instrumental limpio (Base musical sin voces)',
+                                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ] else ...[
+                              for (final kind in stemNames.keys)
+                                Padding(
                                   padding: const EdgeInsets.only(bottom: 6),
                                   child: _Panel(
                                     color: const Color(0xFF0F181F),
@@ -524,54 +797,30 @@ class _SourceReview extends ConsumerWidget {
                                     child: CheckboxListTile(
                                       value: selected.contains(kind),
                                       dense: true,
-                                      controlAffinity:
-                                          ListTileControlAffinity.leading,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                          ),
-                                      onChanged:
-                                          busy
-                                              ? null
-                                              : (checked) {
-                                                ref
-                                                    .read(
-                                                      selectedStemTypesProvider
-                                                          .notifier,
-                                                    )
-                                                    .state = checked == true
-                                                        ? {...selected, kind}
-                                                        : ({...selected}
-                                                          ..remove(kind));
-                                              },
+                                      controlAffinity: ListTileControlAffinity.leading,
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                      onChanged: busy
+                                          ? null
+                                          : (checked) {
+                                              ref.read(selectedStemTypesProvider.notifier).state =
+                                                  checked == true
+                                                      ? {...selected, kind}
+                                                      : ({...selected}..remove(kind));
+                                            },
                                       title: Row(
                                         children: [
-                                          Icon(
-                                            stemIcon(kind),
-                                            color: stemColor(kind),
-                                            size: 20,
-                                          ),
+                                          Icon(stemIcon(kind), color: stemColor(kind), size: 20),
                                           const SizedBox(width: 10),
-                                          Text(
-                                            _stemLabel(kind),
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
+                                          Text(_stemLabel(kind),
+                                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
                                         ],
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
+                            ],
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Las pistas elegidas se incluyen al exportar. El motor procesa los cinco stems.',
-                        style: TextStyle(fontSize: 9, color: AppColors.muted),
                       ),
                     ],
                   ),
@@ -599,9 +848,15 @@ class _SourceReview extends ConsumerWidget {
                             ? 'Por analizar'
                             : _audioMeta(audio.sampleRate, audio.channels),
                       ),
-                      const _SummaryLine(
+                      _SummaryLine(
                         'Duración estimada',
-                        'Depende del audio y tu equipo',
+                        isDesktopHost
+                            ? (targetMode == SeparationTargetMode.twoStems
+                                ? '~15-30 seg (GPU) / ~1.5 min (CPU)'
+                                : '~1-2 min (GPU) / ~6 min (CPU)')
+                            : (targetMode == SeparationTargetMode.twoStems
+                                ? '~8-10 min'
+                                : '~30-40 min'),
                       ),
                       const SizedBox(height: 14),
                       const Text(
@@ -614,7 +869,13 @@ class _SourceReview extends ConsumerWidget {
                       ),
                       const Spacer(),
                       _CyanButton(
-                        label: 'Separar ${selected.length} stems',
+                        label: targetMode == SeparationTargetMode.twoStems
+                            ? (isDesktopHost
+                                ? 'Separar en 2 stems (Rápido ~15-30 seg)'
+                                : 'Separar en 2 stems (Rápido ~8-10 min)')
+                            : (isDesktopHost
+                                ? 'Separar en 5 stems (Completo ~1-2 min)'
+                                : 'Separar en 5 stems (Completo ~30-40 min)'),
                         height: 54,
                         onPressed:
                             available && !busy && selected.isNotEmpty
@@ -627,7 +888,13 @@ class _SourceReview extends ConsumerWidget {
                                       .state = false;
                                   ref
                                       .read(studioProvider.notifier)
-                                      .separate(source.path);
+                                      .separate(
+                                        source.path,
+                                        allowDownload: !isDesktopHost,
+                                        mode: targetMode == SeparationTargetMode.twoStems
+                                            ? 'two_stems'
+                                            : 'five_stems',
+                                      );
                                 }
                                 : null,
                       ),

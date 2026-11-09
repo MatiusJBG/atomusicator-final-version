@@ -64,6 +64,16 @@ pub trait BlockStemInferencePort: Send + Sync {
         target: &mut dyn AudioBlockWriter,
         cancel: &CancellationToken,
     ) -> Result<(), DomainError>;
+    fn infer_blocks_with_progress(
+        &self,
+        stage: InferenceStage,
+        source: &dyn AudioBlockSource,
+        target: &mut dyn AudioBlockWriter,
+        cancel: &CancellationToken,
+        _on_window: &dyn Fn(usize, usize),
+    ) -> Result<(), DomainError> {
+        self.infer_blocks(stage, source, target, cancel)
+    }
 }
 
 pub trait AudioDecoderPort: Send + Sync {
@@ -261,6 +271,15 @@ pub trait SeparationStage: Send + Sync {
 
 pub trait SeparationProgressPort: Send + Sync {
     fn report(&self, completed_stages: u8, total_stages: u8, message: &str);
+    fn report_fraction(
+        &self,
+        completed_stages: u8,
+        total_stages: u8,
+        _stage_fraction: f32,
+        message: &str,
+    ) {
+        self.report(completed_stages, total_stages, message);
+    }
 }
 
 pub trait WaveformCachePort: Send + Sync {

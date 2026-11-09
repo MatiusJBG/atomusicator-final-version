@@ -59,7 +59,7 @@ pub fn publish_blocks<S: FnOnce(&Path) -> Result<(), String>, C: FnOnce() -> Res
     let record = serde_json::json!({"session_id":id,"source_path":asset.path,"file_name":asset.display_name,
         "duration_seconds":metadata.frame_count as f64/f64::from(metadata.format.sample_rate_hz),
         "sample_rate_hz":metadata.format.sample_rate_hz,"channels":metadata.format.channels,
-        "separation":{"state":"complete","engine":engine,"stems":records}});
+        "separation":{"state":"complete","status":"complete","engine":engine,"stems":records}});
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)

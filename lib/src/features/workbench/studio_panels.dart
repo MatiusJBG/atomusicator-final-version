@@ -7,8 +7,11 @@ import '../../../core/di/studio_controller.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/di/workbench_providers.dart';
 import '../../../core/di/desktop_studio_state.dart';
+import '../../../core/platform/platform_audio_host.dart';
+import '../../../core/platform/host_platform.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../rust_bridge/api.dart' as native;
+import 'particle_loading_widgets.dart';
 
 part 'studio_timeline.dart';
 part 'studio_dock.dart';
@@ -43,6 +46,30 @@ String formatStudioTime(double value) {
 final timelineZoomProvider = StateProvider<double>((ref) => 1);
 
 Future<void> openStudioFolder(BuildContext context, String directory) async {
+  if (Platform.isAndroid) {
+    final dir = Directory(directory);
+    final files = <String>[];
+    if (await dir.exists()) {
+      await for (final entity in dir.list(recursive: true, followLinks: false)) {
+        if (entity is File &&
+            (entity.path.endsWith('.wav') ||
+                entity.path.endsWith('.flac') ||
+                entity.path.endsWith('.mp3'))) {
+          files.add(entity.path);
+        }
+      }
+    }
+    if (files.isNotEmpty) {
+      await AndroidPlatformAudioHost().shareFiles(files);
+      return;
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Guardado en: $directory')));
+    }
+    return;
+  }
   try {
     if (Platform.isWindows) {
       await Process.start('explorer.exe', [directory]);
@@ -171,10 +198,17 @@ class StudioFeedback extends ConsumerWidget {
                                   ),
                                 ),
                                 TextButton(
-                                  onPressed:
-                                      () => ref
-                                          .read(studioProvider.notifier)
-                                          .resumeSavedJob(saved.id),
+                                  onPressed: () {
+                                    ref
+                                        .read(separationFlowProvider.notifier)
+                                        .state = true;
+                                    ref
+                                        .read(separationResultProvider.notifier)
+                                        .state = false;
+                                    ref
+                                        .read(studioProvider.notifier)
+                                        .resumeSavedJob(saved.id);
+                                  },
                                   child: const Text('Reanudar'),
                                 ),
                                 TextButton(
@@ -190,13 +224,23 @@ class StudioFeedback extends ConsumerWidget {
                       ),
                 ),
             if (state.busy) ...[
-              LinearProgressIndicator(
-                value: jobIsActive(job?.status) ? job!.progress : null,
+              ParticleProgressBar(
+                progress: jobIsActive(job?.status) ? job!.progress : null,
+                height: 6,
               ),
               Row(
                 children: [
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: ParticleBurstLoader(size: 16),
+                  ),
                   Expanded(
-                    child: Text(job?.message ?? 'Iniciando…', maxLines: 2),
+                    child: Text(
+                      job != null && jobIsActive(job.status)
+                          ? '${(job.progress.clamp(0.0, 1.0) * 100).round()} % · ${job.message}'
+                          : (job?.message ?? 'Iniciando…'),
+                      maxLines: 2,
+                    ),
                   ),
                   TextButton(
                     onPressed:
@@ -258,6 +302,10 @@ class StudioFeedback extends ConsumerWidget {
                                 ),
                           );
                           if (approved == true) {
+                            ref.read(separationFlowProvider.notifier).state =
+                                true;
+                            ref.read(separationResultProvider.notifier).state =
+                                false;
                             await ref
                                 .read(studioProvider.notifier)
                                 .separate(

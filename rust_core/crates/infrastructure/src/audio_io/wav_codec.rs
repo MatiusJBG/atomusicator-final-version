@@ -113,6 +113,55 @@ pub fn wav_metadata(path: &Path) -> Result<AudioAssetMetadata, DomainError> {
     Ok(WavBlockReader::open(path)?.metadata())
 }
 
+/// Writes 16/24-bit PCM or 32-bit float WAV without an external encoder.
+pub fn write_export_wav(
+    path: &Path,
+    audio: &AudioBufferF32,
+    bits_per_sample: u16,
+) -> Result<(), DomainError> {
+    if bits_per_sample == 32 {
+        return write_wav_f32(path, audio);
+    }
+    if !matches!(bits_per_sample, 16 | 24) {
+        return Err(DomainError::AudioExportFailure(
+            "supported WAV depths are 16-bit PCM, 24-bit PCM, and 32-bit float".into(),
+        ));
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| DomainError::AudioExportFailure(error.to_string()))?;
+    let spec = WavSpec {
+        channels: audio.format().channels,
+        sample_rate: audio.format().sample_rate_hz,
+        bits_per_sample,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec)
+        .map_err(|error| DomainError::AudioExportFailure(error.to_string()))?;
+    let scale = if bits_per_sample == 16 {
+        i16::MAX as f32
+    } else {
+        8_388_607.0
+    };
+    for sample in audio.samples() {
+        let sample = sample.clamp(-1.0, 1.0);
+        let result = if bits_per_sample == 16 {
+            writer.write_sample((sample * scale).round() as i16)
+        } else {
+            writer.write_sample((sample * scale).round() as i32)
+        };
+        result.map_err(|error| DomainError::AudioExportFailure(error.to_string()))?;
+    }
+    writer
+        .finalize()
+        .map_err(|error| DomainError::AudioExportFailure(error.to_string()))?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| DomainError::AudioExportFailure(error.to_string()))
+}
+
 /// Writes IEEE 754 float32 samples without clipping or quantization.
 pub fn write_wav_f32(path: &Path, audio: &AudioBufferF32) -> Result<(), DomainError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));

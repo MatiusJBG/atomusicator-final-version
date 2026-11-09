@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../platform/platform_audio_host.dart';
 import '../../src/rust_bridge/api.dart' as native;
 import 'native_engine_provider.dart';
 
@@ -292,8 +293,25 @@ class StudioController extends Notifier<StudioState> {
   StreamSubscription<native.UiJobDto>? _jobEvents;
   Timer? _playbackTimer;
   StudioGateway get _gateway => ref.read(studioGatewayProvider);
+  late final PlatformAudioHost _platformHost;
   @override
   StudioState build() {
+    _platformHost = ref.read(platformAudioHostProvider);
+    _platformHost.listenForEvents(
+      onAudioFocusEvent: (event, volumeScale) {
+        if (event == 'transient_loss' ||
+            event == 'permanent_loss' ||
+            event == 'noisy') {
+          transport('pause');
+        }
+      },
+      onTransportCommand: (action) {
+        transport(action);
+      },
+      onCancelSeparation: () {
+        cancel();
+      },
+    );
     listenSelf((previous, next) {
       if (next.playing && !next.busy) {
         _playbackTimer ??= Timer.periodic(
@@ -309,6 +327,7 @@ class StudioController extends Notifier<StudioState> {
       _disposed = true;
       _playbackTimer?.cancel();
       _jobEvents?.cancel();
+      _platformHost.listenForEvents();
     });
     return const StudioState();
   }
@@ -350,7 +369,7 @@ class StudioController extends Notifier<StudioState> {
             id: id,
             status: native.UiJobStatus.running,
             progress: 0,
-            message: 'Starting…',
+            message: 'Startingâ€¦',
           ),
         );
         await _jobEvents?.cancel();
@@ -370,12 +389,28 @@ class StudioController extends Notifier<StudioState> {
     }, ownsBusy: true);
   }
 
-  Future<void> separate(String source, {bool allowDownload = false}) =>
-      _start(() => _gateway.separate(source, allowDownload));
+  Future<void> separate(
+    String source, {
+    bool allowDownload = false,
+    String? mode,
+  }) async {
+    final title = mode == 'two_stems'
+        ? 'Separando voz e instrumental (rápido)'
+        : 'Separando 5 stems (estudio completo)';
+    await _platformHost.startSeparationService(
+      title: title,
+    );
+    final targetSource = mode != null ? '$source#mode=$mode' : source;
+    await _start(() => _gateway.separate(targetSource, allowDownload));
+  }
 
   Future<void> _handleJobEvent(native.UiJobDto job, int epoch) async {
     if (_disposed || epoch != _epoch || state.job?.id != job.id) return;
     try {
+      await _platformHost.updateSeparationProgress(
+        progress: (job.progress * 100).toInt().clamp(0, 100),
+        status: job.message,
+      );
       if (job.status == native.UiJobStatus.completed && job.session != null) {
         await _accept(job.session!, epoch);
       }
@@ -386,7 +421,11 @@ class StudioController extends Notifier<StudioState> {
         error: job.status == native.UiJobStatus.failed ? job.message : null,
         exportDirectory: job.outputDirectory,
       );
+      if (!jobIsActive(job.status)) {
+        await _platformHost.stopSeparationService();
+      }
     } catch (error) {
+      await _platformHost.stopSeparationService();
       if (!_disposed && epoch == _epoch) {
         state = state.copyWith(busy: false, error: error.toString());
       }
@@ -486,6 +525,7 @@ class StudioController extends Notifier<StudioState> {
     await _guard(() async {
       try {
         await _gateway.cancel(id);
+        await _platformHost.stopSeparationService();
       } catch (_) {
         if (!_disposed && state.job?.id == id) {
           state = state.copyWith(cancelling: false);
@@ -514,6 +554,12 @@ class StudioController extends Notifier<StudioState> {
     _playbackRevision++;
     state = state.copyWith(busy: true);
     await _guard(() async {
+      await _platformHost.setPlaybackActive(false);
+      await _platformHost.updatePlaybackState(
+        isPlaying: false,
+        title: 'Atomusicator',
+      );
+      await _platformHost.stopSeparationService();
       await _gateway.close();
       if (_disposed || epoch != _epoch) return;
       _pitchGeneration++;
@@ -624,12 +670,50 @@ class StudioController extends Notifier<StudioState> {
     _playbackRevision++;
     _commands++;
     try {
+      final trackTitle = state.session?.name ?? 'Atomusicator';
       if (action == 'play') {
+        final granted = await _platformHost.setPlaybackActive(true);
+        if (!granted) {
+          if (!_disposed) {
+            state = state.copyWith(
+              playing: false,
+              error: 'Otra aplicaciÃ³n estÃ¡ usando el audio.',
+            );
+          }
+          return;
+        }
         if (state.position >= state.duration) await _gateway.seek(0);
-        await _gateway.play();
+        try {
+          await _gateway.play();
+          await _platformHost.updatePlaybackState(
+            isPlaying: true,
+            title: trackTitle,
+          );
+        } catch (error) {
+          await _platformHost.setPlaybackActive(false);
+          await _platformHost.updatePlaybackState(
+            isPlaying: false,
+            title: trackTitle,
+          );
+          rethrow;
+        }
       }
-      if (action == 'pause') await _gateway.pause();
-      if (action == 'stop') await _gateway.stop();
+      if (action == 'pause') {
+        await _gateway.pause();
+        await _platformHost.setPlaybackActive(false);
+        await _platformHost.updatePlaybackState(
+          isPlaying: false,
+          title: trackTitle,
+        );
+      }
+      if (action == 'stop') {
+        await _gateway.stop();
+        await _platformHost.setPlaybackActive(false);
+        await _platformHost.updatePlaybackState(
+          isPlaying: false,
+          title: trackTitle,
+        );
+      }
     } finally {
       _commands--;
     }

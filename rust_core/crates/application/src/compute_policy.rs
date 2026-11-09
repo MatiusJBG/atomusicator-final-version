@@ -31,22 +31,64 @@ impl std::str::FromStr for ComputeProfile {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComputeLimits {
+    pub eco: usize,
+    pub balanced: usize,
+    pub throughput: usize,
+}
+impl ComputeLimits {
+    pub fn desktop() -> Self {
+        Self {
+            eco: 2,
+            balanced: 6,
+            throughput: 12,
+        }
+    }
+    pub fn mobile() -> Self {
+        Self {
+            eco: 2,
+            balanced: 4,
+            throughput: 4,
+        }
+    }
+    pub fn limit_for(&self, profile: ComputeProfile) -> usize {
+        match profile {
+            ComputeProfile::Eco => self.eco,
+            ComputeProfile::Balanced => self.balanced,
+            ComputeProfile::Throughput => self.throughput,
+        }
+    }
+}
+impl Default for ComputeLimits {
+    fn default() -> Self {
+        Self::desktop()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ComputeBudget {
     threads: usize,
 }
 impl ComputeBudget {
     pub fn interactive(logical_cpus: usize) -> Self {
-        Self::for_profile(ComputeProfile::Balanced, logical_cpus, false)
+        Self::interactive_with_limits(logical_cpus, ComputeLimits::desktop())
+    }
+    pub fn interactive_with_limits(logical_cpus: usize, limits: ComputeLimits) -> Self {
+        Self::for_profile_with_limits(ComputeProfile::Balanced, logical_cpus, false, limits)
     }
     /// Conservative host limits. Playback changes apply at the next inference
     /// boundary; they never interrupt a running model or the audio callback.
     pub fn for_profile(profile: ComputeProfile, logical_cpus: usize, playing: bool) -> Self {
-        let limit = match profile {
-            ComputeProfile::Eco => 2,
-            ComputeProfile::Balanced => 6,
-            ComputeProfile::Throughput => 12,
-        };
+        Self::for_profile_with_limits(profile, logical_cpus, playing, ComputeLimits::desktop())
+    }
+    pub fn for_profile_with_limits(
+        profile: ComputeProfile,
+        logical_cpus: usize,
+        playing: bool,
+        limits: ComputeLimits,
+    ) -> Self {
+        let limit = limits.limit_for(profile);
         let mut threads = logical_cpus.saturating_sub(2).clamp(1, limit);
         if playing {
             threads = Self::playback_limit(threads, logical_cpus);

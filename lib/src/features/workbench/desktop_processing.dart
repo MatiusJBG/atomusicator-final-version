@@ -2,6 +2,40 @@ part of 'audio_workbench.dart';
 
 class _SeparationProgress extends ConsumerWidget {
   const _SeparationProgress();
+
+  /// Calcula el progreso individual y progresivo de cada stem para que vayan
+  /// cargando poco a poco en orden natural (como las etapas reales del motor)
+  /// en lugar de avanzar todos idénticos al mismo tiempo.
+  static double _stemStageProgress(
+    String kind,
+    double totalProgress,
+    bool isTwoStems,
+  ) {
+    final p = totalProgress.clamp(0.0, 1.0);
+    if (isTwoStems) {
+      return switch (kind) {
+        // Voz principal se extrae primero en la pasada MDX
+        'lead_vocal' => ((p - 0.04) / 0.78).clamp(0.0, 1.0),
+        // Instrumental se consolida y valida por resta de fase exacta a continuación
+        'instrumental' => ((p - 0.18) / 0.82).clamp(0.0, 1.0),
+        _ => p,
+      };
+    }
+    return switch (kind) {
+      // Pasada 1: Separación vocal principal (0% -> 34%)
+      'lead_vocal' => ((p - 0.02) / 0.34).clamp(0.0, 1.0),
+      // Pasada 2: Separación de coros KARA_2 (22% -> 54%)
+      'backing_vocals' => ((p - 0.22) / 0.32).clamp(0.0, 1.0),
+      // Pasada 3: Separación de batería (44% -> 74%)
+      'drums' => ((p - 0.44) / 0.30).clamp(0.0, 1.0),
+      // Pasada 4: Separación de bajo (64% -> 90%)
+      'bass' => ((p - 0.64) / 0.26).clamp(0.0, 1.0),
+      // Consolidación y reconstrucción de instrumental (76% -> 100%)
+      'instrumental' => ((p - 0.76) / 0.24).clamp(0.0, 1.0),
+      _ => p,
+    };
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
@@ -10,9 +44,12 @@ class _SeparationProgress extends ConsumerWidget {
         source == null
             ? null
             : ref.watch(sourceAudioPreviewProvider(source.path)).valueOrNull;
+    final targetMode = ref.watch(separationTargetModeProvider);
+    final isTwoStems = targetMode == SeparationTargetMode.twoStems;
     final progress = (state.job?.progress ?? 0).clamp(0.0, 1.0);
-    final stage =
-        progress < .15
+    final stage = isTwoStems
+        ? (progress < .15 ? 0 : progress < .85 ? 1 : 2)
+        : (progress < .15
             ? 0
             : progress < .43
             ? 1
@@ -20,14 +57,23 @@ class _SeparationProgress extends ConsumerWidget {
             ? 2
             : progress < .95
             ? 3
-            : 4;
-    const stages = [
-      ('Analizando el audio', 'Duración, canales y nivel de entrada'),
-      ('Detectando voces', 'Separando voz principal y coros'),
-      ('Separando los instrumentos', 'Batería, bajo e instrumental'),
-      ('Validando reconstrucción', 'Comprobando la alineación de las pistas'),
-      ('Verificando y generando stems', 'Guardando los archivos finales'),
-    ];
+            : 4);
+    final stages = isTwoStems
+        ? const [
+            ('Analizando el audio', 'Decodificando mezcla a 44.1 kHz estéreo'),
+            ('Aislando voz e instrumental', 'Separación neuronal de alta fidelidad (0% pérdida)'),
+            ('Validando y generando stems', 'Reconstrucción perfecta y guardado de pistas'),
+          ]
+        : const [
+            ('Analizando el audio', 'Duración, canales y nivel de entrada'),
+            ('Detectando voces', 'Separando voz principal y coros'),
+            ('Separando los instrumentos', 'Batería, bajo e instrumental'),
+            ('Validando reconstrucción', 'Comprobando la alineación de las pistas'),
+            ('Verificando y generando stems', 'Guardando los archivos finales'),
+          ];
+    final activeStems = isTwoStems
+        ? const ['lead_vocal', 'instrumental']
+        : stemNames.keys.toList();
     return _PageViewport(
       minHeight: 720,
       child: Column(
@@ -49,12 +95,10 @@ class _SeparationProgress extends ConsumerWidget {
                         Expanded(
                           child:
                               preview == null
-                                  ? const Center(
-                                    child: Icon(
-                                      Icons.graphic_eq,
-                                      size: 60,
-                                      color: AppColors.muted,
-                                    ),
+                                  ? ParticleWaveIntakeLoader(
+                                    progress: progress,
+                                    label: 'Procesando mezcla de entrada…',
+                                    compact: true,
                                   )
                                   : CustomPaint(
                                     painter: _AudioPreviewPainter(
@@ -66,12 +110,13 @@ class _SeparationProgress extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 36),
-                    child: Icon(
-                      Icons.call_split,
-                      size: 44,
-                      color: AppColors.seaGlass,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: ParticleStemSplitterHero(
+                      key: const ValueKey('particle-stem-splitter-hero'),
+                      progress: progress,
+                      activeStems: activeStems,
+                      stageLabel: stages[stage].$1,
                     ),
                   ),
                   Expanded(
@@ -79,9 +124,9 @@ class _SeparationProgress extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const _SectionLabel('SALIDA · 5 STEMS'),
+                        _SectionLabel(isTwoStems ? 'SALIDA · 2 STEMS' : 'SALIDA · 5 STEMS'),
                         const SizedBox(height: 14),
-                        for (final kind in stemNames.keys)
+                        for (final kind in activeStems)
                           Expanded(
                             child: Row(
                               children: [
@@ -96,13 +141,18 @@ class _SeparationProgress extends ConsumerWidget {
                                   ),
                                 ),
                                 Expanded(
-                                  child: LinearProgressIndicator(
-                                    value: progress,
+                                  child: ParticleProgressBar(
+                                    key: ValueKey('stem-particle-bar-$kind'),
+                                    progress: _stemStageProgress(
+                                      kind,
+                                      progress,
+                                      isTwoStems,
+                                    ),
                                     color: stemColor(kind),
                                     backgroundColor: stemColor(
                                       kind,
                                     ).withValues(alpha: .07),
-                                    minHeight: 3,
+                                    height: 5,
                                   ),
                                 ),
                               ],
@@ -123,7 +173,7 @@ class _SeparationProgress extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Etapa ${stage + 1} de 5 · ${stages[stage].$1}',
+                      'Etapa ${stage + 1} de ${stages.length} · ${stages[stage].$1}',
                       style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -131,7 +181,7 @@ class _SeparationProgress extends ConsumerWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '${(progress * 100).round()} % completado · puedes minimizar la ventana',
+                      '${(progress * 100).round()} % completado · ${state.job?.message ?? "puedes minimizar la ventana"}',
                       style: const TextStyle(
                         fontSize: 11,
                         color: AppColors.muted,
@@ -151,7 +201,12 @@ class _SeparationProgress extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 16),
-          LinearProgressIndicator(value: progress, minHeight: 6),
+          ParticleProgressBar(
+            key: const ValueKey('separation-main-particle-bar'),
+            progress: progress,
+            height: 8,
+            showPercentageSpark: true,
+          ),
           const SizedBox(height: 24),
           Expanded(
             child: Row(
@@ -169,31 +224,45 @@ class _SeparationProgress extends ConsumerWidget {
                           Expanded(
                             child: Row(
                               children: [
-                                CircleAvatar(
-                                  radius: 15,
-                                  backgroundColor:
-                                      i <= stage
-                                          ? AppColors.seaGlass.withValues(
-                                            alpha: .10,
-                                          )
-                                          : AppColors.canvas,
-                                  child:
-                                      i < stage
-                                          ? const Icon(
-                                            Icons.check,
-                                            size: 16,
-                                            color: AppColors.seaGlass,
-                                          )
-                                          : Text(
-                                            '${i + 1}',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color:
-                                                  i == stage
-                                                      ? AppColors.seaGlass
-                                                      : AppColors.muted,
-                                            ),
-                                          ),
+                                SizedBox(
+                                  width: 34,
+                                  height: 34,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      if (i == stage)
+                                        ParticleBurstLoader(
+                                          size: 34,
+                                          progress: progress,
+                                        ),
+                                      CircleAvatar(
+                                        radius: 13,
+                                        backgroundColor:
+                                            i <= stage
+                                                ? AppColors.seaGlass.withValues(
+                                                  alpha: .10,
+                                                )
+                                                : AppColors.canvas,
+                                        child:
+                                            i < stage
+                                                ? const Icon(
+                                                  Icons.check,
+                                                  size: 15,
+                                                  color: AppColors.seaGlass,
+                                                )
+                                                : Text(
+                                                  '${i + 1}',
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color:
+                                                        i == stage
+                                                            ? AppColors.seaGlass
+                                                            : AppColors.muted,
+                                                  ),
+                                                ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(width: 14),
                                 Expanded(
@@ -418,8 +487,11 @@ class _SeparationResult extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 22),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 10,
             children: [
               _CyanButton(
                 label: 'Abrir mezclador',
@@ -430,7 +502,6 @@ class _SeparationResult extends ConsumerWidget {
                         ref.read(studioViewProvider.notifier).state =
                             StudioView.mixer,
               ),
-              const SizedBox(width: 16),
               OutlinedButton.icon(
                 onPressed:
                     () => showDialog<void>(
@@ -440,7 +511,6 @@ class _SeparationResult extends ConsumerWidget {
                 icon: const Icon(Icons.file_download_outlined, size: 17),
                 label: const Text('Exportar stems'),
               ),
-              const SizedBox(width: 16),
               TextButton.icon(
                 onPressed: () => _showSessionFolder(context, session.directory),
                 icon: const Icon(Icons.folder_open_outlined, size: 17),

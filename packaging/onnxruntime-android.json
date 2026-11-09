@@ -1,0 +1,11 @@
+{
+  "version": "1.20.0",
+  "platform": "android-arm64",
+  "provider": "com.microsoft.onnxruntime:onnxruntime-android",
+  "artifact": "onnxruntime-android-1.20.0.aar",
+  "artifact_url": "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.20.0/onnxruntime-android-1.20.0.aar",
+  "files": {
+    "libonnxruntime.so": "52329b7c8e5fcd5c1aa88b01093215faaef362e3f3d0e374cb8b10d1e4704677",
+    "lib/arm64-v8a/libonnxruntime.so": "52329b7c8e5fcd5c1aa88b01093215faaef362e3f3d0e374cb8b10d1e4704677"
+  }
+}

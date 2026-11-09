@@ -22,10 +22,19 @@ pub struct WorkspacePathPolicy {
 
 impl WorkspacePathPolicy {
     pub fn system_default() -> Result<Self, InfrastructureError> {
-        let base_dirs = BaseDirs::new().ok_or_else(|| {
-            InfrastructureError::InvalidManifest("local data directory is unavailable".into())
-        })?;
-        Ok(Self::from_local_data_dir(base_dirs.data_local_dir()))
+        #[cfg(target_os = "android")]
+        if let Some(files) = android_app_files_dir() {
+            return Ok(Self::from_local_data_dir(files));
+        }
+        if let Some(base_dirs) = BaseDirs::new() {
+            let local = base_dirs.data_local_dir();
+            if fs::create_dir_all(local).is_ok() {
+                return Ok(Self::from_local_data_dir(local));
+            }
+        }
+        Err(InfrastructureError::InvalidManifest(
+            "local data directory is unavailable".into(),
+        ))
     }
 
     /// Constructor for deterministic tests and callers with an explicit OS data directory.
@@ -148,4 +157,26 @@ impl WorkspacePathPolicy {
         path.canonicalize()
             .map_err(|error| InfrastructureError::io(path, error))
     }
+}
+
+/// Android often has no `HOME`, so `directories::BaseDirs` cannot see app storage.
+/// `MainActivity.nativeInit` publishes `getFilesDir()` before Flutter starts.
+#[cfg(target_os = "android")]
+fn android_app_files_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ATOMUSICATOR_APP_DATA") {
+        let path = PathBuf::from(path);
+        if fs::create_dir_all(&path).is_ok() {
+            return Some(path);
+        }
+    }
+    for candidate in [
+        "/data/user/0/com.matiusjbg.atomusicator/files",
+        "/data/data/com.matiusjbg.atomusicator/files",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    None
 }

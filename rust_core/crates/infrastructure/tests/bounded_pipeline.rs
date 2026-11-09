@@ -197,6 +197,64 @@ fn bounded_pipeline_preserves_vad_residual_order_and_reuses_verified_stages() {
 }
 
 #[test]
+fn two_stems_mode_executes_single_pass_and_preserves_zero_loss_null_test() {
+    use atomusicator_application::use_cases::bounded_separation::SeparationMode;
+    use atomusicator_domain::StemType;
+    let root = TemporaryDirectory::new(&std::env::temp_dir()).unwrap();
+    let store = FloatSpoolStore::new(root.0.clone());
+    let frames = 44100 * 2;
+    let format = AudioFormat::new(44100, 2).unwrap();
+    let samples: Vec<f32> = (0..frames * 2)
+        .map(|i| (i as f32 * 0.073).sin() * 0.65)
+        .collect();
+    let mut writer = store
+        .create(
+            "source",
+            AudioAssetMetadata {
+                format,
+                frame_count: frames as u64,
+            },
+        )
+        .unwrap();
+    writer.write(&samples).unwrap();
+    let source = writer.finish().unwrap();
+    let cancel = CancellationToken::default();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let bounded = BoundedSeparation::new(Inference(Arc::clone(&calls)), Progress, Gate, store)
+        .with_separation_mode(SeparationMode::TwoStems);
+    let outputs = bounded.execute(Arc::clone(&source), &cancel).unwrap();
+    // Only 1 neural pass (VocalBus) is executed in TwoStems mode.
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let mut vocal = vec![0.0; samples.len()];
+    let mut inst = vec![0.0; samples.len()];
+    let mut backing = vec![0.0; samples.len()];
+    let mut drums = vec![0.0; samples.len()];
+    let mut bass = vec![0.0; samples.len()];
+    outputs[&StemType::LeadVocal]
+        .read_frames(0, &mut vocal)
+        .unwrap();
+    outputs[&StemType::Instrumental]
+        .read_frames(0, &mut inst)
+        .unwrap();
+    outputs[&StemType::BackingVocals]
+        .read_frames(0, &mut backing)
+        .unwrap();
+    outputs[&StemType::Drums]
+        .read_frames(0, &mut drums)
+        .unwrap();
+    outputs[&StemType::Bass].read_frames(0, &mut bass).unwrap();
+    assert!(backing.iter().all(|&v| v == 0.0));
+    assert!(drums.iter().all(|&v| v == 0.0));
+    assert!(bass.iter().all(|&v| v == 0.0));
+    // Verify 0% loss mathematical phase cancellation: Mix == Vocal + Instrumental
+    for i in 0..samples.len() {
+        let reconstructed = vocal[i] + inst[i] + backing[i] + drums[i] + bass[i];
+        let diff = (samples[i] - reconstructed).abs();
+        assert!(diff <= 1e-6, "sample {i} deviation {diff}");
+    }
+}
+
+#[test]
 #[ignore = "requires the four manifest-verified local ONNX models"]
 fn bounded_real_models_match_the_frozen_memory_pipeline() {
     use atomusicator_infrastructure::{

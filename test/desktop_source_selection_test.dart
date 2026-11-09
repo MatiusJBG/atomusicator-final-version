@@ -72,10 +72,13 @@ void main() {
             .selected,
         isTrue,
       );
-      await tester.ensureVisible(find.text('Separar 5 stems'));
-      await tester.tap(find.text('Separar 5 stems'));
+      await tester.ensureVisible(find.textContaining('Separar en 5 stems'));
+      await tester.tap(find.textContaining('Separar en 5 stems'));
       await tester.pump();
-      expect(gateway.calls, contains('separate:/second.flac:false'));
+      expect(
+        gateway.calls,
+        contains('separate:/second.flac#mode=five_stems:false'),
+      );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();

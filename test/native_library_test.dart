@@ -32,6 +32,31 @@ void main() {
     );
   });
 
+  test('android opens the bridge by soname from the APK', () {
+    expect(
+      nativeLibraryFileName(operatingSystem: 'android'),
+      'libatomusicator_bootstrap_ffi.so',
+    );
+    expect(
+      firstExistingNativeLibrary(
+        operatingSystem: 'android',
+        environment: const {},
+        executableDirectory: r'/data/app',
+        workingDirectory: r'/data/user/0',
+        exists: (_) => false,
+      ),
+      'libatomusicator_bootstrap_ffi.so',
+    );
+    expect(
+      requireNativeLibrary(
+        operatingSystem: 'android',
+        environment: const {},
+        exists: (_) => false,
+      ),
+      'libatomusicator_bootstrap_ffi.so',
+    );
+  });
+
   test('explains a missing bridge instead of opening a stale path', () {
     expect(
       () => requireNativeLibrary(

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/native_engine_provider.dart';
 import '../../../core/di/studio_controller.dart';
 import '../../rust_bridge/api.dart' as native;
+import 'particle_loading_widgets.dart';
 
 abstract class CacheSettingsGateway {
   Future<native.UiCacheSettingsDto> read();
@@ -70,7 +71,7 @@ class _CacheSettingsPanelState extends ConsumerState<CacheSettingsPanel> {
     return ref
         .watch(cacheSettingsProvider)
         .when(
-          loading: () => const LinearProgressIndicator(),
+          loading: () => const ParticleProgressBar(),
           error:
               (_, _) => TextButton(
                 onPressed: () => ref.invalidate(cacheSettingsProvider),

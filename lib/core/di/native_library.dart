@@ -1,19 +1,30 @@
 import 'dart:io';
 
 /// Resolves `atomusicator_bootstrap_ffi` without hardcoded developer paths.
-String nativeLibraryFileName() => switch (Platform.operatingSystem) {
-  'windows' => 'atomusicator_bootstrap_ffi.dll',
-  'macos' => 'libatomusicator_bootstrap_ffi.dylib',
-  _ => 'libatomusicator_bootstrap_ffi.so',
-};
+String nativeLibraryFileName({String? operatingSystem}) {
+  final system = operatingSystem ?? Platform.operatingSystem;
+  return switch (system) {
+    'windows' => 'atomusicator_bootstrap_ffi.dll',
+    'macos' => 'libatomusicator_bootstrap_ffi.dylib',
+    _ => 'libatomusicator_bootstrap_ffi.so',
+  };
+}
+
+/// Android loads the bridge from the APK by soname. Desktop still searches paths.
+bool nativeLibraryOpensByName({String? operatingSystem}) =>
+    (operatingSystem ?? Platform.operatingSystem) == 'android';
 
 String? firstExistingNativeLibrary({
+  String? operatingSystem,
   Map<String, String>? environment,
   String? executableDirectory,
   String? workingDirectory,
   bool Function(String path)? exists,
 }) {
-  final name = nativeLibraryFileName();
+  final name = nativeLibraryFileName(operatingSystem: operatingSystem);
+  if (nativeLibraryOpensByName(operatingSystem: operatingSystem)) {
+    return name;
+  }
   final sep = Platform.pathSeparator;
   final env = environment ?? Platform.environment;
   final exeDir =
@@ -35,12 +46,14 @@ String? firstExistingNativeLibrary({
 }
 
 String requireNativeLibrary({
+  String? operatingSystem,
   Map<String, String>? environment,
   String? executableDirectory,
   String? workingDirectory,
   bool Function(String path)? exists,
 }) {
   final path = firstExistingNativeLibrary(
+    operatingSystem: operatingSystem,
     environment: environment,
     executableDirectory: executableDirectory,
     workingDirectory: workingDirectory,
@@ -48,7 +61,7 @@ String requireNativeLibrary({
   );
   if (path != null) return path;
   throw StateError(
-    'No se encontró ${nativeLibraryFileName()}. '
+    'No se encontró ${nativeLibraryFileName(operatingSystem: operatingSystem)}. '
     'Coloca la DLL junto al ejecutable o define ATOMUSICATOR_NATIVE_LIBRARY. '
     'Un `flutter run` sin `packaging/build_windows.ps1 -PrepareDebug` no copia el puente Rust.',
   );

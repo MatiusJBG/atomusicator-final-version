@@ -71,3 +71,92 @@ fn concurrent_branches_share_one_budget_instead_of_multiplying_it() {
     assert!(budget.threads_for_branches(0).is_err());
     assert!(budget.threads_for_branches(7).is_err());
 }
+
+#[test]
+fn compute_limits_defaults_and_profiles_are_bounded() {
+    use atomusicator_application::compute_policy::{ComputeLimits, ComputeProfile};
+
+    let desktop = ComputeLimits::desktop();
+    assert_eq!(desktop.eco, 2);
+    assert_eq!(desktop.balanced, 6);
+    assert_eq!(desktop.throughput, 12);
+    assert_eq!(desktop, ComputeLimits::default());
+
+    let mobile = ComputeLimits::mobile();
+    assert_eq!(mobile.eco, 2);
+    assert_eq!(mobile.balanced, 4);
+    assert_eq!(mobile.throughput, 4);
+
+    assert_eq!(mobile.limit_for(ComputeProfile::Eco), 2);
+    assert_eq!(mobile.limit_for(ComputeProfile::Balanced), 4);
+    assert_eq!(mobile.limit_for(ComputeProfile::Throughput), 4);
+}
+
+#[test]
+fn mobile_compute_limits_cap_heterogeneous_core_usage() {
+    use atomusicator_application::compute_policy::{ComputeLimits, ComputeProfile};
+
+    let mobile = ComputeLimits::mobile();
+    for cpus in [1, 2, 4, 8, 16] {
+        let eco = ComputeBudget::for_profile_with_limits(ComputeProfile::Eco, cpus, false, mobile)
+            .threads_per_inference();
+        let balanced = ComputeBudget::for_profile_with_limits(
+            ComputeProfile::Balanced,
+            cpus,
+            false,
+            mobile,
+        )
+        .threads_per_inference();
+        let throughput = ComputeBudget::for_profile_with_limits(
+            ComputeProfile::Throughput,
+            cpus,
+            false,
+            mobile,
+        )
+        .threads_per_inference();
+
+        assert!(eco <= 2);
+        assert!(balanced <= 4);
+        assert!(throughput <= 4);
+    }
+
+    // On standard 8-core ARM SoC (4 LITTLE + 4 big cores)
+    assert_eq!(
+        ComputeBudget::for_profile_with_limits(ComputeProfile::Eco, 8, false, mobile)
+            .threads_per_inference(),
+        2
+    );
+    assert_eq!(
+        ComputeBudget::for_profile_with_limits(ComputeProfile::Balanced, 8, false, mobile)
+            .threads_per_inference(),
+        4
+    );
+    assert_eq!(
+        ComputeBudget::for_profile_with_limits(ComputeProfile::Throughput, 8, false, mobile)
+            .threads_per_inference(),
+        4
+    );
+
+    // During playback, throughput is halved to prevent audio stutter
+    assert_eq!(
+        ComputeBudget::for_profile_with_limits(ComputeProfile::Throughput, 8, true, mobile)
+            .threads_per_inference(),
+        2
+    );
+    assert_eq!(
+        ComputeBudget::for_profile_with_limits(ComputeProfile::Balanced, 8, true, mobile)
+            .threads_per_inference(),
+        2
+    );
+
+    // Interactive budget with mobile limits
+    assert_eq!(
+        ComputeBudget::interactive_with_limits(8, mobile).threads_per_inference(),
+        4
+    );
+    assert_eq!(
+        ComputeBudget::interactive_with_limits(16, mobile).threads_per_inference(),
+        4
+    );
+}
+

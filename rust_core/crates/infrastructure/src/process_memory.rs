@@ -14,7 +14,7 @@ pub fn resident_bytes() -> Option<u64> {
         (unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) } != 0)
             .then_some(counters.WorkingSetSize as u64)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         std::fs::read_to_string("/proc/self/status")
             .ok()?
@@ -26,7 +26,7 @@ pub fn resident_bytes() -> Option<u64> {
             })
             .and_then(|v| v.checked_mul(1024))
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
     {
         None
     }

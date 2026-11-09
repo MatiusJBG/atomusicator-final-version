@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+app/src/main/jniLibs/**/*.so
+app/src/main/jniLibs/**/ffmpeg
+app/src/main/jniLibs/**/libffmpeg.so

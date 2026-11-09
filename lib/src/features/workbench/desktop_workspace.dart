@@ -33,9 +33,70 @@ class _SessionHeader extends ConsumerWidget {
             : 'Convierte una mezcla en 5 stems listos para editar',
       StudioView.mixer => '5 stems sincronizados · procesamiento local',
     };
+    final phone = isPhoneLayout(context) || isCompactLandscape(context);
+    if (phone) {
+      return Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0F151C),
+          border: Border(bottom: BorderSide(color: Color(0xFF1A2531))),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (view == StudioView.home ||
+                (view == StudioView.atomizer && source != null && !result))
+              IconButton(
+                tooltip: 'Importar audio',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                icon: const Icon(Icons.file_upload_outlined, size: 20),
+                onPressed: onImport,
+              )
+            else if (view == StudioView.atomizer && flow)
+              IconButton(
+                tooltip: 'Cancelar',
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                icon: const Icon(Icons.close, size: 20),
+                onPressed:
+                    studio.cancelling
+                        ? null
+                        : () => ref.read(studioProvider.notifier).cancel(),
+              ),
+          ],
+        ),
+      );
+    }
+    final compactLandscape = isCompactLandscape(context);
     return Container(
-      height: 66,
-      padding: const EdgeInsets.fromLTRB(96, 8, 16, 8),
+      height: compactLandscape ? 52 : 66,
+      padding: EdgeInsets.fromLTRB(compactLandscape ? 20 : 96, 6, 16, 6),
       decoration: const BoxDecoration(
         color: Color(0xFF0F151C),
         border: Border(bottom: BorderSide(color: Color(0xFF1A2531))),
@@ -108,11 +169,15 @@ class _SessionHeader extends ConsumerWidget {
             ),
             const SizedBox(width: 12),
             if (flow) ...[
-              OutlinedButton(
-                onPressed: () => windowManager.minimize(),
-                child: const Text('Minimizar'),
-              ),
-              const SizedBox(width: 8),
+              if (isDesktopHost)
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                  ),
+                  onPressed: minimizeApplicationWindow,
+                  child: const Text('Minimizar'),
+                ),
+              if (isDesktopHost) const SizedBox(width: 8),
               OutlinedButton(
                 onPressed:
                     studio.cancelling
@@ -288,9 +353,74 @@ class _MixerSessionHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(studioProvider);
     final track = state.session?.tracks.firstOrNull;
+    final phone = isPhoneLayout(context) || isCompactLandscape(context);
+    if (phone) {
+      return Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0F151C),
+          border: Border(bottom: BorderSide(color: Color(0xFF1A2531))),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.graphic_eq,
+              size: 20,
+              color: AppColors.seaGlass,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                state.session?.name ?? 'Mezclador',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const _Tag('Guardado', color: AppColors.seaGlass),
+            IconButton(
+              tooltip: 'Guardar / Exportar stems',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              icon: const Icon(Icons.save_alt_outlined, size: 18),
+              onPressed:
+                  state.busy || state.session == null
+                      ? null
+                      : () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const ExportDialog(),
+                      ),
+            ),
+            IconButton(
+              tooltip: 'Cerrar proyecto',
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+              icon: const Icon(Icons.close, size: 18),
+              onPressed:
+                  state.busy
+                      ? null
+                      : () async {
+                        await ref.read(studioProvider.notifier).close();
+                        if (!context.mounted ||
+                            ref.read(studioProvider).session != null) {
+                          return;
+                        }
+                        ref.read(workbenchProvider.notifier).clearSources();
+                        ref.read(separationResultProvider.notifier).state = false;
+                        ref.read(studioViewProvider.notifier).state =
+                            StudioView.home;
+                      },
+            ),
+          ],
+        ),
+      );
+    }
+    final compactLandscape = isCompactLandscape(context);
     return Container(
-      height: 66,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      height: compactLandscape ? 52 : 66,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       decoration: const BoxDecoration(
         color: Color(0xFF0F151C),
         border: Border(bottom: BorderSide(color: Color(0xFF1A2531))),
@@ -298,7 +428,13 @@ class _MixerSessionHeader extends ConsumerWidget {
       child: Row(
         children: [
           SizedBox(
-            width: MediaQuery.sizeOf(context).width >= 1200 ? 520 : 400,
+            width:
+                MediaQuery.sizeOf(context).width >= 1200
+                    ? 520
+                    : (MediaQuery.sizeOf(context).width * 0.45).clamp(
+                      240.0,
+                      400.0,
+                    ),
             child: _Panel(
               radius: 10,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),

@@ -1,33 +1,27 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
 
-import 'core/theme/app_theme.dart';
 import 'core/di/desktop_studio_state.dart';
+import 'core/platform/desktop_window.dart';
+import 'core/theme/app_theme.dart';
 import 'src/features/workbench/audio_workbench.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    await windowManager.ensureInitialized();
-    await windowManager.waitUntilReadyToShow(
-      const WindowOptions(
-        size: Size(1440, 900),
-        minimumSize: Size(920, 640),
-        center: true,
-        title: 'Atomusicator',
-        titleBarStyle: TitleBarStyle.hidden,
-        windowButtonVisibility: false,
-        backgroundColor: AppColors.canvas,
-      ),
-      () async {
-        await windowManager.show();
-        await windowManager.focus();
-      },
-    );
+  if (Platform.isAndroid || Platform.isIOS) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
+  if (Platform.isAndroid) {
+    await prepareApplicationPreferences();
+  }
+  await configureDesktopWindow();
   runApp(const ProviderScope(child: AtomusicatorApp()));
 }
 

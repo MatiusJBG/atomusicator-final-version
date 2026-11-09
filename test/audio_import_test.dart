@@ -1,3 +1,5 @@
+import 'package:atomusicator/core/platform/desktop_window.dart';
+import 'package:atomusicator/core/platform/host_platform.dart';
 import 'package:atomusicator/core/theme/app_theme.dart';
 import 'package:atomusicator/core/di/native_engine_provider.dart';
 import 'package:atomusicator/core/di/workbench_providers.dart';
@@ -44,6 +46,7 @@ void main() {
     WidgetTester tester,
     Future<void> Function(ProviderContainer) body,
   ) async {
+    await tester.runAsync(initDesktopFileDropForTesting);
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -89,34 +92,36 @@ void main() {
     });
   });
 
-  testWidgets('FLAC dropped over the header becomes the selected source', (
-    tester,
-  ) async {
-    await mount(tester, (container) async {
-      container.read(workbenchProvider.notifier).addSources([
-        const SelectedAudioFile(
-          path: '/old.wav',
-          name: 'old.wav',
-          sizeBytes: 1,
-        ),
-      ]);
-      await tester.pump();
-      final point = tester.getCenter(find.text('Cambiar audio'));
-      const codec = StandardMethodCodec();
-      Future<void> send(String method, Object args) async {
-        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-          'desktop_drop',
-          codec.encodeMethodCall(MethodCall(method, args)),
-          (_) {},
-        );
+  testWidgets(
+    'FLAC dropped over the header becomes the selected source',
+    (tester) async {
+      await mount(tester, (container) async {
+        container.read(workbenchProvider.notifier).addSources([
+          const SelectedAudioFile(
+            path: '/old.wav',
+            name: 'old.wav',
+            sizeBytes: 1,
+          ),
+        ]);
         await tester.pump();
-      }
+        final point = tester.getCenter(find.text('Cambiar audio'));
+        const codec = StandardMethodCodec();
+        Future<void> send(String method, Object args) async {
+          await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+            'desktop_drop',
+            codec.encodeMethodCall(MethodCall(method, args)),
+            (_) {},
+          );
+          await tester.pump();
+        }
 
-      await send('entered', [point.dx, point.dy]);
-      await send('performOperation', [flacPath]);
-      expect(container.read(workbenchProvider).selectedSource?.path, flacPath);
-    });
-  });
+        await send('entered', [point.dx, point.dy]);
+        await send('performOperation', [flacPath]);
+        expect(container.read(workbenchProvider).selectedSource?.path, flacPath);
+      });
+    },
+    skip: !isDesktopHost,
+  );
 
   testWidgets('Ctrl+V imports Explorer file clipboard paths', (tester) async {
     const channel = MethodChannel('atomusicator/audio_import');

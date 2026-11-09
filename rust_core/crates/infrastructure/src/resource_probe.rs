@@ -4,21 +4,53 @@ use atomusicator_application::resource_admission::{ResourceLease, ResourcePool, 
 use atomusicator_domain::DomainError;
 use std::sync::Arc;
 
-const SYSTEM_RESERVE: u64 = 512 * 1024 * 1024;
-const CACHED_WORKING_SET: u64 = 3 * 1024 * 1024 * 1024;
+pub const SYSTEM_RESERVE: u64 = 512 * 1024 * 1024;
+pub const CACHED_WORKING_SET: u64 = 3 * 1024 * 1024 * 1024;
 // Includes one model's ORT workspace and the bounded DSP buffers. The measured
 // desktop native pipeline peaked at 1.36 GiB with two retained sessions; reserve
 // 2 GiB after evicting idle sessions, without reducing FFT/model precision.
-const SERIAL_WORKING_SET: u64 = 2 * 1024 * 1024 * 1024;
+pub const SERIAL_WORKING_SET: u64 = 2 * 1024 * 1024 * 1024;
+// Calibrated working set for mobile devices (single-session execution with bounded DSP buffer reuse)
+pub const MOBILE_SERIAL_WORKING_SET: u64 = 800 * 1024 * 1024;
+pub const MOBILE_CACHED_WORKING_SET: u64 = 1536 * 1024 * 1024;
 
 /// Conservative CPU-only estimates for the four pinned profiles, pending per-host tuning.
 pub struct NativeResourceAdmission {
     pool: Arc<ResourcePool>,
     _resident: ResourceLease,
     threads: u64,
+    serial_working_set: u64,
+    cached_working_set: u64,
 }
 impl NativeResourceAdmission {
     pub fn new(threads: usize) -> Result<Self, DomainError> {
+        Self::with_working_sets(threads, SERIAL_WORKING_SET, CACHED_WORKING_SET)
+    }
+
+    pub fn for_mobile(threads: usize) -> Result<Self, DomainError> {
+        Self::with_working_sets(
+            threads,
+            MOBILE_SERIAL_WORKING_SET,
+            MOBILE_CACHED_WORKING_SET,
+        )
+    }
+
+    pub fn with_limits(
+        threads: usize,
+        limits: atomusicator_application::compute_policy::ComputeLimits,
+    ) -> Result<Self, DomainError> {
+        if limits == atomusicator_application::compute_policy::ComputeLimits::mobile() {
+            Self::for_mobile(threads)
+        } else {
+            Self::new(threads)
+        }
+    }
+
+    pub fn with_working_sets(
+        threads: usize,
+        serial_working_set: u64,
+        cached_working_set: u64,
+    ) -> Result<Self, DomainError> {
         let threads = threads.max(1) as u64;
         let pool = Arc::new(ResourcePool::new(Resources {
             threads,
@@ -32,8 +64,11 @@ impl NativeResourceAdmission {
             pool,
             _resident: resident,
             threads,
+            serial_working_set,
+            cached_working_set,
         })
     }
+
     pub fn reserve_separation(
         &self,
         sessions: &OrtSessionPool,
@@ -51,18 +86,31 @@ impl NativeResourceAdmission {
             threads: self.threads,
             memory_bytes: 1536 * 1024 * 1024,
         })?;
+        let is_mobile = sessions.compute_limits()
+            == atomusicator_application::compute_policy::ComputeLimits::mobile();
+        let cached_threshold = if is_mobile && self.cached_working_set == CACHED_WORKING_SET {
+            MOBILE_CACHED_WORKING_SET
+        } else {
+            self.cached_working_set
+        };
+        let serial_threshold = if is_mobile && self.serial_working_set == SERIAL_WORKING_SET {
+            MOBILE_SERIAL_WORKING_SET
+        } else {
+            self.serial_working_set
+        };
+
         let available = probe()?.saturating_sub(SYSTEM_RESERVE);
-        if available >= CACHED_WORKING_SET {
+        if available >= cached_threshold {
             return Ok(lease);
         }
         sessions.trim_idle_and_resize(1).map_err(failure)?;
         // Sample again after releasing cached ORT allocations. No stale-memory
         // observation can admit the compact plan if pressure has since increased.
         let available = probe()?.saturating_sub(SYSTEM_RESERVE);
-        if available < SERIAL_WORKING_SET {
+        if available < serial_threshold {
             return Err(DomainError::InsufficientResources {
                 resource: "physical memory bytes after system reserve".into(),
-                requested: SERIAL_WORKING_SET,
+                requested: serial_threshold,
                 available,
             });
         }
@@ -82,7 +130,7 @@ pub fn available_memory_bytes() -> Result<u64, DomainError> {
         }
         Ok(state.ullAvailPhys)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let values = std::fs::read_to_string("/proc/meminfo").map_err(failure)?;
         values
@@ -95,7 +143,7 @@ pub fn available_memory_bytes() -> Result<u64, DomainError> {
             .and_then(|value| value.checked_mul(1024))
             .ok_or_else(|| failure("available memory could not be observed"))
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
     {
         Err(failure(
             "memory admission has not been qualified on this OS",
@@ -225,5 +273,44 @@ mod tests {
                 .reserve_separation_with_probe(&sessions, || Ok(u64::MAX))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn mobile_memory_probe_calibrates_lower_working_set() {
+        use atomusicator_application::compute_policy::ComputeLimits;
+
+        let admission = NativeResourceAdmission::for_mobile(2).unwrap();
+        let sessions = OrtSessionPool::with_compute_profile_and_limits(
+            1,
+            atomusicator_application::compute_policy::ComputeProfile::Balanced,
+            ComputeLimits::mobile(),
+        )
+        .unwrap();
+
+        // 1 GiB available (less than 2 GiB desktop requirement, but fits mobile 800 MiB)
+        let memory_1gb = 1024 * 1024 * 1024 + SYSTEM_RESERVE;
+        let result = admission.reserve_separation_with_probe(&sessions, || Ok(memory_1gb));
+        assert!(
+            result.is_ok(),
+            "mobile profile should admit separation when 1 GiB free memory is available"
+        );
+
+        // The admitted lease owns the CPU reservation; release it before the
+        // next admission so the failure below is about memory, not contention.
+        drop(result);
+        // Below 800 MiB mobile threshold
+        let memory_low = MOBILE_SERIAL_WORKING_SET + SYSTEM_RESERVE - 1;
+        let error = admission
+            .reserve_separation_with_probe(&sessions, || Ok(memory_low))
+            .err()
+            .unwrap();
+        assert!(matches!(
+            error,
+            DomainError::InsufficientResources {
+                requested,
+                available,
+                ..
+            } if requested == MOBILE_SERIAL_WORKING_SET && available == MOBILE_SERIAL_WORKING_SET - 1
+        ));
     }
 }

@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
@@ -10,14 +10,15 @@ use std::{
 
 use crate::session_pool::SessionPool;
 use ort::{
-    execution_providers::{
-        CPUExecutionProvider, CUDAExecutionProvider, CoreMLExecutionProvider,
-        DirectMLExecutionProvider,
-    },
+    execution_providers::{CPUExecutionProvider, XNNPACKExecutionProvider},
     memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType},
-    session::{Session, builder::SessionBuilder},
+    session::{Session, builder::{GraphOptimizationLevel, SessionBuilder}},
     value::TensorRefMut,
 };
+#[cfg(target_os = "windows")]
+use ort::execution_providers::{CUDAExecutionProvider, DirectMLExecutionProvider};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use ort::execution_providers::CoreMLExecutionProvider;
 
 use crate::errors::InfrastructureError;
 
@@ -26,6 +27,7 @@ pub enum ExecutionProviderKind {
     DirectMl,
     Cuda,
     CoreMl,
+    Xnnpack,
     Cpu,
 }
 
@@ -39,6 +41,7 @@ pub struct OrtSessionPool {
     quarantined: Mutex<BTreeMap<PathBuf, String>>,
     device_id: u32,
     require_accelerator: bool,
+    compute_limits: Mutex<atomusicator_application::compute_policy::ComputeLimits>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -106,7 +109,15 @@ impl OrtSessionPool {
         options: crate::preferences::ExecutionOptions,
     ) -> Result<Self, InfrastructureError> {
         use crate::preferences::ExecutionMode;
+        if cfg!(target_os = "android") && options.mode != ExecutionMode::Cpu {
+            return Err(InfrastructureError::InvalidManifest(
+                "Android inference is CPU only".into(),
+            ));
+        }
         if options.mode == ExecutionMode::Cpu {
+            #[cfg(target_os = "android")]
+            return self.using_provider_order(vec![ExecutionProviderKind::Cpu]);
+            #[cfg(not(target_os = "android"))]
             return self.using_provider_order(vec![ExecutionProviderKind::Cpu]);
         }
         // Qualification and admission currently cover one resident model. Do
@@ -153,10 +164,14 @@ impl OrtSessionPool {
     }
     pub fn new(capacity: usize) -> Result<Self, InfrastructureError> {
         // Detection is not qualification. Accelerators require explicit opt-in.
+        #[cfg(target_os = "android")]
+        // MDX-Net's 4D MatMul (TDF) nodes are rejected by XNNPACK and Level3 fuses
+        // Conv+BN+Relu into CPU-only NhwcFusedConv, so a mixed XNNPACK/CPU graph only
+        // adds NCHW<->NHWC transposes. A single multi-threaded CPU EP avoids them.
         let provider_order = vec![ExecutionProviderKind::Cpu];
-        let logical_cpus = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1);
+        #[cfg(not(target_os = "android"))]
+        let provider_order = vec![ExecutionProviderKind::Cpu];
+        let logical_cpus = logical_cpu_count();
         let intra_threads =
             atomusicator_application::compute_policy::ComputeBudget::interactive(logical_cpus)
                 .threads_per_inference();
@@ -170,6 +185,7 @@ impl OrtSessionPool {
             quarantined: Mutex::new(BTreeMap::new()),
             device_id: 0,
             require_accelerator: false,
+            compute_limits: Mutex::new(atomusicator_application::compute_policy::ComputeLimits::desktop()),
         })
     }
     /// Qualification runs must not silently measure CPU after GPU failure.
@@ -195,10 +211,52 @@ impl OrtSessionPool {
         self
     }
 
+    pub fn compute_limits(&self) -> atomusicator_application::compute_policy::ComputeLimits {
+        self.compute_limits
+            .lock()
+            .map(|l| *l)
+            .unwrap_or_else(|e| *e.into_inner())
+    }
+
+    pub fn using_compute_limits(
+        self,
+        limits: atomusicator_application::compute_policy::ComputeLimits,
+    ) -> Self {
+        if let Ok(mut guard) = self.compute_limits.lock() {
+            *guard = limits;
+        }
+        self
+    }
+
+    pub fn set_compute_limits(
+        &self,
+        limits: atomusicator_application::compute_policy::ComputeLimits,
+    ) {
+        if let Ok(mut guard) = self.compute_limits.lock() {
+            *guard = limits;
+        }
+    }
+
+    pub fn set_compute_profile_with_limits(
+        &self,
+        profile: atomusicator_application::compute_policy::ComputeProfile,
+        limits: atomusicator_application::compute_policy::ComputeLimits,
+    ) {
+        let logical = logical_cpu_count();
+        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile_with_limits(
+            profile, logical, false, limits,
+        )
+        .threads_per_inference();
+        if let Ok(mut guard) = self.compute_limits.lock() {
+            *guard = limits;
+        }
+        self.intra_threads.store(threads, Ordering::Release);
+    }
+
     pub fn effective_intra_threads(&self) -> usize {
         let requested = self.intra_threads();
         if self.playback_probe.as_ref().is_some_and(|probe| probe()) {
-            let logical = std::thread::available_parallelism().map_or(1, usize::from);
+            let logical = logical_cpu_count();
             atomusicator_application::compute_policy::ComputeBudget::playback_limit(
                 requested, logical,
             )
@@ -212,24 +270,43 @@ impl OrtSessionPool {
         &self,
         profile: atomusicator_application::compute_policy::ComputeProfile,
     ) {
-        let logical = std::thread::available_parallelism().map_or(1, usize::from);
-        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile(
-            profile, logical, false,
-        )
-        .threads_per_inference();
-        self.intra_threads.store(threads, Ordering::Release);
+        let limits = self.compute_limits();
+        self.set_compute_profile_with_limits(profile, limits);
     }
 
     pub fn with_compute_profile(
         capacity: usize,
         profile: atomusicator_application::compute_policy::ComputeProfile,
     ) -> Result<Self, InfrastructureError> {
-        let logical = std::thread::available_parallelism().map_or(1, usize::from);
-        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile(
-            profile, logical, false,
+        Self::with_compute_profile_and_limits(
+            capacity,
+            profile,
+            atomusicator_application::compute_policy::ComputeLimits::desktop(),
+        )
+    }
+
+    pub fn with_compute_profile_and_limits(
+        capacity: usize,
+        profile: atomusicator_application::compute_policy::ComputeProfile,
+        limits: atomusicator_application::compute_policy::ComputeLimits,
+    ) -> Result<Self, InfrastructureError> {
+        let logical = logical_cpu_count();
+        let threads = atomusicator_application::compute_policy::ComputeBudget::for_profile_with_limits(
+            profile, logical, false, limits,
         )
         .threads_per_inference();
-        Self::with_cpu_threads(capacity, threads)
+        let pool = Self::with_cpu_threads(capacity, threads)?;
+        if let Ok(mut guard) = pool.compute_limits.lock() {
+            *guard = limits;
+        }
+        Ok(pool)
+    }
+
+    pub fn with_compute_budget(
+        capacity: usize,
+        budget: atomusicator_application::compute_policy::ComputeBudget,
+    ) -> Result<Self, InfrastructureError> {
+        Self::with_cpu_threads(capacity, budget.threads_per_inference())
     }
 
     pub fn with_provider_order(
@@ -256,7 +333,7 @@ impl OrtSessionPool {
         capacity: usize,
         intra_threads: usize,
     ) -> Result<Self, InfrastructureError> {
-        let logical = std::thread::available_parallelism().map_or(1, usize::from);
+        let logical = logical_cpu_count();
         if intra_threads == 0 || intra_threads > logical.min(12) {
             return Err(InfrastructureError::InvalidManifest(
                 "CPU intra threads must be between one and min(logical CPUs, twelve)".into(),
@@ -302,20 +379,23 @@ impl OrtSessionPool {
             if provider == ExecutionProviderKind::DirectMl && let Some(reason) = self.directml_admission_reason() {
                 failures.push(format!("DirectMl admission: {reason}")); continue;
             }
+            promote_android_compute_thread();
+            let ort_intra_threads = threads;
             let result = SessionBuilder::new()
                 .and_then(|builder| match &self.profiling_directory {
                     Some(directory) => builder.with_profiling(directory.join(crate::audio_tools::unique_id())),
                     None => Ok(builder),
                 })
-                .and_then(|builder| builder.with_intra_threads(threads))
+                .and_then(|builder| builder.with_optimization_level(GraphOptimizationLevel::Level3))
+                .and_then(|builder| builder.with_intra_threads(ort_intra_threads))
                 .and_then(|builder| builder.with_inter_threads(1))
                 .and_then(|builder| builder.with_parallel_execution(false))
-                .and_then(|builder| builder.with_intra_op_spinning(false))
+                .and_then(|builder| builder.with_intra_op_spinning(cfg!(target_os = "android")))
                 .and_then(|builder| builder.with_inter_op_spinning(false))
                 .and_then(|builder| {
                     builder.with_memory_pattern(provider != ExecutionProviderKind::DirectMl)
                 })
-                .and_then(|builder| builder.with_execution_providers([provider_dispatch(provider, self.device_id).error_on_failure()]))
+                .and_then(|builder| builder.with_execution_providers([provider_dispatch(provider, self.device_id, threads).error_on_failure()]))
                 .and_then(|builder| builder.commit_from_file(&canonical_path));
             match result {
                 Ok(session) => {
@@ -325,7 +405,11 @@ impl OrtSessionPool {
                         device_id: (provider == ExecutionProviderKind::DirectMl).then_some(self.device_id),
                         intra_threads: threads,
                         provider_registered: provider,
-                        provider_effective: (provider == ExecutionProviderKind::Cpu).then(|| "CPUExecutionProvider".into()),
+                        provider_effective: match provider {
+                            ExecutionProviderKind::Cpu => Some("CPUExecutionProvider".into()),
+                            ExecutionProviderKind::Xnnpack => Some("XNNPACKExecutionProvider".into()),
+                            _ => None,
+                        },
                         fallback_errors: failures,
                         initialization_seconds: started.elapsed().as_secs_f64(),
                     };
@@ -442,18 +526,84 @@ impl OrtSessionPool {
     }
 }
 
+pub fn promote_android_compute_thread() {
+    #[cfg(target_os = "android")]
+    {
+        static PERF_CORE_MASK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let mask = *PERF_CORE_MASK.get_or_init(|| {
+            let mut freqs = Vec::new();
+            for cpu in 0..16usize {
+                let path = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq");
+                if let Ok(text) = std::fs::read_to_string(&path)
+                    && let Ok(freq) = text.trim().parse::<u64>()
+                {
+                    freqs.push((cpu, freq));
+                }
+            }
+            let max_freq = freqs.iter().map(|&(_, f)| f).max().unwrap_or(0);
+            if max_freq == 0 {
+                return 0;
+            }
+            let threshold = (max_freq * 85) / 100;
+            let mut mask = 0usize;
+            for (cpu, freq) in freqs {
+                if freq >= threshold {
+                    mask |= 1usize << cpu;
+                }
+            }
+            mask
+        });
+        if mask != 0 {
+            unsafe extern "C" {
+                fn sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const usize) -> i32;
+            }
+            // SAFETY: pid 0 targets the calling thread; mask is a valid stack-allocated
+            // CPU set word sized to std::mem::size_of::<usize>().
+            unsafe {
+                let _ = sched_setaffinity(0, std::mem::size_of::<usize>(), &mask);
+            }
+        }
+    }
+}
+
+fn cpu_provider() -> ort::execution_providers::ExecutionProviderDispatch {
+    CPUExecutionProvider::default().build().fail_silently()
+}
+
 fn provider_dispatch(
     provider: ExecutionProviderKind,
     device_id: u32,
+    threads: usize,
 ) -> ort::execution_providers::ExecutionProviderDispatch {
     match provider {
+        ExecutionProviderKind::Cpu => cpu_provider(),
+        ExecutionProviderKind::Xnnpack => {
+            let threads = std::num::NonZeroUsize::new(threads.max(1)).unwrap();
+            XNNPACKExecutionProvider::default()
+                .with_intra_op_num_threads(threads)
+                .build()
+                .fail_silently()
+        },
+        #[cfg(target_os = "windows")]
         ExecutionProviderKind::DirectMl => DirectMLExecutionProvider::default()
             .with_device_id(device_id as i32)
             .build()
             .fail_silently(),
-        ExecutionProviderKind::Cuda => CUDAExecutionProvider::default().build().fail_silently(),
-        ExecutionProviderKind::CoreMl => CoreMLExecutionProvider::default().build().fail_silently(),
-        ExecutionProviderKind::Cpu => CPUExecutionProvider::default().build().fail_silently(),
+        #[cfg(target_os = "windows")]
+        ExecutionProviderKind::Cuda => {
+            CUDAExecutionProvider::default().build().fail_silently()
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        ExecutionProviderKind::CoreMl => {
+            CoreMLExecutionProvider::default().build().fail_silently()
+        }
+        #[cfg(not(target_os = "windows"))]
+        ExecutionProviderKind::DirectMl | ExecutionProviderKind::Cuda => cpu_provider(),
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        ExecutionProviderKind::CoreMl => {
+            let _ = device_id;
+            cpu_provider()
+        }
     }
 }
 
@@ -574,6 +724,7 @@ impl OnnxSessionRunner {
         let tensor: TensorRefMut<'_, f32> =
             unsafe { TensorRefMut::from_raw(info, input.as_mut_ptr().cast(), shape.to_vec()) }
                 .map_err(|error| InfrastructureError::OnnxRuntime(error.to_string()))?;
+        promote_android_compute_thread();
         let inputs = vec![(*input_name, tensor)];
         let outputs = session.run(inputs).map_err(|error| {
             // Invalid models/arguments are permanent caller errors, not a
@@ -611,4 +762,21 @@ impl OnnxSessionRunner {
         }
         Ok(())
     }
+}
+
+
+/// Hardware CPU count. On Android `available_parallelism` honours the affinity mask of the calling
+/// thread, which `promote_android_compute_thread` narrows to the 4 performance cores; reading that
+/// would halve the thread budget (4 cpus - 2 reserved = 2 threads).
+pub fn logical_cpu_count() -> usize {
+    #[cfg(target_os = "android")]
+    {
+        let online = (0..32usize)
+            .filter(|cpu| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{cpu}")).exists())
+            .count();
+        if online > 0 {
+            return online;
+        }
+    }
+    std::thread::available_parallelism().map_or(1, usize::from)
 }
