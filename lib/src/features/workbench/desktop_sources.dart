@@ -830,44 +830,54 @@ class _SourceReview extends ConsumerWidget {
               Expanded(
                 flex: 5,
                 child: _Panel(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const _SectionLabel('RESUMEN'),
-                      const SizedBox(height: 12),
-                      const ComputeSettingsPanel(compact: true),
-                      const SizedBox(height: 18),
-                      const _SummaryLine('Modelo', 'UVR / Kuielab · MDX'),
-                      const _SummaryLine(
-                        'Dispositivo',
-                        'ONNX Runtime · procesamiento local',
-                      ),
-                      _SummaryLine(
-                        'Calidad',
-                        audio == null
-                            ? 'Por analizar'
-                            : _audioMeta(audio.sampleRate, audio.channels),
-                      ),
-                      _SummaryLine(
-                        'Duración estimada',
-                        isDesktopHost
-                            ? (targetMode == SeparationTargetMode.twoStems
-                                ? '~15-30 seg (GPU) / ~1.5 min (CPU)'
-                                : '~1-2 min (GPU) / ~6 min (CPU)')
-                            : (targetMode == SeparationTargetMode.twoStems
-                                ? '~8-10 min'
-                                : '~30-40 min'),
-                      ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'La separación corre en segundo plano: puedes seguir usando la app.',
-                        style: TextStyle(
-                          fontSize: 10,
-                          height: 1.6,
-                          color: AppColors.muted,
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const _SectionLabel('RESUMEN'),
+                              const SizedBox(height: 10),
+                              const ComputeSettingsPanel(compact: true),
+                              const SizedBox(height: 12),
+                              const _SummaryLine('Modelo', 'UVR / Kuielab · MDX'),
+                              const _SummaryLine(
+                                'Dispositivo',
+                                'ONNX Runtime · procesamiento local',
+                              ),
+                              _SummaryLine(
+                                'Calidad',
+                                audio == null
+                                    ? 'Por analizar'
+                                    : _audioMeta(audio.sampleRate, audio.channels),
+                              ),
+                              _SummaryLine(
+                                'Duración estimada',
+                                isDesktopHost
+                                    ? (targetMode == SeparationTargetMode.twoStems
+                                        ? '~15-30 seg (GPU) / ~1.5 min (CPU)'
+                                        : '~1-2 min (GPU) / ~6 min (CPU)')
+                                    : (targetMode == SeparationTargetMode.twoStems
+                                        ? '~8-10 min'
+                                        : '~30-40 min'),
+                              ),
+                              const SizedBox(height: 10),
+                              const Text(
+                                'La separación corre en segundo plano: puedes seguir usando la app.',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  height: 1.5,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(height: 10),
                       _CyanButton(
                         label: targetMode == SeparationTargetMode.twoStems
                             ? (isDesktopHost
@@ -876,7 +886,7 @@ class _SourceReview extends ConsumerWidget {
                             : (isDesktopHost
                                 ? 'Separar en 5 stems (Completo ~1-2 min)'
                                 : 'Separar en 5 stems (Completo ~30-40 min)'),
-                        height: 54,
+                        height: 50,
                         onPressed:
                             available && !busy && selected.isNotEmpty
                                 ? () {
@@ -898,7 +908,7 @@ class _SourceReview extends ConsumerWidget {
                                 }
                                 : null,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
                       TextButton(
                         onPressed:
                             () =>
@@ -926,7 +936,7 @@ class _SummaryLine extends StatelessWidget {
   final String label, value;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 15),
+    padding: const EdgeInsets.symmetric(vertical: 6),
     child: Row(
       children: [
         Text(
