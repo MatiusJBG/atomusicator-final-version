@@ -214,7 +214,7 @@ class _DropInvitation extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'o haz clic en Importar audio para iniciar',
+            'o haz clic en Subir Audio para iniciar',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: AppColors.muted),
           ),
@@ -235,7 +235,7 @@ class _DropInvitation extends ConsumerWidget {
           SizedBox(
             width: 220,
             child: _CyanButton(
-              label: 'Importar audio',
+              label: 'Subir Audio',
               height: 54,
               icon: Icons.file_upload_outlined,
               onPressed: onImport,

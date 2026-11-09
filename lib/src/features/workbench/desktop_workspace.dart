@@ -74,7 +74,7 @@ class _SessionHeader extends ConsumerWidget {
             if (view == StudioView.home ||
                 (view == StudioView.atomizer && source != null && !result))
               IconButton(
-                tooltip: 'Importar audio',
+                tooltip: 'Subir Audio',
                 style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
                 icon: const Icon(Icons.file_upload_outlined, size: 20),
                 onPressed: onImport,
@@ -149,7 +149,7 @@ class _SessionHeader extends ConsumerWidget {
             ),
             const SizedBox(width: 16),
             _CyanButton(
-              label: 'Importar audio',
+              label: 'Subir Audio',
               icon: Icons.file_upload_outlined,
               onPressed: onImport,
             ),

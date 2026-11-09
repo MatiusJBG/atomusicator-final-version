@@ -85,8 +85,12 @@ void main() {
   ) async {
     FilePicker.platform = AudioPicker();
     await mount(tester, (container) async {
-      await tester.tap(find.text('Importar audio'));
-      await tester.pump();
+      await tester.tap(find.text('Subir Audio').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Haga clic para seleccionar archivo de audio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Subir y Procesar Audio'));
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(container.read(workbenchProvider).selectedSource?.path, flacPath);
     });

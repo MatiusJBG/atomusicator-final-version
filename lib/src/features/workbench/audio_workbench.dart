@@ -1,7 +1,7 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/services.dart';
 import '../../../core/di/desktop_studio_state.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +13,7 @@ import '../../../core/platform/platform_audio_host.dart';
 import '../../../core/platform/desktop_window.dart';
 import '../../../core/platform/host_platform.dart';
 import '../../../core/theme/app_theme.dart';
+import 'upload_audio_dialog.dart';
 import 'studio_panels.dart';
 import 'particle_loading_widgets.dart';
 import 'compute_settings_panel.dart';
@@ -54,14 +55,9 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
   }
 
   Future<void> _importAudio() async {
-    final selection = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: AudioFileImport.extensions,
-      allowMultiple: true,
-      withData: false,
-    );
-    if (selection == null || !mounted) return;
-    final total = selection.files.length;
+    final result = await showUploadAudioDialog(context, ref);
+    if (result == null || result.selectedFiles.isEmpty || !mounted) return;
+    final total = result.selectedFiles.length;
     ref.read(fileImportStateProvider.notifier).state = (
       importing: true,
       progress: 0.08,
@@ -70,7 +66,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
     final materialized = <SelectedAudioFile>[];
     try {
       for (var i = 0; i < total; i++) {
-        final file = selection.files[i];
+        final file = result.selectedFiles[i];
         final baseProgress = i / total;
         final stepSpan = 1.0 / total;
         if (mounted) {
@@ -93,8 +89,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
         final stored = await AudioFileImport.materialize(
           name: file.name,
           sourcePath: file.path,
-          bytes: file.bytes,
-          sizeBytes: file.size,
+          sizeBytes: file.sizeBytes,
         );
         if (stored != null) {
           materialized.add(
@@ -207,7 +202,7 @@ class _AudioWorkbenchState extends ConsumerState<AudioWorkbench> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Pegar archivos requiere la aplicación de Windows actualizada. Usa Importar audio.',
+            'Pegar archivos requiere la aplicación de Windows actualizada. Usa Subir Audio.',
           ),
         ),
       );
